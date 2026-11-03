@@ -1,0 +1,17 @@
+# openbot-egress-v1
+[Unit]
+Description=OpenBot owned fail-closed network namespace
+Requires=openbottunnel.slice
+After=network-online.target openbottunnel.slice
+Wants=network-online.target
+Before=openbot-egress-tailscaled.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+RuntimeDirectory=openbot-egress
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/local/libexec/openbot-egress/openbot-egress.py network
+# Keep the namespace and its drop guard when stopped. Reboot removes runtime state.
+[Install]
+WantedBy=multi-user.target

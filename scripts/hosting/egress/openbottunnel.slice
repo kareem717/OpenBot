@@ -1,0 +1,5 @@
+# openbot-egress-v1
+[Unit]
+Description=Dedicated OpenBot Tailscale transport cgroup
+[Slice]
+# A name without a dash places this slice directly below the cgroup root.

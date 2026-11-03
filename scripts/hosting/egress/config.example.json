@@ -1,0 +1,6 @@
+{
+  "exit_node": "YOUR_EXIT_NODE_NAME",
+  "bootstrap_dns": ["YOUR_BOOTSTRAP_DNS_IPV4"],
+  "expected_exit_ipv4": "YOUR_VERIFIED_EXIT_IPV4",
+  "service_user": "openbot"
+}

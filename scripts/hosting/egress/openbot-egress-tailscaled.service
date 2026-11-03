@@ -1,0 +1,19 @@
+# openbot-egress-v1
+[Unit]
+Description=Dedicated OpenBot Tailscale node
+Requires=openbot-egress-network.service
+After=openbot-egress-network.service
+BindsTo=openbot-egress-network.service
+[Service]
+Type=notify
+Slice=openbottunnel.slice
+NetworkNamespacePath=/run/netns/openbot-egress
+StateDirectory=openbot-egress
+StateDirectoryMode=0700
+BindReadOnlyPaths=/etc/openbot-egress/bootstrap-resolv.conf:/etc/resolv.conf /etc/openbot-egress/nsswitch.conf:/etc/nsswitch.conf
+ExecStart=/usr/sbin/tailscaled --state=/var/lib/openbot-egress/tailscaled.state --statedir=/var/lib/openbot-egress --socket=/run/openbot-egress/tailscaled.sock --tun=tailscale0 --port=0
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+[Install]
+WantedBy=multi-user.target

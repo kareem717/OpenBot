@@ -1,0 +1,11 @@
+# openbot-egress-v1
+[Unit]
+Description=Check the dedicated OpenBot exit node before app startup
+Requires=openbot-egress-tailscaled.service
+After=openbot-egress-tailscaled.service
+BindsTo=openbot-egress-tailscaled.service openbot-egress-network.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/openbot-egress/openbot-egress.py ready
+TimeoutStartSec=45
