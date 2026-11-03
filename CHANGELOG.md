@@ -6,6 +6,19 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.1] - 2026-11-03
+
+### Added
+
+- You can set the speed of replies that are read aloud: 0.75×, 1×, 1.25×, 1.5× or 2×. Set it in Settings → Voice → Spoken replies, with the speed button in the voice conversation panel, or with the speed button on a spoken reply. The voice keeps its pitch, and a change applies to the reply that plays now.
+- Add an optional Linux network namespace for all OpenBot processes. It routes their traffic through a selected Tailscale exit node and preserves the VPS network route.
+- **The forked macOS client needs manual installation because this build has no Developer ID signature.**
+
+### Changed
+
+- Remove the total limits for connectors, installed skills, and saved memories. Existing data stays available. Older clients keep their supported list sizes; updated clients load all entries.
+- Keep desktop fork updates on a separate release feed so updates preserve these changes.
+
 ## [0.60.0] - 2026-11-03
 
 ### Added
