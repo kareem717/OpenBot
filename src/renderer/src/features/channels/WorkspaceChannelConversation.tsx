@@ -11,7 +11,12 @@ import { useBrowserTabs } from "../browser/browser-context";
 import { useConnectors } from "../connectors/connectors-context";
 import { Conversation } from "../conversation/Conversation";
 import { useRemoteDesktop } from "../remote-desktop/remote-desktop-context";
-import { remoteRoutineRecovery, serverCanAdminister, serverSendsWebhookTests } from "../servers/server-capabilities";
+import {
+  remoteRoutineRecovery,
+  serverCanAdminister,
+  serverHasUnlimitedMemoryStorage,
+  serverSendsWebhookTests,
+} from "../servers/server-capabilities";
 import { useServerScope } from "../servers/server-scope";
 import { useServerSettings } from "../servers/server-settings";
 import { useServers } from "../servers/servers-context";
@@ -77,6 +82,7 @@ function DesktopChannelConversation(props: { channelId: string; account: () => C
     channelId: props.channelId,
     isOwnSender,
     connectionReady: () => scope.loaded(),
+    unlimitedMemories: () => serverHasUnlimitedMemoryStorage(activeServer()),
     routines: {
       localHost: () => activeServer()?.kind === "local",
       eventsServerId: () => (serverCanAdminister(activeServer(), "events-v1") ? activeServer()?.id : undefined),

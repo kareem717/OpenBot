@@ -26,7 +26,6 @@ import { isBoolean, isDynamicRecord, isOneOf, isString } from "./runtime-values"
 
 /** The bounds of one presentation and one frame. A larger value is not valid, so main rejects the whole value. */
 export const BROWSER_DOCK_LIMITS = {
-  skills: 500,
   /** A skill id, slug, name or description. A host does not bound all of them, so this bound is generous. */
   skillText: 4_096,
   deliveries: 200,
@@ -151,8 +150,10 @@ export function isBrowserDockPresentation(value: unknown): value is BrowserDockP
     isDynamicRecord(value) &&
     isBrowserDockAgent(value.agent) &&
     isList(value.agents, INPUT_LIMITS.agents, isBrowserDockAgent) &&
-    isList(value.skills, BROWSER_DOCK_LIMITS.skills, isBrowserDockSkill) &&
-    isList(value.mcpServers, INPUT_LIMITS.mcpServers, isBrowserDockMcpServer) &&
+    Array.isArray(value.skills) &&
+    value.skills.every(isBrowserDockSkill) &&
+    Array.isArray(value.mcpServers) &&
+    value.mcpServers.every(isBrowserDockMcpServer) &&
     isDraft(value.draft) &&
     isCount(value.focusRequest) &&
     isOneOf(["enter", "meta-enter", "ctrl-enter"] as const, value.sendShortcut) &&

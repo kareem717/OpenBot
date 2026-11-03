@@ -287,8 +287,7 @@ export function isMcpTestResult(value: unknown): value is McpTestResult {
 }
 
 export function decodeMcpServerConfigs(value: unknown): McpServerConfig[] {
-  if (!Array.isArray(value) || value.length > INPUT_LIMITS.mcpServers || !value.every(isMcpServerConfig))
-    throw new Error("Invalid MCP server response.");
+  if (!Array.isArray(value) || !value.every(isMcpServerConfig)) throw new Error("Invalid MCP server response.");
   return value;
 }
 
@@ -298,8 +297,7 @@ export function decodeMcpTestResult(value: unknown): McpTestResult {
 }
 
 export function decodeMcpSignInStates(value: unknown): McpSignInState[] {
-  if (!Array.isArray(value) || value.length > INPUT_LIMITS.mcpServers || !value.every(isMcpSignInState))
-    throw new Error("Invalid MCP server response.");
+  if (!Array.isArray(value) || !value.every(isMcpSignInState)) throw new Error("Invalid MCP server response.");
   return value;
 }
 

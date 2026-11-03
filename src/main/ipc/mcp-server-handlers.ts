@@ -18,6 +18,7 @@ import {
   type TestMcpServerInput,
 } from "@openbot/contracts/ipc";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import { MCP_PAGES_ROUTES, MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import {
   MCP_SIGN_IN_APP_CAPABILITY,
   MCP_SIGN_IN_APP_ROUTES,
@@ -26,6 +27,12 @@ import { MCP_SIGN_IN_CAPABILITY, MCP_SIGN_IN_ROUTES } from "@openbot/contracts/t
 import { MCP_ROUTES } from "@openbot/contracts/team-protocol/mcp-v1";
 import { SIGN_IN_RELAY_CAPABILITY, SIGN_IN_RELAY_ROUTES } from "@openbot/contracts/team-protocol/sign-in-relay-v1";
 import { sourceText } from "@openbot/i18n/source";
+import {
+  listMcpServers as readRemoteMcpServers,
+  listMcpSignIns as readRemoteMcpSignIns,
+  signOutMcpServer as signOutRemoteMcpServer,
+} from "@openbot/team-client/team-admin-requests";
+import type { TeamApiRequest } from "@openbot/team-client/team-api-requests";
 import type { AgentService } from "../../backend/agent-service";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import { MCP_STDIO_PROBE_TIMEOUT_MS } from "../../backend/mcp-probe";
@@ -152,8 +159,24 @@ export function mcpServerIpcHandlers({
 
   // The shared contract decoder, as the channel-routine handlers do: it already bounds every field
   // of every configuration, so a `FromHost` twin would be the same checks under a second name.
-  function remoteList(serverId: string, path: string, body: unknown): Promise<McpServerConfig[]> {
+  function remoteRequest(serverId: string): TeamApiRequest {
+    return (method, path, decoder, body) =>
+      runCauseEffect(remoteServers.request(serverId, path, decoder, { method, body }));
+  }
+
+  async function remoteList(serverId: string, path: string, body: unknown): Promise<McpServerConfig[]> {
     requireRemoteSupport(serverId);
+    if (remoteServers.supportsCapability(serverId, MCP_SERVER_PAGES_CAPABILITY)) {
+      const pagedRoutes: ReadonlyMap<string, string> = new Map([
+        [MCP_ROUTES.save, MCP_PAGES_ROUTES.save],
+        [MCP_ROUTES.remove, MCP_PAGES_ROUTES.remove],
+        [MCP_ROUTES.toggle, MCP_PAGES_ROUTES.toggle],
+      ]);
+      const pagedPath = pagedRoutes.get(path);
+      if (!pagedPath) throw new Error("Unknown MCP write route.");
+      await runCauseEffect(remoteServers.request(serverId, pagedPath, () => undefined, { method: "POST", body }));
+      return runCauseEffect(readRemoteMcpServers(remoteRequest(serverId), true));
+    }
     return runCauseEffect(remoteServers.request(serverId, path, decodeMcpServerConfigs, { method: "POST", body }));
   }
 
@@ -222,6 +245,8 @@ export function mcpServerIpcHandlers({
         // The one read route, and the only one the host answers to a GET.
         remote: (serverId) => {
           requireRemoteSupport(serverId);
+          if (remoteServers.supportsCapability(serverId, MCP_SERVER_PAGES_CAPABILITY))
+            return runCauseEffect(readRemoteMcpServers(remoteRequest(serverId), true));
           return runCauseEffect(remoteServers.request(serverId, MCP_ROUTES.list, decodeMcpServerConfigs));
         },
       }),
@@ -319,6 +344,8 @@ export function mcpServerIpcHandlers({
         local: (parsed) => runCauseEffect(service.signOutMcpServer(parsed)),
         remote: (parsed, serverId) => {
           requireRemoteSignIn(serverId);
+          if (remoteServers.supportsCapability(serverId, MCP_SERVER_PAGES_CAPABILITY))
+            return runCauseEffect(signOutRemoteMcpServer(remoteRequest(serverId), parsed, true));
           return runCauseEffect(
             remoteServers.request(serverId, MCP_SIGN_IN_ROUTES.signOut, decodeMcpSignInStates, {
               method: "POST",
@@ -332,6 +359,8 @@ export function mcpServerIpcHandlers({
         local: () => service.listMcpSignIns(),
         remote: (serverId) => {
           if (!remoteServers.supportsCapability(serverId, MCP_SIGN_IN_CAPABILITY)) return [];
+          if (remoteServers.supportsCapability(serverId, MCP_SERVER_PAGES_CAPABILITY))
+            return runCauseEffect(readRemoteMcpSignIns(remoteRequest(serverId), true));
           return runCauseEffect(
             remoteServers.request(serverId, MCP_SIGN_IN_ROUTES.list, decodeMcpSignInStates, {
               method: "POST",

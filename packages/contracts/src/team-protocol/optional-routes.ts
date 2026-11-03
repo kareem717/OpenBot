@@ -34,6 +34,7 @@ import { BROWSER_PROFILES_CODECS } from "./browser-profiles-v1";
 import { BROWSER_SECRET_VAULT_CODECS } from "./browser-secret-vault-v1";
 import { BROWSER_SIGN_IN_CODECS } from "./browser-sign-in-v1";
 import { BROWSER_USER_CONTROL_CODECS } from "./browser-user-control-v1";
+import { CHANNEL_MEMORY_PAGES_CODECS } from "./channel-memory-pages-v1";
 import { COMPUTER_ACTIVITY_CODECS } from "./computer-activity-v1";
 import { CONNECTORS_CODECS } from "./connectors-v1";
 import { CONTEXT_COMPACT_CODECS } from "./context-compact-v1";
@@ -55,6 +56,7 @@ import { INSTANCE_TRANSFER_CODECS } from "./instance-transfer-v1";
 import { LIVE_ACTIVITY_PUSH_CODECS } from "./live-activity-push-v1";
 import { LOCAL_SERVERS_CODECS } from "./local-servers-v1";
 import { MACHINE_RESOURCES_CODECS } from "./machine-resources-v1";
+import { MCP_SERVER_PAGES_CODECS } from "./mcp-pages-v1";
 import { MCP_SIGN_IN_APP_CODECS } from "./mcp-sign-in-app-v1";
 import { MCP_SIGN_IN_CODECS } from "./mcp-sign-in-v1";
 import { MEMORY_REVIEW_CODECS } from "./memory-review-v1";
@@ -85,6 +87,7 @@ import { SIDE_QUESTION_CODECS } from "./side-question-v1";
 import { SIDEBAR_FOLDERS_CODECS } from "./sidebar-folders-v1";
 import { SIDEBAR_PINS_CODECS } from "./sidebar-pins-v1";
 import { SIGN_IN_RELAY_CODECS } from "./sign-in-relay-v1";
+import { SKILL_PAGES_CODECS } from "./skill-pages-v1";
 import { SKILLS_ADMIN_CODECS } from "./skills-admin-v1";
 import { STORAGE_DISK_CODECS } from "./storage-disk-v1";
 import { VAULT_IMPORT_CODECS } from "./vault-import-v1";
@@ -98,6 +101,9 @@ import { WORKSPACE_DIRECTORY_CODECS } from "./workspace-directory-v1";
 export type { OptionalRouteCodec } from "./admin-wire";
 
 const CODECS: ReadonlyMap<string, OptionalRouteCodec> = new Map([
+  ...CHANNEL_MEMORY_PAGES_CODECS,
+  ...MCP_SERVER_PAGES_CODECS,
+  ...SKILL_PAGES_CODECS,
   ...AGENT_ADMIN_CODECS,
   ...AGENT_MEMORIES_CODECS,
   ...SKILLS_ADMIN_CODECS,

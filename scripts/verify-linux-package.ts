@@ -9,6 +9,7 @@ import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { isMissingFileError } from "../src/backend/file-errors";
 import { elfSearchPaths, ORIGIN_SEARCH_PATH } from "./elf-search-paths";
+import { verifyDesktopUpdateSource } from "./verify-desktop-update-source";
 
 const logger = createOpenBotLogger("verify-linux-package");
 
@@ -187,9 +188,7 @@ try {
 } catch (error) {
   if (requireUpdateMetadata) throw error;
 }
-if (updateMetadata !== null && !updateMetadata.includes("provider: github")) {
-  throw new Error("The packaged update provider is not GitHub.");
-}
+if (updateMetadata !== null) verifyDesktopUpdateSource(updateMetadata);
 
 const fuses = await getCurrentFuseWire(executablePath);
 const expectedFuses: Array<[FuseV1Options, number]> = [

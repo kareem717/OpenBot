@@ -46,6 +46,7 @@ function webHostAdmin(
   sessionSettingsEnabled?: () => boolean,
   routineRecoveryEnabled?: () => boolean,
   webhookTestsEnabled?: () => boolean,
+  skillPagesEnabled?: () => boolean,
 ): NonNullable<ConversationRuntime["admin"]> {
   // `request()` names the connected host at call time, so a host switch reaches the new host.
   const eventRoutines = webEventRoutinesApi(
@@ -75,7 +76,11 @@ function webHostAdmin(
     },
     skills: {
       listInstalled: (agentId) =>
-        runTeamEffect(listAgentSkills(request(), agentId).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          listAgentSkills(request(), agentId, skillPagesEnabled?.() === true).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
       install: (input) =>
         runTeamEffect(installAgentSkill(request(), input).pipe(Effect.mapError((error) => error.cause))),
       uninstall: (input) =>
@@ -122,6 +127,8 @@ export function createWebConversationRuntime(
   sideQuestionEnabled?: () => boolean,
   webhookTestsEnabled?: () => boolean,
   browserProfilesEnabled?: () => boolean,
+  skillPagesEnabled?: () => boolean,
+  mcpPagesEnabled?: () => boolean,
 ): ConversationRuntime {
   const listeners = new Set<(event: AttachmentImportEvent) => void>();
   const files = createWebAttachmentFiles(remote, hostId);
@@ -294,13 +301,19 @@ export function createWebConversationRuntime(
       listInstalledSkills: async (agentId) =>
         adminRequest
           ? Effect.runPromise(
-              listInstalledSkills(adminRequest(), agentId).pipe(Effect.mapError((error) => error.cause)),
+              listInstalledSkills(adminRequest(), agentId, skillPagesEnabled?.() === true).pipe(
+                Effect.mapError((error) => error.cause),
+              ),
             )
           : [],
       listMcpServers: async (serverId) => {
         if (serverId !== hostId()) throw new Error(currentText().t("webClient.error.hostChanged"));
         return adminRequest
-          ? runTeamEffect(listMcpServers(adminRequest()).pipe(Effect.mapError((error) => error.cause)))
+          ? runTeamEffect(
+              listMcpServers(adminRequest(), mcpPagesEnabled?.() === true).pipe(
+                Effect.mapError((error) => error.cause),
+              ),
+            )
           : [];
       },
       listWorkspaceDirectory: ({ agentId, path }) => remote.workspaceDirectory(agentId, path),
@@ -398,6 +411,7 @@ export function createWebConversationRuntime(
           sessionSettingsEnabled,
           routineRecoveryEnabled,
           webhookTestsEnabled,
+          skillPagesEnabled,
         )
       : undefined,
   };

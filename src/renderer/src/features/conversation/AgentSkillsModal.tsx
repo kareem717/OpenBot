@@ -1,4 +1,3 @@
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { FilePreview, InstalledSkill, MarketplaceSkillDetail } from "@openbot/contracts/ipc";
 import { assignedSkillCount, isFolderSkill, isSkillEnabled, userAssignedSkills } from "@openbot/contracts/ipc";
 import type { AppTranslate } from "@openbot/i18n";
@@ -91,9 +90,7 @@ export function AgentSkillsModal(props: AgentSkillsModalProps) {
   const localLibrary = () => skillsMode() === "mutable";
   const calls = () => props.calls ?? agentSkillCalls(skillsMode() === "host" ? props.serverId : undefined);
   const catalogCalls = () => (props.catalog === undefined ? skillsPort().skills : props.catalog);
-  const assignmentCount = createMemo(() => assignedSkillCount(skills()));
-  const atCap = createMemo(() => assignmentCount() >= INPUT_LIMITS.agentSkills);
-  const canAdd = createMemo(() => mutable() && !atCap() && props.onAddFromMarketplace !== undefined && !loading());
+  const canAdd = createMemo(() => mutable() && props.onAddFromMarketplace !== undefined && !loading());
   /** A folder skill problem is English text from main. */
   const problemText = (skill: InstalledSkill) => (skill.problem === undefined ? undefined : sourceText(skill.problem));
   const selectedSkill = createMemo(() => {
@@ -434,7 +431,7 @@ export function AgentSkillsModal(props: AgentSkillsModalProps) {
               <Show when={!selectedSkill() && mutable()}>
                 <SkillLibraryToolbar
                   localTab={localLibrary()}
-                  canCreate={Boolean(props.onCreateSkill) && !atCap()}
+                  canCreate={Boolean(props.onCreateSkill)}
                   onCreate={() => {
                     props.onCreateSkill?.();
                     props.onOpenChange(false);
@@ -469,11 +466,6 @@ export function AgentSkillsModal(props: AgentSkillsModalProps) {
                           />
                         }
                       >
-                        <Show when={mutable() && atCap()}>
-                          <p class="agent-memory-limit" role="status">
-                            {t("skill.limitReached", { limit: INPUT_LIMITS.agentSkills })}
-                          </p>
-                        </Show>
                         <Show when={skillsMode() === "readonly"}>
                           <p class="agent-memory-limit" role="status">
                             {t("skill.managedOnHost")}

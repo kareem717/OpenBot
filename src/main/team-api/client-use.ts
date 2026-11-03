@@ -15,6 +15,7 @@ import { AGENT_PLAN_CARD_ROUTES } from "@openbot/contracts/team-protocol/agent-p
 import { AGENT_PUBLISH_ROUTES } from "@openbot/contracts/team-protocol/agent-publish-v1";
 import { AGENT_TASK_LIMIT_ROUTES } from "@openbot/contracts/team-protocol/agent-task-limit-v1";
 import { BROWSER_PROFILES_ROUTES } from "@openbot/contracts/team-protocol/browser-profiles-v1";
+import { CHANNEL_MEMORY_PAGE_ROUTE } from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { COMPUTER_ACTIVITY_ROUTES } from "@openbot/contracts/team-protocol/computer-activity-v1";
 import { CUSTOM_AGENTS_ROUTES } from "@openbot/contracts/team-protocol/custom-agents-v1";
@@ -29,6 +30,7 @@ import { HOSTED_SITES_ROUTES } from "@openbot/contracts/team-protocol/hosted-sit
 import { LIVE_ACTIVITY_PUSH_ROUTES } from "@openbot/contracts/team-protocol/live-activity-push-v1";
 import { LOCAL_SERVERS_ROUTES } from "@openbot/contracts/team-protocol/local-servers-v1";
 import { MACHINE_RESOURCES_ROUTES } from "@openbot/contracts/team-protocol/machine-resources-v1";
+import { MCP_PAGES_ROUTES } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { MEMORY_REVIEW_ROUTES } from "@openbot/contracts/team-protocol/memory-review-v1";
 import { MODEL_VISIBILITY_ROUTES } from "@openbot/contracts/team-protocol/model-visibility-v1";
 import { PROMPT_CACHE_TTL_ROUTES } from "@openbot/contracts/team-protocol/prompt-cache-ttl-v1";
@@ -42,6 +44,7 @@ import { ROUTINE_RESULTS_ROUTES } from "@openbot/contracts/team-protocol/routine
 import { SERVER_AUDIT_ROUTES } from "@openbot/contracts/team-protocol/server-audit-v1";
 import { SHARED_TABLES_ROUTES } from "@openbot/contracts/team-protocol/shared-tables-v1";
 import { SIDEBAR_PINS_ROUTES } from "@openbot/contracts/team-protocol/sidebar-pins-v1";
+import { SKILL_PAGE_ROUTES } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { SKILLS_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { STORAGE_DISK_ROUTES } from "@openbot/contracts/team-protocol/storage-disk-v1";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
@@ -53,10 +56,13 @@ import { VAULT_V2_ROUTES } from "@openbot/contracts/team-protocol/vault-v2";
  * POST for their body. They do not keep a hosted server running.
  */
 const PASSIVE_ROUTES: ReadonlySet<string> = new Set([
+  MCP_PAGES_ROUTES.list,
+  MCP_PAGES_ROUTES.signIns,
   TEAM_API_ROUTES.browser.preview,
   TEAM_API_ROUTES.browser.visible,
   CHANNEL_ROUTES.read,
   CHANNEL_ROUTES.memories,
+  CHANNEL_MEMORY_PAGE_ROUTE,
   CHANNEL_ROUTES.routines,
   CHANNEL_ROUTES.routineRuns,
   ROUTINE_RECOVERY_ROUTES.listRoutines,
@@ -106,6 +112,8 @@ const PASSIVE_ROUTES: ReadonlySet<string> = new Set([
   AGENT_MEMORIES_PAGE_ROUTE,
   AGENT_MEMORY_SELECTION_PAGE_ROUTE,
   SKILLS_ADMIN_ROUTES.list,
+  SKILL_PAGE_ROUTES.admin,
+  SKILL_PAGE_ROUTES.chat,
   AGENT_PUBLISH_ROUTES.preview,
   SHARED_TABLES_ROUTES.list,
   HOSTED_SITES_ROUTES.list,

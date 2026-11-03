@@ -68,7 +68,7 @@ const Agent = Schema.Struct({
   notifications: Schema.Boolean,
   busyMessageMode: Schema.optionalKey(guarded(isBusyMessageMode)),
   taskLimit: Schema.optionalKey(guarded(isAgentTaskLimit)),
-  skills: Schema.Array(text(512)).check(Schema.isMaxLength(INPUT_LIMITS.agentSkills)),
+  skills: Schema.Array(text(512)),
   files: Schema.NullOr(text(512)),
   routines: Schema.Array(Routine).check(Schema.isMaxLength(INPUT_LIMITS.agentRoutines)),
   /**
@@ -76,12 +76,12 @@ const Agent = Schema.Struct({
    * refuses an agent with one there, but it ignores this field and keeps the agent.
    */
   oneTimeRoutines: Schema.optionalKey(Schema.Array(Routine).check(Schema.isMaxLength(INPUT_LIMITS.agentRoutines))),
-  memories: Schema.Array(Memory).check(Schema.isMaxLength(512)),
+  memories: Schema.Array(Memory),
 });
 
 const Settings = Schema.Struct({
   /** Every environment and header value is empty: only the names travel. */
-  mcpServers: Schema.Array(guarded(isMcpServerConfig)).check(Schema.isMaxLength(INPUT_LIMITS.mcpServers)),
+  mcpServers: Schema.Array(guarded(isMcpServerConfig)),
   customProviders: Schema.Array(
     Schema.Struct({
       id: name(64),

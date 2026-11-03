@@ -38,8 +38,8 @@ export async function routeMcpSignIn(
       return json(200, {});
     // A sign-out names its row the way a removal does, so it is read by the same parser.
     case MCP_SIGN_IN_ROUTES.signOut:
-      return json(200, await runCauseEffect(signIns.signOut(parseRemoveMcpServer(body))));
+      return json(200, (await runCauseEffect(signIns.signOut(parseRemoveMcpServer(body)))).slice(0, 32));
     default:
-      return json(200, signIns.list());
+      return json(200, signIns.list().slice(0, 32));
   }
 }

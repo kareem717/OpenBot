@@ -110,6 +110,7 @@ import { HOST_TIMEZONE_CAPABILITY } from "@openbot/contracts/team-protocol/host-
 import { HOST_UPDATE_CAPABILITY } from "@openbot/contracts/team-protocol/host-update-v1";
 import { HOSTED_SITES_CAPABILITY } from "@openbot/contracts/team-protocol/hosted-sites-v1";
 import { INSTANCE_TRANSFER_CAPABILITY } from "@openbot/contracts/team-protocol/instance-transfer-v1";
+import { MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { MCP_SIGN_IN_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-sign-in-v1";
 import { ONEPASSWORD_CONNECTOR_CAPABILITY } from "@openbot/contracts/team-protocol/onepassword-connector-v1";
 import { PROVIDER_ACCOUNTS_CAPABILITY } from "@openbot/contracts/team-protocol/provider-accounts-v1";
@@ -120,6 +121,7 @@ import { ROUTINE_RESULTS_CAPABILITY } from "@openbot/contracts/team-protocol/rou
 import { SERVER_AUDIT_CAPABILITY } from "@openbot/contracts/team-protocol/server-audit-v1";
 import { SHARED_TABLES_CAPABILITY } from "@openbot/contracts/team-protocol/shared-tables-v1";
 import { SIGN_IN_RELAY_CAPABILITY } from "@openbot/contracts/team-protocol/sign-in-relay-v1";
+import { SKILL_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { SKILLS_ADMIN_CAPABILITY } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
@@ -234,6 +236,7 @@ import {
   listAgentTasks,
   listAgentThreadBranches,
   listAgentThreadReads,
+  listInstalledSkills,
   loadInstanceTransferSummary,
   markAgentThreadRead,
   readAgentMemories,
@@ -716,21 +719,31 @@ export function createHostRequestActions({
         capabilityApi(serverId, PROVIDERS_ADMIN_CAPABILITY, "mobile.server.providers.unsupported"),
         capabilities.get(serverId) ?? [],
       ),
-    listMcpServers: async (serverId) => runTeamRequest(listMcpServers(mcpAdmin(serverId))),
-    saveMcpServer: async (config, serverId) => runTeamRequest(saveMcpServer(mcpAdmin(serverId), { config })),
+    listMcpServers: async (serverId) =>
+      runTeamRequest(listMcpServers(mcpAdmin(serverId), has(serverId, MCP_SERVER_PAGES_CAPABILITY))),
+    saveMcpServer: async (config, serverId) =>
+      runTeamRequest(saveMcpServer(mcpAdmin(serverId), { config }, has(serverId, MCP_SERVER_PAGES_CAPABILITY))),
     removeMcpServer: async (mcpServerId, serverId) =>
-      runTeamRequest(removeMcpServer(mcpAdmin(serverId), { mcpServerId })),
+      runTeamRequest(removeMcpServer(mcpAdmin(serverId), { mcpServerId }, has(serverId, MCP_SERVER_PAGES_CAPABILITY))),
     setMcpServerEnabled: async (mcpServerId, enabled, serverId) =>
-      runTeamRequest(setMcpServerEnabled(mcpAdmin(serverId), { mcpServerId, enabled })),
+      runTeamRequest(
+        setMcpServerEnabled(mcpAdmin(serverId), { mcpServerId, enabled }, has(serverId, MCP_SERVER_PAGES_CAPABILITY)),
+      ),
     testMcpServer: async (config, serverId) => runTeamRequest(testMcpServer(mcpAdmin(serverId), { config })),
     // An older host keeps no sign-ins that a client can read.
     listMcpSignIns: async (serverId) =>
-      has(serverId, MCP_SIGN_IN_CAPABILITY) ? runTeamRequest(listMcpSignIns(teamApi(serverId))) : [],
+      has(serverId, MCP_SIGN_IN_CAPABILITY)
+        ? runTeamRequest(listMcpSignIns(teamApi(serverId), has(serverId, MCP_SERVER_PAGES_CAPABILITY)))
+        : [],
     signOutMcpServer: async (mcpServerId, serverId) =>
       runTeamRequest(
-        signOutMcpServer(capabilityApi(serverId, MCP_SIGN_IN_CAPABILITY, "mobile.server.mcp.unsupported"), {
-          mcpServerId,
-        }),
+        signOutMcpServer(
+          capabilityApi(serverId, MCP_SIGN_IN_CAPABILITY, "mobile.server.mcp.unsupported"),
+          {
+            mcpServerId,
+          },
+          has(serverId, MCP_SERVER_PAGES_CAPABILITY),
+        ),
       ),
     loadAgentSessionSettings: async (agentId, serverId) =>
       has(serverId, AGENT_SESSION_SETTINGS_CAPABILITY)
@@ -949,7 +962,16 @@ export function createHostRequestActions({
     },
     // A host too old to know the route answers 404, so ask its advertised capabilities first.
     loadAgentSkills: async (agentId, serverId, manage = false) => {
-      if (manage) return runTeamRequest(listAgentSkills(skillsAdmin(serverId), agentId));
+      if (manage)
+        return runTeamRequest(listAgentSkills(skillsAdmin(serverId), agentId, has(serverId, SKILL_PAGES_CAPABILITY)));
+      if (has(serverId, SKILL_PAGES_CAPABILITY))
+        return runTeamRequest(
+          listInstalledSkills(
+            (method, path, decode, body) => request(method, path, decode, body, serverId),
+            agentId,
+            true,
+          ),
+        );
       return has(serverId, TEAM_SEMANTIC_TAGS_CAPABILITY)
         ? request("GET", TEAM_API_ROUTES.agent.skills(agentId), decodeInstalledSkills, undefined, serverId)
         : null;

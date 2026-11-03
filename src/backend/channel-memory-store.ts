@@ -10,7 +10,6 @@ const CHANNEL_MEMORY_TABLES: MemoryTables = {
   ownerKey: "channelId",
   aggregateType: "channel-memory",
   limit: () => INPUT_LIMITS.channelMemories,
-  limitMessage: (limit) => sourceText("error.backend.channelMemoryLimit", { limit }),
 };
 
 /** The channel twin of `AgentMemoryStore`: the same `MemoryStore`, with a channel for an owner. */

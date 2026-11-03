@@ -1,7 +1,9 @@
 // What a channel remembers: the notes every member of it carries into a turn.
 
-import { decodeChannelMemories, decodeChannelMemory } from "@openbot/contracts/ipc";
+import { decodeChannelMemory } from "@openbot/contracts/ipc";
+import { CHANNEL_MEMORY_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
+import { readChannelMemories } from "@openbot/team-client/team-api-requests";
 import type { AgentService } from "../../backend/agent-service";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import { decodeVoid } from "../remote-host-decoding";
@@ -30,10 +32,11 @@ export function channelMemoryIpcHandlers({
         local: (channelId) => service.listChannelMemories(channelId),
         remote: (channelId, serverId) =>
           runCauseEffect(
-            remoteServers.request(serverId, CHANNEL_ROUTES.memories, decodeChannelMemories, {
-              method: "POST",
-              body: { channelId },
-            }),
+            readChannelMemories(
+              (method, path, decode, body) => remoteServers.request(serverId, path, decode, { method, body }),
+              channelId,
+              remoteServers.supportsCapability(serverId, CHANNEL_MEMORY_PAGES_CAPABILITY),
+            ),
           ),
       }),
       createChannelMemory: scopedHandler(parseCreateChannelMemory, {

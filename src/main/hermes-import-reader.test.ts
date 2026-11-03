@@ -78,7 +78,6 @@ describe("Hermes import reader", () => {
       listRoutines: () => [],
       createMemory: () => undefined,
       listMemories: () => [],
-      memoryLimit: () => 64,
       initializeMemorySelection: () => undefined,
       saveMcpServer: () => Effect.die("unused"),
     };

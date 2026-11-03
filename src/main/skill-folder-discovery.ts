@@ -22,7 +22,6 @@ import { OWNERSHIP_MARKER } from "./managed-skill-service";
 const WORKSPACE_SKILL_FOLDERS = [
   ...new Set(AGENT_PROVIDER_DESCRIPTORS.flatMap((descriptor) => descriptor.skillFolders)),
 ];
-const MAX_SKILLS_PER_FOLDER = 200;
 const MAX_SKILL_FILE_BYTES = 256 * 1024;
 
 /**
@@ -101,8 +100,7 @@ const skillFoldersEffect = Effect.fn("SkillFolder.skillFolders")(function* (
       .map((entry) => entry.name)
       // `.openbot-stage-` and `.openbot-backup-` folders are an install in progress.
       .filter((name) => !name.startsWith(".") && !name.includes(".openbot-") && !exclude.has(name))
-      .sort()
-      .slice(0, MAX_SKILLS_PER_FOLDER);
+      .sort();
     for (const name of names) {
       const directory = join(root, folder, name);
       try {

@@ -40,17 +40,21 @@ export async function routeMcpServers(
   if (!mcpServers || !capabilities.has(MCP_SERVERS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.mcpUnsupported"));
   requireAdmin(member);
-  if (list) return json(200, mcpServers.listMcpServers());
+  if (list) return json(200, mcpServers.listMcpServers().slice(0, 32));
   // `readJson` has already run the body through the MCP wire codec, so every field below is decoded
   // and bounded before the IPC parsers see it.
   const body = mcpRequest(url.pathname, await readJson(request));
   if (save) {
+    const parsed = parseSaveMcpServer(body);
+    if (!parsed.config.id && mcpServers.listMcpServers().length >= 32)
+      throw new HttpError(400, sourceText("error.backend.mcpServerLimit", { limit: 32 }));
     // The local save starts the runtime download; the host route shares it, or a first server
     // added remotely never gets the runtime its test and its spawn need.
     toolRuntimes?.startToolRuntimes();
-    return json(200, await runCauseEffect(mcpServers.saveMcpServer(parseSaveMcpServer(body))));
+    return json(200, (await runCauseEffect(mcpServers.saveMcpServer(parsed))).slice(0, 32));
   }
-  if (remove) return json(200, await runCauseEffect(mcpServers.removeMcpServer(parseRemoveMcpServer(body))));
+  if (remove)
+    return json(200, (await runCauseEffect(mcpServers.removeMcpServer(parseRemoveMcpServer(body)))).slice(0, 32));
   if (test) {
     const parsed = parseTestMcpServer(body);
     if (toolRuntimes) await runCauseEffect(prepareToolRuntimeForTest(parsed.config, toolRuntimes));
@@ -64,5 +68,5 @@ export async function routeMcpServers(
   }
   const toggled = parseSetMcpServerEnabled(body);
   if (toggled.enabled) toolRuntimes?.startToolRuntimes();
-  return json(200, await runCauseEffect(mcpServers.setMcpServerEnabled(toggled)));
+  return json(200, (await runCauseEffect(mcpServers.setMcpServerEnabled(toggled))).slice(0, 32));
 }

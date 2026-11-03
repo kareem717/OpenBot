@@ -45,6 +45,8 @@ export interface ChannelConversationEnvironment {
   isOwnSender: (senderId: string) => boolean;
   /** Whether the host answers. Until it does, no command goes to it. */
   connectionReady: () => boolean;
+  /** Whether this host stores channel memories without a count quota. */
+  unlimitedMemories?: () => boolean;
   routines: ChannelRoutineHost;
   /** Every approval that waits on the host. The channel shows the ones of its own work. */
   approvals: () => readonly AgentApproval[];
@@ -252,6 +254,7 @@ export function createChannelConversation(env: ChannelConversationEnvironment) {
       <ChannelSettingsPane
         channelId={channelId}
         routines={env.routines}
+        unlimitedMemories={env.unlimitedMemories?.() === true}
         maxWidth={props.maxWidth}
         onWidthChange={props.onWidthChange}
         onClose={props.onClose}

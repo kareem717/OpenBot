@@ -62,7 +62,6 @@ type PendingMemoryMutation =
 /** The memories that a background review read, and the epoch it read them in. */
 export interface MemoryReviewBase {
   epoch: number;
-  limit: number;
   essentialBytes: number;
   memories: { memory: AgentMemory; inclusion: "essential" | "searchable"; userControlled: boolean }[];
 }
@@ -72,7 +71,7 @@ export interface AgentMemoriesOptions {
   conversation: ConversationRuntime;
   emit(event: AgentEvent): void;
   emitError(code: string, error: unknown, agentId?: string): void;
-  /** How many memories one agent can hold: the app setting. Omitted, the default cap. */
+  /** The legacy app preference. It is retained for compatibility and does not restrict storage. */
   limit?: () => number;
 }
 
@@ -185,7 +184,6 @@ export class AgentMemories {
     }));
     return {
       epoch: this.#epoch(agentId),
-      limit: this.#memories.limit(),
       essentialBytes: essentialMemoryBytes(
         memories.filter((entry) => entry.inclusion === "essential").map((entry) => entry.memory),
       ),
@@ -195,7 +193,7 @@ export class AgentMemories {
 
   /**
    * Commits the changes of a background review as one turn of the agent, through the checks of the
-   * memory tools: the cap, the essential budget, duplicates and the user's choices. A review changes
+   * memory tools: the essential budget, duplicates and the user's choices. A review changes
    * only the memories that the agent saved, and only while they hold the text that the review read.
    * A clear since `reviewBase` drops every change.
    */
@@ -207,7 +205,7 @@ export class AgentMemories {
   ): ConversationMemoryChange[] {
     if (base.epoch !== this.#epoch(agentId)) return [];
     const read = new Map(base.memories.map((entry) => [entry.memory.id, entry]));
-    // Forgets first, so that the adds find the room they free.
+    // Forgets first, so that a replacement does not retain the old entry as a duplicate.
     const ordered = [
       ...operations.filter((operation) => operation.type === "forget"),
       ...operations.filter((operation) => operation.type === "update"),
@@ -374,20 +372,6 @@ export class AgentMemories {
           if (current && sourceSelection?.inclusion === "essential")
             return openBotToolFailure(sourceText("error.backend.memoryEssentialBudget"));
           inclusion = "searchable";
-        }
-      }
-      // A full agent hears it now, while it can still merge or forget in this turn. Staged anyway,
-      // the save would fail at commit and the memory would be lost.
-      if (!memoryId) {
-        const projected = this.#projectedMemories(senderAgentId, params.turnId, params.callId);
-        const normalized = normalizeMemoryText(text);
-        const limit = this.#memories.limit();
-        const saved = projected.size;
-        if (saved >= limit && ![...projected.values()].some((memory) => memory.text === normalized)) {
-          // Over the limit only when the user lowered it. The agent must not delete memories for that.
-          const key =
-            saved > limit ? "error.backend.agentMemoryLimitExceeded" : "error.backend.agentMemoryLimitReached";
-          return openBotToolFailure(sourceText(key, { saved, limit }));
         }
       }
       this.#stage(params.turnId, {
@@ -697,71 +681,6 @@ export class AgentMemories {
     const agent = this.#conversation.requireKnownAgent(agentId);
     this.#conversation.unloadAgentThreads(agent.id);
     this.#emit({ type: "memories-changed", agentId });
-  }
-
-  /**
-   * The agent's memories, by id, once this turn's staged changes commit, replayed in staging order
-   * as `finishTurn` applies them. A staged change that commit would skip, such as a forget of a
-   * memory the same turn already updated, is skipped here too.
-   *
-   * Another turn of the agent, such as a channel turn beside its chat, commits apart: before this
-   * one, after it, or never. So its new memories hold a place, and its forgets and updates free none.
-   * A memory that another turn changes counts, but this turn can neither fold into it nor remove it.
-   * A null text never matches.
-   */
-  #projectedMemories(
-    agentId: string,
-    turnId: string,
-    exceptCallId: string,
-  ): Map<string, { text: string | null; updatedAt: string | null }> {
-    const epoch = this.#epoch(agentId);
-    const counts = (mutation: PendingMemoryMutation) =>
-      mutation.agentId === agentId && mutation.epoch === epoch && mutation.callId !== exceptCallId;
-    const others = [...this.#pending]
-      .filter(([pendingTurnId]) => pendingTurnId !== turnId)
-      .flatMap(([, pending]) => pending.filter(counts));
-    const changedElsewhere = new Set(others.flatMap((mutation) => (mutation.memoryId ? [mutation.memoryId] : [])));
-    const memories = new Map<string, { text: string | null; updatedAt: string | null }>(
-      this.#memories
-        .list(agentId)
-        .map((memory) => [
-          memory.id,
-          changedElsewhere.has(memory.id)
-            ? { text: null, updatedAt: null }
-            : { text: normalizeMemoryText(memory.text), updatedAt: memory.updatedAt },
-        ]),
-    );
-    for (const mutation of (this.#pending.get(turnId) ?? []).filter(counts)) {
-      if (mutation.type === "selection") continue;
-      if (mutation.type === "forget") {
-        if (memories.get(mutation.memoryId)?.updatedAt === mutation.expectedUpdatedAt)
-          memories.delete(mutation.memoryId);
-        continue;
-      }
-      const text = normalizeMemoryText(mutation.text);
-      const same = [...memories].find(([, memory]) => memory.text === text)?.[0];
-      if (!mutation.memoryId) {
-        if (same === undefined) memories.set(`staged:${mutation.callId}`, { text, updatedAt: null });
-        continue;
-      }
-      const current = memories.get(mutation.memoryId);
-      if (
-        !current ||
-        changedElsewhere.has(mutation.memoryId) ||
-        (current.updatedAt !== null &&
-          mutation.expectedUpdatedAt !== undefined &&
-          current.updatedAt !== mutation.expectedUpdatedAt)
-      )
-        continue;
-      // An update to the text of another memory folds the two into one.
-      if (same !== undefined && same !== mutation.memoryId) memories.delete(mutation.memoryId);
-      else memories.set(mutation.memoryId, { text, updatedAt: null });
-    }
-    for (const mutation of others) {
-      if (mutation.type === "remember" && !mutation.memoryId)
-        memories.set(`reserved:${mutation.callId}`, { text: null, updatedAt: null });
-    }
-    return memories;
   }
 
   /** A step of the turn's activity, so the chat shows that the agent looked in its memory. */

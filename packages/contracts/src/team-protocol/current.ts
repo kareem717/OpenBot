@@ -46,6 +46,7 @@ import {
   TEAM_BROWSER_VIEW_VIEWPORT_CAPABILITY,
 } from "./browser-view-v1";
 import { TEAM_CHANNEL_ATTENTION_CAPABILITY } from "./channel-attention-v1";
+import { CHANNEL_MEMORY_PAGES_CAPABILITY } from "./channel-memory-pages-v1";
 import { CLAUDE_API_KEY_CAPABILITY } from "./claude-api-key-v1";
 import { COMPUTER_ACTIVITY_CAPABILITY } from "./computer-activity-v1";
 import { CONNECTORS_CAPABILITY } from "./connectors-v1";
@@ -70,6 +71,7 @@ import { INSTANCE_TRANSFER_CAPABILITY } from "./instance-transfer-v1";
 import { LIVE_ACTIVITY_PUSH_CAPABILITY } from "./live-activity-push-v1";
 import { LOCAL_SERVERS_CAPABILITY } from "./local-servers-v1";
 import { MACHINE_RESOURCES_CAPABILITY } from "./machine-resources-v1";
+import { MCP_SERVER_PAGES_CAPABILITY } from "./mcp-pages-v1";
 import { MCP_SIGN_IN_APP_CAPABILITY } from "./mcp-sign-in-app-v1";
 import { MCP_SIGN_IN_CAPABILITY } from "./mcp-sign-in-v1";
 import { MEMORY_REVIEW_CAPABILITY } from "./memory-review-v1";
@@ -105,6 +107,7 @@ import { SIDE_QUESTION_CAPABILITY } from "./side-question-v1";
 import { SIDEBAR_FOLDERS_CAPABILITY } from "./sidebar-folders-v1";
 import { SIDEBAR_PINS_CAPABILITY } from "./sidebar-pins-v1";
 import { SIGN_IN_RELAY_CAPABILITY } from "./sign-in-relay-v1";
+import { SKILL_PAGES_CAPABILITY } from "./skill-pages-v1";
 import { SKILLS_ADMIN_CAPABILITY } from "./skills-admin-v1";
 import { SKILLS_EVENTS_CAPABILITY } from "./skills-events-v1";
 import { STORAGE_DISK_CAPABILITY } from "./storage-disk-v1";
@@ -112,6 +115,7 @@ import { TEAM_SUBAGENTS_CAPABILITY } from "./subagents-v1";
 import { TEAM_UI_BLOCK_AUTO_ANSWER_CAPABILITY } from "./ui-block-auto-answer-v1";
 import { TEAM_UI_BLOCK_VAULT_CAPABILITY } from "./ui-block-vault-v1";
 import { TEAM_UI_BLOCKS_CAPABILITY } from "./ui-blocks-v1";
+import { UNLIMITED_MEMORY_STORAGE_CAPABILITY } from "./unlimited-memory-storage-v1";
 import { TEAM_OPEN_PROVIDERS_CAPABILITY } from "./v8";
 import { TEAM_LONG_CAPABILITY_LISTS_CAPABILITY, TEAM_PROTOCOL_V9_CAPABILITIES } from "./v9";
 import { VAULT_IMPORT_CAPABILITY } from "./vault-import-v1";
@@ -199,6 +203,7 @@ export {
   BROWSER_SIGN_IN_CAPABILITY,
   BROWSER_USER_CONTROL_CAPABILITY,
   CHANNEL_DELETE_CAPABILITY,
+  CHANNEL_MEMORY_PAGES_CAPABILITY,
   CHANNEL_TASK_CANCEL_CAPABILITY,
   COMPUTER_ACTIVITY_CAPABILITY,
   CONNECTORS_CAPABILITY,
@@ -221,6 +226,7 @@ export {
   LIVE_ACTIVITY_PUSH_CAPABILITY,
   LOCAL_SERVERS_CAPABILITY,
   MACHINE_RESOURCES_CAPABILITY,
+  MCP_SERVER_PAGES_CAPABILITY,
   MCP_SERVERS_CAPABILITY,
   MCP_SIGN_IN_APP_CAPABILITY,
   MCP_SIGN_IN_CAPABILITY,
@@ -252,6 +258,7 @@ export {
   SIDEBAR_FOLDERS_CAPABILITY,
   SIDEBAR_PINS_CAPABILITY,
   SIGN_IN_RELAY_CAPABILITY,
+  SKILL_PAGES_CAPABILITY,
   SKILLS_ADMIN_CAPABILITY,
   SKILLS_EVENTS_CAPABILITY,
   STORAGE_CAPABILITY,
@@ -273,6 +280,7 @@ export {
   TEAM_UI_BLOCK_AUTO_ANSWER_CAPABILITY,
   TEAM_UI_BLOCK_VAULT_CAPABILITY,
   TEAM_UI_BLOCKS_CAPABILITY,
+  UNLIMITED_MEMORY_STORAGE_CAPABILITY,
   VAULT_CAPABILITY,
   VAULT_IMPORT_CAPABILITY,
   VAULT_V2_CAPABILITY,
@@ -283,6 +291,10 @@ export {
 };
 
 export const TEAM_CURRENT_CAPABILITIES = [
+  CHANNEL_MEMORY_PAGES_CAPABILITY,
+  UNLIMITED_MEMORY_STORAGE_CAPABILITY,
+  MCP_SERVER_PAGES_CAPABILITY,
+  SKILL_PAGES_CAPABILITY,
   BROWSER_SECRET_CAPABILITY,
   ...TEAM_PROTOCOL_V9_CAPABILITIES,
   "remote-desktop-setup",
@@ -492,6 +504,10 @@ export function isAgentMessageRoute(method: string, path: string): boolean {
 // The v8 marker stays out: a client sends it only after the host reports protocol 8.
 export const TEAM_BOOTSTRAP_CAPABILITIES = TEAM_CURRENT_CAPABILITIES.filter(
   (capability) =>
+    capability !== CHANNEL_MEMORY_PAGES_CAPABILITY &&
+    capability !== UNLIMITED_MEMORY_STORAGE_CAPABILITY &&
+    capability !== MCP_SERVER_PAGES_CAPABILITY &&
+    capability !== SKILL_PAGES_CAPABILITY &&
     capability !== TEAM_OPEN_PROVIDERS_CAPABILITY &&
     capability !== AGENT_MEMORIES_CAPABILITY &&
     capability !== AGENT_SESSION_SETTINGS_CAPABILITY &&
@@ -587,6 +603,10 @@ export const TEAM_BOOTSTRAP_CAPABILITIES = TEAM_CURRENT_CAPABILITIES.filter(
  * leaves these out of the compatibility list of an older peer (`teamCapabilitiesVisibleToProtocol`).
  */
 export const TEAM_PROTOCOL_V9_ONLY_CAPABILITIES: ReadonlySet<string> = new Set<TeamCurrentCapability>([
+  CHANNEL_MEMORY_PAGES_CAPABILITY,
+  UNLIMITED_MEMORY_STORAGE_CAPABILITY,
+  MCP_SERVER_PAGES_CAPABILITY,
+  SKILL_PAGES_CAPABILITY,
   TEAM_LONG_CAPABILITY_LISTS_CAPABILITY,
   AGENT_NOTIFICATION_LEVELS_CAPABILITY,
   AGENT_NEW_CHAT_CAPABILITY,
@@ -640,6 +660,10 @@ export function teamCapabilitiesVisibleToProtocol<T extends string>(capabilities
 export function legacyTeamCapabilities(capabilities: readonly string[]): string[] {
   return capabilities.filter(
     (capability) =>
+      capability !== CHANNEL_MEMORY_PAGES_CAPABILITY &&
+      capability !== UNLIMITED_MEMORY_STORAGE_CAPABILITY &&
+      capability !== MCP_SERVER_PAGES_CAPABILITY &&
+      capability !== SKILL_PAGES_CAPABILITY &&
       capability !== "local-providers-v3" &&
       capability !== TEAM_OPEN_PROVIDERS_CAPABILITY &&
       capability !== AGENT_MEMORIES_CAPABILITY &&

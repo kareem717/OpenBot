@@ -548,7 +548,6 @@ export class MessagingThreads {
           accepted: true,
           memoryId: saved.success.id,
           count: this.memories.count(link.connectionId),
-          limit: this.memories.limit(),
         });
       }
       case "messaging_forget_memory":

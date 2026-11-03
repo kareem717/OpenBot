@@ -50,6 +50,7 @@ import { BROWSER_PAGE_STATE_CAPABILITY } from "@openbot/contracts/team-protocol/
 import { BROWSER_PROFILES_EVENTS_CAPABILITY } from "@openbot/contracts/team-protocol/browser-profiles-events-v1";
 import { BROWSER_PROFILES_CAPABILITY } from "@openbot/contracts/team-protocol/browser-profiles-v1";
 import { BROWSER_USER_CONTROL_CAPABILITY } from "@openbot/contracts/team-protocol/browser-user-control-v1";
+import { CHANNEL_MEMORY_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { CLAUDE_API_KEY_CAPABILITY } from "@openbot/contracts/team-protocol/claude-api-key-v1";
 import {
   AGENT_ADMIN_CAPABILITY,
@@ -143,6 +144,7 @@ import {
   MACHINE_RESOURCES_CAPABILITY,
   type MachineAlertEvent,
 } from "@openbot/contracts/team-protocol/machine-resources-v1";
+import { MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { type OptionalTeamEvent, optionalTeamEvent } from "@openbot/contracts/team-protocol/optional-events";
 import { PROVIDERS_V8_CAPABILITY } from "@openbot/contracts/team-protocol/providers-v8";
 import {
@@ -153,6 +155,7 @@ import { SERVER_AUDIT_CAPABILITY } from "@openbot/contracts/team-protocol/server
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import { SIDEBAR_FOLDERS_CAPABILITY, sidebarFoldersEvent } from "@openbot/contracts/team-protocol/sidebar-folders-v1";
 import { SIDEBAR_PINS_CAPABILITY } from "@openbot/contracts/team-protocol/sidebar-pins-v1";
+import { SKILL_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { STORAGE_DISK_CAPABILITY } from "@openbot/contracts/team-protocol/storage-disk-v1";
 import {
   TEAM_UI_BLOCK_AUTO_ANSWER_CAPABILITY,
@@ -162,6 +165,7 @@ import {
   TEAM_UI_BLOCK_VAULT_CAPABILITY,
   withUiBlockVaultRequests,
 } from "@openbot/contracts/team-protocol/ui-block-vault-v1";
+import { UNLIMITED_MEMORY_STORAGE_CAPABILITY } from "@openbot/contracts/team-protocol/unlimited-memory-storage-v1";
 import {
   TEAM_APP_VERSION_HEADER,
   TEAM_PROTOCOL_V1,
@@ -275,6 +279,7 @@ import { routeLiveActivityPush } from "./team-api/route-live-activity-push";
 import { routeLocalServers } from "./team-api/route-local-servers";
 import { routeMachineResources } from "./team-api/route-machine-resources";
 import { routeMcpServers } from "./team-api/route-mcp";
+import { routeMcpServerPages } from "./team-api/route-mcp-pages";
 import { routeMcpSignIn } from "./team-api/route-mcp-sign-in";
 import { routeMcpSignInApp } from "./team-api/route-mcp-sign-in-app";
 import { routeMemoryReview } from "./team-api/route-memory-review";
@@ -297,6 +302,7 @@ import { routeSideQuestion } from "./team-api/route-side-question";
 import { routeSidebarFolders } from "./team-api/route-sidebar-folders";
 import { routeSidebarPins } from "./team-api/route-sidebar-pins";
 import { routeSignInRelay } from "./team-api/route-sign-in-relay";
+import { routeSkillPages } from "./team-api/route-skill-pages";
 import { routeSkillsAdmin } from "./team-api/route-skills-admin";
 import { routeStorage } from "./team-api/route-storage";
 import { routeTeam } from "./team-api/route-team";
@@ -994,6 +1000,23 @@ export class TeamApiServer {
       if ((await this.#routeBrowser(context)) === "handled") return;
       if ((await this.#routeFiles(context)) === "handled") return;
       if ((await routeChannels(context, this.#options.channels, this.#options.agents, hidden)) === "handled") return;
+      if (
+        (await routeMcpServerPages(
+          context,
+          this.#options.mcpServers,
+          this.#options.mcpSignIns,
+          this.#options.mcpToolRuntimePreparation,
+        )) === "handled"
+      )
+        return;
+      if (
+        (await routeSkillPages(
+          context,
+          { agents: this.#options.agents, admin: this.#options.admin, skills: this.#options.skills },
+          hidden,
+        )) === "handled"
+      )
+        return;
       if (
         (await routeMcpServers(context, this.#options.mcpServers, this.#options.mcpToolRuntimePreparation)) ===
         "handled"
@@ -2139,6 +2162,11 @@ export class TeamApiServer {
               this.#options.remoteScreen?.checkSetup !== undefined && this.#options.remoteScreen?.test !== undefined
             );
           if (capability === MCP_SERVERS_CAPABILITY) return this.#options.mcpServers !== undefined;
+          if (capability === MCP_SERVER_PAGES_CAPABILITY) return this.#options.mcpServers !== undefined;
+          if (capability === CHANNEL_MEMORY_PAGES_CAPABILITY) return this.#options.channels !== undefined;
+          if (capability === SKILL_PAGES_CAPABILITY)
+            return this.#options.skills !== undefined || this.#options.admin?.skills !== undefined;
+          if (capability === UNLIMITED_MEMORY_STORAGE_CAPABILITY) return true;
           // Each account signs in with the browser, so it needs the sign-in routes too.
           if (capability === MCP_ACCOUNTS_CAPABILITY)
             return this.#options.mcpServers !== undefined && this.#options.mcpSignIns !== undefined;

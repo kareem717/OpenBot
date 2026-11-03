@@ -67,8 +67,10 @@ import {
   BROWSER_PROFILES_ROUTES,
 } from "@openbot/contracts/team-protocol/browser-profiles-v1";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import { SKILL_PAGE_ROUTES, SKILL_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { SKILLS_ADMIN_CAPABILITY, SKILLS_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { sourceText } from "@openbot/i18n/source";
+import { readInstalledSkillPages } from "@openbot/team-client/team-api-requests";
 import { runCauseEffect } from "../../backend/effect-boundary";
 import type { AgentAdminSettingsService } from "../agent-admin-settings";
 import type { AgentHostSettingsService } from "../agent-host-settings";
@@ -261,7 +263,15 @@ export function agentAdminIpcHandlers({
       listAgentSkills: scopedHandler((value) => requireString(value, "agentId"), {
         local: (agentId) => runCauseEffect(skills.listInstalled(agentId)),
         remote: (agentId, serverId) =>
-          remoteSkills(serverId, SKILLS_ADMIN_ROUTES.list, { agentId }, decodeInstalledSkills),
+          remoteServers.supportsCapability(serverId, SKILL_PAGES_CAPABILITY)
+            ? runCauseEffect(
+                readInstalledSkillPages(
+                  (method, path, decode, body) => remoteServers.request(serverId, path, decode, { method, body }),
+                  agentId,
+                  SKILL_PAGE_ROUTES.admin,
+                ),
+              )
+            : remoteSkills(serverId, SKILLS_ADMIN_ROUTES.list, { agentId }, decodeInstalledSkills),
       }),
       installAgentSkill: scopedHandler(parseInstallSkill, {
         local: (input) => runCauseEffect(skills.install(input)),

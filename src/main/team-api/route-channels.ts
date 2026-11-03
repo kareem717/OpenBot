@@ -1,3 +1,4 @@
+import type { ChannelMemory } from "@openbot/contracts/ipc";
 import {
   CHANNEL_CHATS_CAPABILITY,
   CHANNEL_DELETE_CAPABILITY,
@@ -9,6 +10,11 @@ import {
   parseChannelRead,
 } from "@openbot/contracts/ipc";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
+import {
+  CHANNEL_MEMORY_PAGE_ROUTE,
+  CHANNEL_MEMORY_PAGE_SIZE,
+  CHANNEL_MEMORY_PAGES_CAPABILITY,
+} from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { CHANNEL_ROUTES, channelRequest, isChannelSettingsRoute } from "@openbot/contracts/team-protocol/channels-v1";
 import { sourceText } from "@openbot/i18n/source";
 import type { ChannelService } from "../../backend/channel-service";
@@ -26,7 +32,13 @@ import {
 import type { TeamApiAgents } from "./dependencies";
 import { HttpError } from "./http-error";
 import type { RouteOutcome, TeamApiRequestContext } from "./request-context";
-import { readJson, requireAgentLevel, requireReleasedSchedule, stringField } from "./request-helpers";
+import {
+  readJson,
+  requireAgentLevel,
+  requireReleasedSchedule,
+  stringField,
+  WEBRTC_FRAME_BODY_BUDGET,
+} from "./request-helpers";
 
 /**
  * The settings half of a channel is served from `AgentService`, the same object the IPC handlers
@@ -59,12 +71,36 @@ export async function routeChannels(
   const read = method === "POST" && url.pathname === CHANNEL_ROUTES.read;
   const command = method === "POST" && url.pathname === CHANNEL_ROUTES.command;
   const remove = method === "POST" && url.pathname === CHANNEL_ROUTES.delete;
+  const memoryPage = method === "POST" && url.pathname === CHANNEL_MEMORY_PAGE_ROUTE;
   // Every settings route is a POST that names its channel in the body, so one test covers all
   // eleven of them and an unknown method on a known path stays a 404 rather than a 400.
   const settings = method === "POST" && isChannelSettingsRoute(url.pathname);
-  if (!list && !read && !command && !remove && !settings) return "unmatched";
+  if (!list && !read && !command && !remove && !settings && !memoryPage) return "unmatched";
+  if (memoryPage && !capabilities.has(CHANNEL_MEMORY_PAGES_CAPABILITY)) return "unmatched";
   if (!channels || !capabilities.has(CHANNEL_CHATS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.channelsUnsupported"));
+  if (memoryPage) {
+    const body = await readJson(request);
+    const after = body.after === null ? null : stringField(body, "after");
+    const remaining = agents
+      .listChannelMemories(channelId(body))
+      .filter((memory) => after === null || memory.id > after)
+      .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+    const memories: ChannelMemory[] = [];
+    for (const memory of remaining.slice(0, CHANNEL_MEMORY_PAGE_SIZE)) {
+      memories.push(memory);
+      if (Buffer.byteLength(JSON.stringify({ memories, nextCursor: memory.id }), "utf8") > WEBRTC_FRAME_BODY_BUDGET) {
+        memories.pop();
+        break;
+      }
+    }
+    if (remaining.length && !memories.length)
+      throw new HttpError(413, "The channel memory exceeds the response size limit.");
+    return json(200, {
+      memories,
+      nextCursor: remaining.length > memories.length ? (memories.at(-1)?.id ?? null) : null,
+    });
+  }
   if (list) return json(200, channels.store.list(member.id));
   if (read) {
     const input = parseChannelRead(channelRequest(url.pathname, await readJson(request)));
@@ -154,7 +190,9 @@ async function routeChannelSettings(
   const body = await readJson(request);
   switch (url.pathname) {
     case CHANNEL_ROUTES.memories:
-      return json(200, agents.listChannelMemories(channelId(body)));
+      // The frozen channel-chats-v1 list accepts 64 records. New peers read every record through
+      // channel-memory-pages-v1; the legacy projection must stay decodable without changing storage.
+      return json(200, agents.listChannelMemories(channelId(body)).slice(0, 64));
     case CHANNEL_ROUTES.memoryCreate:
       return json(201, agents.createChannelMemory(parseCreateChannelMemory(body)));
     case CHANNEL_ROUTES.memoryUpdate:

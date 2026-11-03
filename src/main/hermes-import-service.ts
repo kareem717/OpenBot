@@ -51,13 +51,7 @@ const LINKS_VERSION = 1;
 export interface HermesImportAgents
   extends Pick<
     AgentImportAgents,
-    | "listAgents"
-    | "createAgentProfile"
-    | "createRoutine"
-    | "createMemory"
-    | "memoryLimit"
-    | "initializeMemorySelection"
-    | "deleteAgent"
+    "listAgents" | "createAgentProfile" | "createRoutine" | "createMemory" | "initializeMemorySelection" | "deleteAgent"
   > {
   updateAgent(input: UpdateAgentInput): Effect.Effect<AgentSummary, { cause: unknown }>;
   listMemories(agentId: string): ReadonlyArray<{ text: string }>;
@@ -320,7 +314,7 @@ export class HermesImportService {
     );
   });
 
-  /** Adds the entries the agent does not have, up to the memory limit. */
+  /** Adds every valid entry the agent does not have. */
   #addMemories(agent: AgentSummary, profile: HermesProfileData, warnings: string[]): void {
     const memories = this.agents.listMemories(agent.id);
     const known = new Set(memories.map((memory) => memory.text));
@@ -334,10 +328,7 @@ export class HermesImportService {
           limit: INPUT_LIMITS.agentMemoryText,
         }),
       );
-    const room = Math.max(0, this.agents.memoryLimit() - memories.length);
-    if (fitting.length > room)
-      warnings.push(sourceText("error.import.memoryLimit", { name: profile.name, limit: this.agents.memoryLimit() }));
-    for (const text of fitting.slice(0, room)) this.agents.createMemory({ agentId: agent.id, text });
+    for (const text of fitting) this.agents.createMemory({ agentId: agent.id, text });
     if (memories.length === 0) this.agents.initializeMemorySelection(agent.id);
   }
 

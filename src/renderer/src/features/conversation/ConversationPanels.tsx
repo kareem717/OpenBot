@@ -583,7 +583,6 @@ export function ConversationPanels(panelProps: { onOpenUsage?: ((trigger: HTMLBu
               usageLimited={props.usageLimited}
               defaultBusyMessageMode={props.defaultBusyMessageMode}
               agentDefaults={localAgentDefaults()}
-              memoryLimit={props.server?.kind === "local" ? props.agentMemoryLimit : undefined}
               agents={props.agents}
               onStartNewChat={props.onClearAgentContext}
               onCreateSkill={

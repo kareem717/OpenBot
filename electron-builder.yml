@@ -19,9 +19,10 @@ electronFuses:
   loadBrowserProcessSpecificV8Snapshot: false
   grantFileProtocolExtraPrivileges: false
 publish:
-  provider: github
-  owner: nightly-labs
-  repo: openbot
+  # This desktop branch shares a repository with another application. Its feed must not use
+  # the repository-wide latest release. The feed names immutable desktop-v<version> assets.
+  provider: generic
+  url: https://github.com/kareem717/OpenBot/releases/download/desktop-latest/
 files:
   - out/**/*
   - package.json

@@ -1,4 +1,3 @@
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AddedAgent,
   ClientAgentSummary,
@@ -15,7 +14,7 @@ import type {
   McpSignInRelayPage,
   McpSignInState,
 } from "@openbot/contracts/ipc";
-import { assignedSkillCount, isRemovableSkill, isSkillEnabled, mcpConfigErrors } from "@openbot/contracts/ipc";
+import { isRemovableSkill, isSkillEnabled, mcpConfigErrors } from "@openbot/contracts/ipc";
 import { createMarketplaceShareUrl, type MarketplaceListingLink } from "@openbot/contracts/marketplace-links";
 import { mcpAccountFragment, mcpAccountUrl } from "@openbot/contracts/mcp-accounts";
 import { type McpConnectFlow, mcpFlowFields } from "@openbot/contracts/mcp-connect-flows";
@@ -474,11 +473,7 @@ export function createMarketplaceController(props: MarketplaceControllerProps) {
     const installs: string[] = [];
     for (const agentId of addIds) {
       if (restores.includes(agentId) || storedSkill(agentId, skill.id)) continue;
-      const list = skills.installed[agentId] ?? [];
-      if (skills.read[agentId] === "loaded" && assignedSkillCount(list) >= INPUT_LIMITS.agentSkills) {
-        failed.push(nameOf(agentId));
-        reasons.add(t("skill.marketplace.limitReason", { limit: INPUT_LIMITS.agentSkills }));
-      } else installs.push(agentId);
+      installs.push(agentId);
     }
     const removes: Omit<ChangeRemoval, "removal">[] = [];
     for (const agentId of removeIds) {

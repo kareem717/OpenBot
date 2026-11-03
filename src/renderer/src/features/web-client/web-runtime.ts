@@ -96,6 +96,7 @@ import {
   TEAM_BROWSER_VIEW_CLIPBOARD_CAPABILITY,
   TEAM_BROWSER_VIEW_FRAME_POINT_CAPABILITY,
 } from "@openbot/contracts/team-protocol/browser-view-v1";
+import { CHANNEL_MEMORY_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { TEAM_BROWSER_NAVIGATION_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { FOCUS_USE_ROUTES } from "@openbot/contracts/team-protocol/focus-use-v1";
 import {
@@ -737,7 +738,7 @@ export function createWebWorkspaceRuntime(
       revokeInvite: (inviteId) => runTeamEffect(directory.revokeInvite(inviteId)),
     },
   };
-  const channels = teamChannelsApi(teamApi);
+  const channels = teamChannelsApi(teamApi, () => capabilities.includes(CHANNEL_MEMORY_PAGES_CAPABILITY));
   /** The routine flow routes, sent only to a host that negotiated them. */
   async function routineFlowsRequest<T>(
     method: string,

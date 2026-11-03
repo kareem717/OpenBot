@@ -7,7 +7,6 @@ import {
   type ChannelSummary,
   type CreateChannelRoutineInput,
   decodeChannel,
-  decodeChannelMemories,
   decodeChannelPage,
   decodeChannelRoutines,
   decodeChannelSummaries,
@@ -16,12 +15,16 @@ import {
   type UpdateChannelRoutineInput,
 } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { CHANNEL_MEMORY_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { sourceText } from "@openbot/i18n/source";
 import type { RemoteFileUpload } from "@openbot/team-client/remote-peer";
+import { readChannelMemories, TeamRequestError } from "@openbot/team-client/team-api-requests";
 import { replaceEqualDeep } from "@tanstack/react-query";
+import { Effect } from "effect";
 import { answeredPromptResolution } from "../../chat/model/question-prompt";
+import { runTeamRequest } from "../../workspace/model/team-request";
 
 export type ChannelRequest = <T>(
   method: string,
@@ -64,6 +67,7 @@ interface Entry {
   readChannels: Set<string>;
   valid: boolean;
   writes: number;
+  memoryPages: boolean;
   historyWaiters: Map<string, Set<(success: boolean) => void>>;
 }
 
@@ -100,6 +104,7 @@ export class MobileChannelStore {
         readChannels: new Set(),
         valid: true,
         writes: 0,
+        memoryPages: false,
         historyWaiters: new Map(),
       };
       this.entries.set(serverId, entry);
@@ -155,6 +160,7 @@ export class MobileChannelStore {
   }
   configure(serverId: string, capabilities: string[]) {
     const entry = this.entry(serverId);
+    entry.memoryPages = capabilities.includes(CHANNEL_MEMORY_PAGES_CAPABILITY);
     const supported = capabilities.includes(CHANNEL_CHATS_CAPABILITY);
     this.publish(entry, {
       supported,
@@ -468,7 +474,17 @@ export class MobileChannelStore {
     if (failure) throw failure.reason;
   }
   memories(serverId: string, channelId: string) {
-    return this.request("POST", CHANNEL_ROUTES.memories, decodeChannelMemories, { channelId }, serverId);
+    return runTeamRequest(
+      readChannelMemories(
+        (method, path, decode, body) =>
+          Effect.tryPromise({
+            try: () => this.request(method, path, decode, body, serverId),
+            catch: (cause) => new TeamRequestError({ cause }),
+          }),
+        channelId,
+        this.entry(serverId).memoryPages,
+      ),
+    );
   }
   routines(serverId: string, channelId: string) {
     return this.request("POST", CHANNEL_ROUTES.routines, decodeChannelRoutines, { channelId }, serverId);

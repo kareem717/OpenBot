@@ -1,5 +1,3 @@
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { assignedSkillCount } from "@openbot/contracts/ipc";
 import { Button, Checkbox, Dialog, IconButton, Input, Plus, Search, Text, X } from "@openbot/ui";
 import { createScrollFades } from "@openbot/ui/components/createScrollFades";
 import { AgentAvatar } from "@openbot/ui/features/agents/AgentAvatar";
@@ -280,20 +278,15 @@ export function AgentsDialog(props: { model: MarketplaceModel; skill: DialogSkil
   const installed = (agentId: string) => props.model.installedSkill(agentId, skillId);
   const has = (agentId: string) => installed(agentId) !== undefined;
   const checked = (agentId: string) => draft.on[agentId] ?? has(agentId);
-  /** The agent has its most skills. Without the list of each agent's skills, no agent counts as full. */
-  const full = (agentId: string) => {
-    const skills = props.model.installedSkills?.(agentId);
-    return skills !== undefined && assignedSkillCount(skills) >= INPUT_LIMITS.agentSkills;
-  };
   /* An agent whose list did not load may have the skill already, changed by the user: leave it alone. */
   const known = (agentId: string) => props.model.skillRead(agentId) === "loaded";
-  const blocked = (agent: MarketplaceAgent) => !has(agent.id) && (!known(agent.id) || full(agent.id));
+  const blocked = (agent: MarketplaceAgent) => !has(agent.id) && !known(agent.id);
   const note = (agent: MarketplaceAgent) => {
     const skill = installed(agent.id);
     if (skill) return words.plainState(skill);
     if (!known(agent.id))
       return props.model.skillRead(agent.id) === "failed" ? t("marketplace.skills.dialog.unread") : t("skill.loading");
-    return full(agent.id) ? t("marketplace.skills.dialog.full") : undefined;
+    return undefined;
   };
   const adds = () => agents().filter((agent) => draft.on[agent.id] === true && !has(agent.id));
   const removes = () => agents().filter((agent) => draft.on[agent.id] === false && has(agent.id));

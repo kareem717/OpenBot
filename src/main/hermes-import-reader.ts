@@ -32,7 +32,6 @@ const MEMORY_DELIMITER = "\n§\n";
 const UNSAFE_FILE_PREFIX = sourceText("error.skill.unsafeFile", { name: "" });
 /** Text files read from a profile are small in Hermes; a larger one is cut here. */
 const MAX_TEXT_BYTES = 256 * 1024;
-const MAX_SKILLS = 200;
 const MAX_JOBS = 200;
 /** OpenBot's own export skill, which a user adds to Hermes. It is never imported back. */
 const EXPORT_SKILL_NAME = "openbot-export";
@@ -269,7 +268,7 @@ const readSkills = Effect.fn("HermesImport.readSkills")(function* (folder: strin
       .map((line) => line.split(":")[0]?.trim() ?? "")
       .filter(Boolean),
   );
-  for (const directory of (yield* skillFolders(folder)).slice(0, MAX_SKILLS)) {
+  for (const directory of yield* skillFolders(folder)) {
     const text = (yield* readText(join(directory, "SKILL.md"))) ?? "";
     const name = frontmatterName(text) ?? basename(directory);
     if (name === EXPORT_SKILL_NAME) continue;

@@ -251,6 +251,11 @@ import { EVENTS_ROUTES } from "@openbot/contracts/team-protocol/events-v1";
 import { HOST_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/host-admin-v1";
 import { HOST_UPDATE_ROUTES } from "@openbot/contracts/team-protocol/host-update-v1";
 import { HOSTED_SITES_ROUTES } from "@openbot/contracts/team-protocol/hosted-sites-v1";
+import {
+  decodeMcpServerPage,
+  decodeMcpSignInPage,
+  MCP_PAGES_ROUTES,
+} from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { MCP_SIGN_IN_APP_ROUTES } from "@openbot/contracts/team-protocol/mcp-sign-in-app-v1";
 import { MCP_SIGN_IN_ROUTES } from "@openbot/contracts/team-protocol/mcp-sign-in-v1";
 import { MCP_ROUTES } from "@openbot/contracts/team-protocol/mcp-v1";
@@ -272,6 +277,7 @@ import { ROUTINE_RESULTS_ROUTES } from "@openbot/contracts/team-protocol/routine
 import { SERVER_AUDIT_ROUTES } from "@openbot/contracts/team-protocol/server-audit-v1";
 import { SHARED_TABLES_ROUTES } from "@openbot/contracts/team-protocol/shared-tables-v1";
 import { type SIGN_IN_RELAY_PROVIDERS, SIGN_IN_RELAY_ROUTES } from "@openbot/contracts/team-protocol/sign-in-relay-v1";
+import { SKILL_PAGE_ROUTES } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { SKILLS_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/skills-admin-v1";
 import { STORAGE_ROUTES } from "@openbot/contracts/team-protocol/storage-v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
@@ -282,6 +288,7 @@ import { WEBHOOK_TESTS_ROUTES } from "@openbot/contracts/team-protocol/webhook-t
 import { Effect, Schema } from "effect";
 import { bytesToBase64 } from "./base64";
 import type { TeamApiRequest } from "./team-api-requests";
+import { readInstalledSkillPages } from "./team-api-requests";
 
 export class TeamAdminRequestError extends Schema.TaggedError<TeamAdminRequestError>()("TeamAdminRequestError", {
   cause: Schema.Defect(),
@@ -349,7 +356,14 @@ export function updateAgentAdminSettings(
 export function listAgentSkills(
   request: TeamApiRequest,
   agentId: string,
+  paged = false,
 ): Effect.Effect<InstalledSkill[], TeamAdminRequestError> {
+  if (paged)
+    return readInstalledSkillPages(
+      (method, path, decode, body) => adminCall(() => request(method, path, decode, body)),
+      agentId,
+      SKILL_PAGE_ROUTES.admin,
+    );
   return adminCall(() => request("POST", SKILLS_ADMIN_ROUTES.list, decodeInstalledSkills, { agentId }));
 }
 
@@ -818,28 +832,77 @@ export function setHostProviderDefault(
 }
 
 /** The one MCP read route, and the only one the host answers to a GET. */
-export function listMcpServers(request: TeamApiRequest): Effect.Effect<McpServerConfig[], TeamAdminRequestError> {
-  return adminCall(() => request("GET", MCP_ROUTES.list, decodeMcpServerConfigs));
+async function readMcpPages<T>(
+  request: TeamApiRequest,
+  path: string,
+  decode: (value: unknown) => { items: T[]; nextCursor: string | null },
+  id: (item: T) => string,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: { items: T[]; nextCursor: string | null } = await request("POST", path, decode, { cursor });
+    let last: string | null = cursor;
+    for (const item of page.items) {
+      const next = id(item);
+      if (last !== null && next <= last) throw new Error("Invalid MCP page order.");
+      items.push(item);
+      last = next;
+    }
+    if (page.nextCursor !== null && (page.items.length === 0 || page.nextCursor !== last))
+      throw new Error("Invalid MCP page cursor.");
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return items;
+}
+
+export function listMcpServers(
+  request: TeamApiRequest,
+  paged = false,
+): Effect.Effect<McpServerConfig[], TeamAdminRequestError> {
+  return adminCall(() =>
+    paged
+      ? readMcpPages(request, MCP_PAGES_ROUTES.list, decodeMcpServerPage, (item) => item.id)
+      : request("GET", MCP_ROUTES.list, decodeMcpServerConfigs),
+  );
 }
 
 export function saveMcpServer(
   request: TeamApiRequest,
   input: SaveMcpServerInput,
+  paged = false,
 ): Effect.Effect<McpServerConfig[], TeamAdminRequestError> {
+  if (paged)
+    return adminCall(async () => {
+      await request("POST", MCP_PAGES_ROUTES.save, ignoreResponse, { config: mcpConfig(input.config) });
+      return readMcpPages(request, MCP_PAGES_ROUTES.list, decodeMcpServerPage, (item) => item.id);
+    });
   return adminCall(() => request("POST", MCP_ROUTES.save, decodeMcpServerConfigs, { config: mcpConfig(input.config) }));
 }
 
 export function removeMcpServer(
   request: TeamApiRequest,
   input: RemoveMcpServerInput,
+  paged = false,
 ): Effect.Effect<McpServerConfig[], TeamAdminRequestError> {
+  if (paged)
+    return adminCall(async () => {
+      await request("POST", MCP_PAGES_ROUTES.remove, ignoreResponse, { ...input });
+      return readMcpPages(request, MCP_PAGES_ROUTES.list, decodeMcpServerPage, (item) => item.id);
+    });
   return adminCall(() => request("POST", MCP_ROUTES.remove, decodeMcpServerConfigs, { ...input }));
 }
 
 export function setMcpServerEnabled(
   request: TeamApiRequest,
   input: SetMcpServerEnabledInput,
+  paged = false,
 ): Effect.Effect<McpServerConfig[], TeamAdminRequestError> {
+  if (paged)
+    return adminCall(async () => {
+      await request("POST", MCP_PAGES_ROUTES.toggle, ignoreResponse, { ...input });
+      return readMcpPages(request, MCP_PAGES_ROUTES.list, decodeMcpServerPage, (item) => item.id);
+    });
   return adminCall(() => request("POST", MCP_ROUTES.toggle, decodeMcpServerConfigs, { ...input }));
 }
 
@@ -935,14 +998,27 @@ export function cancelSignInRelay(request: TeamApiRequest, flowId: string): Effe
 export function signOutMcpServer(
   request: TeamApiRequest,
   input: SignOutMcpServerInput,
+  paged = false,
 ): Effect.Effect<McpSignInState[], TeamAdminRequestError> {
+  if (paged)
+    return adminCall(async () => {
+      await request("POST", MCP_PAGES_ROUTES.signOut, ignoreResponse, { mcpServerId: input.mcpServerId });
+      return readMcpPages(request, MCP_PAGES_ROUTES.signIns, decodeMcpSignInPage, (item) => item.mcpServerId);
+    });
   return adminCall(() =>
     request("POST", MCP_SIGN_IN_ROUTES.signOut, decodeMcpSignInStates, { mcpServerId: input.mcpServerId }),
   );
 }
 
-export function listMcpSignIns(request: TeamApiRequest): Effect.Effect<McpSignInState[], TeamAdminRequestError> {
-  return adminCall(() => request("POST", MCP_SIGN_IN_ROUTES.list, decodeMcpSignInStates, {}));
+export function listMcpSignIns(
+  request: TeamApiRequest,
+  paged = false,
+): Effect.Effect<McpSignInState[], TeamAdminRequestError> {
+  return adminCall(() =>
+    paged
+      ? readMcpPages(request, MCP_PAGES_ROUTES.signIns, decodeMcpSignInPage, (item) => item.mcpServerId)
+      : request("POST", MCP_SIGN_IN_ROUTES.list, decodeMcpSignInStates, {}),
+  );
 }
 
 export function mcpSignInApp(

@@ -1142,7 +1142,6 @@ export class ThreadLifecycle {
       passwordVault: this.#passwordVaultConnected(),
       vaultItems: this.#vaultItems(),
       serverHost: this.#serverHost,
-      memoryLimit: this.#memories.limit(),
       storedMemoryCount: this.#memories.listFor(agent.id).length,
       memoriesInTurns: client.provider === "claude",
       teammatesInTurns: client.provider === "claude",

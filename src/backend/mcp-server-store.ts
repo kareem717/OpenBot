@@ -1,4 +1,3 @@
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   createMcpServerId,
   isMcpKeyValue,
@@ -28,7 +27,7 @@ import type { OpenBotDatabase } from "./openbot-database";
  * stored row can never hold something the user was not shown.
  */
 /**
- * A configuration the user can correct: a name already in use, the list at its limit, a row that was
+ * A configuration the user can correct: a name already in use, a row that was
  * deleted. Not a broken database, which stays an unexpected failure.
  *
  * The type is what carries the sentence out of the process. A local save reads `error.message` in a
@@ -96,8 +95,6 @@ export class McpServerStore {
     try {
       const existing = normalized.id ? this.get(normalized.id) : null;
       if (normalized.id && !existing) throw new McpServerError(sourceText("error.backend.mcpServerGone"));
-      if (!existing && this.count() >= INPUT_LIMITS.mcpServers)
-        throw new McpServerError(sourceText("error.backend.mcpServerLimit", { limit: INPUT_LIMITS.mcpServers }));
       // Reported here rather than left to the unique index, so the user reads a sentence.
       if (this.nameTaken(normalized.name, existing?.id ?? null))
         throw new McpServerError(sourceText("error.backend.mcpServerNameTaken", { name: normalized.name }));
@@ -225,14 +222,6 @@ export class McpServerStore {
     this.reported.add(key);
     this.logger.warn(message, { mcpServerId, reason });
   };
-
-  // The table, not `list()`: a row that cannot be read still holds its name and its place in the limit.
-  private count(): number {
-    const row = databaseRow(
-      this.database.connection.prepare("SELECT COUNT(*) AS count FROM projection_mcp_servers").get(),
-    );
-    return row ? requiredNumberColumn(row, "count") : 0;
-  }
 
   private nameTaken(name: string, exceptId: string | null): boolean {
     if (isReservedMcpServerName(name)) return true;

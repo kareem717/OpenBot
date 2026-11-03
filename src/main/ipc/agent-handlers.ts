@@ -99,8 +99,10 @@ import {
   SIDE_QUESTION_CAPABILITY,
   SIDE_QUESTION_ROUTES,
 } from "@openbot/contracts/team-protocol/side-question-v1";
+import { SKILL_PAGE_ROUTES, SKILL_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
+import { readInstalledSkillPages } from "@openbot/team-client/team-api-requests";
 import { Effect } from "effect";
 import { duplicateAgentIntoLayout } from "../../backend/agent/duplication-gate";
 import type { AgentService } from "../../backend/agent-service";
@@ -451,14 +453,22 @@ export function agentIpcHandlers({
         local: (agentId) => runCauseEffect(skills.listInstalledForChatTags(agentId)),
         // A server too old to know the endpoint would answer 404, so ask its advertised capabilities first.
         remote: (agentId, serverId) =>
-          remoteServers
-            .list()
-            .find((server) => server.id === serverId)
-            ?.compatibility?.capabilities.includes("installed-skills")
+          remoteServers.supportsCapability(serverId, SKILL_PAGES_CAPABILITY)
             ? runCauseEffect(
-                remoteServers.request(serverId, TEAM_API_ROUTES.agent.skills(agentId), decodeInstalledSkillsFromHost),
+                readInstalledSkillPages(
+                  (method, path, decode, body) => remoteServers.request(serverId, path, decode, { method, body }),
+                  agentId,
+                  SKILL_PAGE_ROUTES.chat,
+                ),
               )
-            : Promise.resolve([]),
+            : remoteServers
+                  .list()
+                  .find((server) => server.id === serverId)
+                  ?.compatibility?.capabilities.includes("installed-skills")
+              ? runCauseEffect(
+                  remoteServers.request(serverId, TEAM_API_ROUTES.agent.skills(agentId), decodeInstalledSkillsFromHost),
+                )
+              : Promise.resolve([]),
       }),
       listChannels: scopedQueryHandler({
         // The reader here is the host user of this computer, so messages they wrote before they

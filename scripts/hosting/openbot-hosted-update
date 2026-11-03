@@ -27,7 +27,8 @@ export LC_ALL=C DEBIAN_FRONTEND=noninteractive
 umask 022
 
 INSTALL=/opt/OpenBot
-RELEASES=https://github.com/nightly-labs/openbot/releases
+RELEASES=https://github.com/kareem717/OpenBot/releases
+FEED=$RELEASES/download/desktop-latest
 LOCK=/run/openbot-update.lock
 # Not in a directory that boat saves, so a download that a stop interrupts does not stay.
 SCRATCH=/var/tmp
@@ -286,14 +287,15 @@ stage() {
     return 0
   fi
   [ -x "$INSTALL/app/openbot" ] || fail "OpenBot is not installed."
-  manifest=$(fetch "$RELEASES/latest/download/$manifest")
+  manifest=$(fetch "$FEED/$manifest")
   version=$(sed -n 's/^version: *//p' <<<"$manifest" | head -n 1)
   path=$(sed -n 's/^path: *//p' <<<"$manifest" | head -n 1)
   sha512=$(sed -n 's/^sha512: *//p' <<<"$manifest" | head -n 1)
   # Only for the percent. A Linux manifest has one file, the AppImage.
   size=$(sed -n 's/^ *size: *//p' <<<"$manifest" | head -n 1)
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "The release manifest has no valid version."
-  [ "$path" = "OpenBot-$version-$architecture.AppImage" ] || fail "The release manifest names another file."
+  [ "$path" = "$RELEASES/download/desktop-v$version/OpenBot-$version-$architecture.AppImage" ] ||
+    fail "The release manifest names another desktop release."
   [[ $sha512 =~ ^[A-Za-z0-9+/]{86}==$ ]] || fail "The release manifest has no valid SHA-512."
   # A release that is no longer the latest one, for example because it was withdrawn, is removed. A
   # server that starts before this check applies it. This also removes a copy that a stop interrupted.
@@ -307,7 +309,7 @@ stage() {
   # Global: the trap runs after this function returns.
   work=$(mktemp -d "$SCRATCH/openbot-update.XXXXXX")
   trap 'rm -rf "$work"; rm -f "$STATE"' EXIT
-  download "$RELEASES/download/v$version/$path" "$work/OpenBot.AppImage" "$size"
+  download "$path" "$work/OpenBot.AppImage" "$size"
   set_state preparing
   [ "$(openssl dgst -sha512 -binary "$work/OpenBot.AppImage" | openssl base64 -A)" = "$sha512" ] ||
     fail "The AppImage does not match the release manifest."

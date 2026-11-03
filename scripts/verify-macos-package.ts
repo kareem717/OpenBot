@@ -8,6 +8,7 @@ import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger } from "@openbot/logging";
 import { isMissingFileError } from "../src/backend/file-errors";
+import { verifyDesktopUpdateSource } from "./verify-desktop-update-source";
 
 const logger = createOpenBotLogger("verify-macos-package");
 
@@ -142,6 +143,7 @@ expectEqual(
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");
 expectEqual(plist.CFBundleShortVersionString, packageJson.version, "application version");
+verifyDesktopUpdateSource(await readFile(resolve(resourcesPath, "app-update.yml"), "utf8"));
 
 // Electron is unavailable to this process, and its own imports are what keep it startable there.
 // The unpacked Effect package checked above is its only import outside node: builtins.

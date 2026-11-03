@@ -1,3 +1,4 @@
+import type { ChannelMemory } from "@openbot/contracts/ipc";
 import { Effect, Schema } from "effect";
 // Team API requests that the web client and the mobile app send in the same way.
 //
@@ -88,6 +89,10 @@ import { AGENT_THREAD_READS_ROUTES } from "@openbot/contracts/team-protocol/agen
 import { AGENT_THREAD_REPLIES_ROUTES } from "@openbot/contracts/team-protocol/agent-thread-replies-v1";
 import { AGENT_THREADS_ROUTES } from "@openbot/contracts/team-protocol/agent-threads-v1";
 import { BROWSER_SECRET_VAULT_ROUTES } from "@openbot/contracts/team-protocol/browser-secret-vault-v1";
+import {
+  CHANNEL_MEMORY_PAGE_ROUTE,
+  CHANNEL_MEMORY_PAGE_SIZE,
+} from "@openbot/contracts/team-protocol/channel-memory-pages-v1";
 import { CHANNEL_ROUTES } from "@openbot/contracts/team-protocol/channels-v1";
 import { CONTEXT_RESET_ROUTES } from "@openbot/contracts/team-protocol/context-reset-v1";
 import {
@@ -95,7 +100,9 @@ import {
   INSTANCE_TRANSFER_ROUTES,
 } from "@openbot/contracts/team-protocol/instance-transfer-v1";
 import { ROUTINE_FLOWS_ROUTES } from "@openbot/contracts/team-protocol/routine-flows-v1";
+import { SKILL_PAGE_ROUTES, SKILL_PAGE_SIZE } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
+import { runTeamEffect } from "./effect-boundary";
 import type { RemoteFileUpload } from "./file-upload";
 
 export class TeamRequestError extends Schema.TaggedError<TeamRequestError>()("TeamRequestError", {
@@ -466,7 +473,14 @@ export const discardInstanceTransfer = Effect.fn("TeamClient.discardInstanceTran
 export const listInstalledSkills = Effect.fn("TeamClient.listInstalledSkills")(function* (
   request: TeamApiRequest,
   agentId: string,
+  paged = false,
 ): Effect.fn.Return<InstalledSkill[], TeamRequestError> {
+  if (paged)
+    return yield* readInstalledSkillPages(
+      (method, path, decode, body) => teamCall(() => request(method, path, decode, body)),
+      agentId,
+      SKILL_PAGE_ROUTES.chat,
+    );
   return yield* teamCall(() => request("GET", TEAM_API_ROUTES.agent.skills(agentId), decodeInstalledSkills));
 });
 
@@ -524,14 +538,24 @@ export type TeamChannelsApi = Pick<
 >;
 
 /** Every channel route is a POST with the channel in the body, except the list. */
-export function teamChannelsApi(request: TeamApiRequest): TeamChannelsApi {
+export function teamChannelsApi(
+  request: TeamApiRequest,
+  canPageMemories: () => boolean = () => false,
+): TeamChannelsApi {
   const post = <T>(path: string, decode: (value: unknown) => T, body: unknown) =>
     request("POST", path, decode, decodeTeamProtocolV2Json(body));
   return {
     listChannels: () => request("GET", CHANNEL_ROUTES.list, decodeChannelSummaries),
     readChannel: (input) => post(CHANNEL_ROUTES.read, decodeChannelPage, input),
     channelCommand: (command) => post(CHANNEL_ROUTES.command, decodeChannel, command),
-    listChannelMemories: (channelId) => post(CHANNEL_ROUTES.memories, decodeChannelMemories, { channelId }),
+    listChannelMemories: (channelId) =>
+      runTeamEffect(
+        readChannelMemories(
+          (method, path, decode, body) => teamCall(() => request(method, path, decode, body)),
+          channelId,
+          canPageMemories(),
+        ).pipe(Effect.mapError((error) => error.cause)),
+      ),
     createChannelMemory: (input) => post(CHANNEL_ROUTES.memoryCreate, decodeChannelMemory, input),
     updateChannelMemory: (input) => post(CHANNEL_ROUTES.memoryUpdate, decodeChannelMemory, input),
     deleteChannelMemory: (input) => post(CHANNEL_ROUTES.memoryDelete, ignoreResponse, input),
@@ -604,6 +628,93 @@ export type AgentMemoriesRequest<E> = <T>(
   decode: (value: unknown) => T,
   body?: TeamProtocolV2Json,
 ) => Effect.Effect<T, E>;
+
+/** Both installed-skill lists page by stable IDs, then return the local name order to the view. */
+export const readInstalledSkillPages = Effect.fn("TeamClient.readInstalledSkillPages")(function* <E>(
+  request: AgentMemoriesRequest<E>,
+  agentId: string,
+  route: (typeof SKILL_PAGE_ROUTES)[keyof typeof SKILL_PAGE_ROUTES],
+): Effect.fn.Return<InstalledSkill[], E> {
+  const skills: InstalledSkill[] = [];
+  let after: string | null = null;
+  do {
+    const page: { skills: InstalledSkill[]; nextCursor: string | null } = yield* request(
+      "POST",
+      route,
+      (value) => {
+        if (!isDynamicRecord(value) || !(value.nextCursor === null || isString(value.nextCursor)))
+          throw new Error("The host returned an invalid skill page.");
+        const entries = decodeInstalledSkills(value.skills);
+        if (
+          entries.length > SKILL_PAGE_SIZE ||
+          entries.some((entry, index) => {
+            const previous = index === 0 ? after : entries[index - 1]?.skillId;
+            return previous !== null && previous !== undefined && entry.skillId <= previous;
+          }) ||
+          (value.nextCursor !== null && (entries.length === 0 || value.nextCursor !== entries.at(-1)?.skillId))
+        )
+          throw new Error("The host returned an invalid skill cursor.");
+        return { skills: entries, nextCursor: value.nextCursor };
+      },
+      { agentId, after },
+    );
+    skills.push(...page.skills);
+    after = page.nextCursor;
+  } while (after !== null);
+  return skills.sort((left, right) => left.name.localeCompare(right.name));
+});
+
+/** Channel peers that negotiated pages can read all memories without widening the frozen full list. */
+export const readChannelMemories = Effect.fn("TeamClient.readChannelMemories")(function* <E>(
+  request: AgentMemoriesRequest<E>,
+  channelId: string,
+  paged: boolean,
+): Effect.fn.Return<ChannelMemory[], E> {
+  function decodeMemories(value: unknown): ChannelMemory[] {
+    const memories = decodeChannelMemories(value);
+    if (memories.some((memory) => memory.channelId !== channelId))
+      throw new Error("The host returned invalid channel memories.");
+    return memories;
+  }
+  if (!paged) return yield* request("POST", CHANNEL_ROUTES.memories, decodeMemories, { channelId });
+  const memories: ChannelMemory[] = [];
+  let after: string | null = null;
+  do {
+    const page: { memories: ChannelMemory[]; nextCursor: string | null } = yield* request(
+      "POST",
+      CHANNEL_MEMORY_PAGE_ROUTE,
+      (value) => {
+        if (!isDynamicRecord(value) || !(value.nextCursor === null || isString(value.nextCursor)))
+          throw new Error("The host returned an invalid channel memory page.");
+        const entries = decodeMemories(value.memories);
+        if (
+          entries.length > CHANNEL_MEMORY_PAGE_SIZE ||
+          entries.some((entry, index) => {
+            const previous = index === 0 ? after : entries[index - 1]?.id;
+            return previous !== null && previous !== undefined && entry.id <= previous;
+          }) ||
+          (value.nextCursor !== null && (entries.length === 0 || value.nextCursor !== entries.at(-1)?.id))
+        )
+          throw new Error("The host returned an invalid channel memory cursor.");
+        return { memories: entries, nextCursor: value.nextCursor };
+      },
+      { channelId, after },
+    );
+    memories.push(...page.memories);
+    after = page.nextCursor;
+  } while (after !== null);
+  return memories.sort((left, right) =>
+    left.updatedAt !== right.updatedAt
+      ? left.updatedAt > right.updatedAt
+        ? -1
+        : 1
+      : left.id < right.id
+        ? -1
+        : left.id > right.id
+          ? 1
+          : 0,
+  );
+});
 
 /** Old hosts keep their full-list route; new hosts send bounded pages in stable id order. */
 export const readAgentMemories = Effect.fn("TeamClient.readAgentMemories")(function* <E>(

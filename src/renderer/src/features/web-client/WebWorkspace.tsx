@@ -40,6 +40,7 @@ import { DISCORD_ACCESS_CAPABILITY } from "@openbot/contracts/team-protocol/disc
 import { EVENTS_CAPABILITY } from "@openbot/contracts/team-protocol/events-v1";
 import { HOST_RELEASE_CAPABILITY } from "@openbot/contracts/team-protocol/host-release-v1";
 import { HOSTED_SITES_CAPABILITY } from "@openbot/contracts/team-protocol/hosted-sites-v1";
+import { MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { MCP_SIGN_IN_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-sign-in-v1";
 import { ROUTINE_FLOWS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-flows-v1";
 import { ROUTINE_RECOVERY_CAPABILITY } from "@openbot/contracts/team-protocol/routine-recovery-v1";
@@ -133,6 +134,7 @@ import {
 import "katex/contrib/copy-tex";
 // Copying a selection gives clean HTML, as on desktop.
 import "../../selection-copy";
+import { SKILL_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { actionToast } from "../../action-toast";
 import { desktopAnalytics } from "../../analytics";
 import { toAgentMessage } from "../../app-message-projection";
@@ -196,6 +198,7 @@ import {
   remoteAdminServer,
   remoteUpdateServer,
   serverCanAdminister,
+  serverHasUnlimitedMemoryStorage,
   serverRoleCanAdminister,
 } from "../servers/server-capabilities";
 import { createServerConnectionToast } from "../servers/server-connection-toast";
@@ -816,6 +819,8 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
     () => workspace.state.capabilities.includes(SIDE_QUESTION_CAPABILITY),
     webhookTestsEnabled,
     () => workspace.state.capabilities.includes(BROWSER_PROFILES_CAPABILITY),
+    () => workspace.state.capabilities.includes(SKILL_PAGES_CAPABILITY),
+    () => workspace.state.capabilities.includes(MCP_SERVER_PAGES_CAPABILITY),
   );
   const remoteAgentAdmin = createRemoteAgentAdmin(
     () => {
@@ -990,7 +995,9 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
       if (unsupported) setHostPage(null);
     },
   );
-  const marketplaceCalls = createWebMarketplaceCalls(props.accountFetch, hostRequest);
+  const marketplaceCalls = createWebMarketplaceCalls(props.accountFetch, hostRequest, (serverId) =>
+    serverId === undefined || serverId === workspace.state.host?.hostId ? workspace.state.capabilities : [],
+  );
   // The host's connectors, for an owner or admin. The web client has no computer of its own.
   const connectorTarget = createMemo(() => remoteAdminServer(server(), CONNECTORS_CAPABILITY));
   const githubPort = webGitHubConnectorPort(() => hostRequest());
@@ -2565,6 +2572,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                       channelId,
                       isOwnSender,
                       connectionReady: () => workspace.state.status === "online",
+                      unlimitedMemories: () => serverHasUnlimitedMemoryStorage(server()),
                       // The routines of a joined host go through its event API, which the channels port gives.
                       routines: {
                         localHost: () => false,

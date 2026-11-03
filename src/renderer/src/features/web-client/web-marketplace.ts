@@ -1,4 +1,6 @@
 import { agentTemplateShareOrigin } from "@openbot/contracts/agent-template-links";
+import { MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
+import { SKILL_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/skill-pages-v1";
 import { sourceText } from "@openbot/i18n";
 import { runTeamEffect } from "@openbot/team-client";
 import { createMarketplaceCatalog } from "@openbot/team-client/marketplace-catalog";
@@ -37,6 +39,7 @@ const noAgentInstall = () => currentText().t("webClient.error.agentInstallNotAll
 export function createWebMarketplaceCalls(
   accountFetch: typeof fetch,
   request: (serverId?: string) => TeamApiRequest,
+  capabilities: (serverId?: string) => readonly string[] = () => [],
 ): MarketplaceCalls {
   const catalog = createMarketplaceCatalog(accountFetch);
   const relay = webMcpRelay();
@@ -54,7 +57,11 @@ export function createWebMarketplaceCalls(
     shareOrigin: agentTemplateShareOrigin(window.location.origin),
     agentSkills: (serverId) => ({
       listInstalled: async (agentId) =>
-        runTeamEffect(listAgentSkills(request(serverId), agentId).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          listAgentSkills(request(serverId), agentId, capabilities(serverId).includes(SKILL_PAGES_CAPABILITY)).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
       install: async (input) =>
         runTeamEffect(installAgentSkill(request(serverId), input).pipe(Effect.mapError((error) => error.cause))),
       uninstall: async (input) =>
@@ -64,16 +71,32 @@ export function createWebMarketplaceCalls(
     }),
     mcp: {
       listMcpServers: async (serverId) =>
-        runTeamEffect(listMcpServers(request(serverId)).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          listMcpServers(request(serverId), capabilities(serverId).includes(MCP_SERVER_PAGES_CAPABILITY)).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
       // A host without `mcp-sign-in-v1` refuses the route; the marketplace then shows no sign-in state.
       listMcpSignIns: async (serverId) =>
-        runTeamEffect(listMcpSignIns(request(serverId)).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          listMcpSignIns(request(serverId), capabilities(serverId).includes(MCP_SERVER_PAGES_CAPABILITY)).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
       testMcpServer: async (input, serverId) =>
         runTeamEffect(testMcpServer(request(serverId), input).pipe(Effect.mapError((error) => error.cause))),
       saveMcpServer: async (input, serverId) =>
-        runTeamEffect(saveMcpServer(request(serverId), input).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          saveMcpServer(request(serverId), input, capabilities(serverId).includes(MCP_SERVER_PAGES_CAPABILITY)).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
       removeMcpServer: async (input, serverId) =>
-        runTeamEffect(removeMcpServer(request(serverId), input).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          removeMcpServer(request(serverId), input, capabilities(serverId).includes(MCP_SERVER_PAGES_CAPABILITY)).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
+        ),
       // The marketplace asks only a host that relays its sign-ins (`sign-in-relay-v1`): the page opens
       // in this browser, and the user pastes the address it ends on.
       signInMcpServer: async ({ config }, serverId) => {

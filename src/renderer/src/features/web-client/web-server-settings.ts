@@ -13,6 +13,7 @@ import type {
   TeamPresenceSnapshot,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import { MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { runTeamEffect } from "@openbot/team-client";
 import {
   cancelMcpSignIn as cancelMcpSignInRequest,
@@ -205,11 +206,18 @@ export function createWebServerSettings(options: {
     return result;
   }
 
+  function mcpPages(): boolean {
+    const server = options.server();
+    return (
+      server?.kind === "remote" && server.compatibility?.capabilities.includes(MCP_SERVER_PAGES_CAPABILITY) === true
+    );
+  }
+
   async function refreshMcp(): Promise<void> {
     const current = ++mcpRequest;
     try {
       const configs = await runTeamEffect(
-        listMcpServers(requireAdmin().admin.request).pipe(Effect.mapError((error) => error.cause)),
+        listMcpServers(requireAdmin().admin.request, mcpPages()).pipe(Effect.mapError((error) => error.cause)),
       );
       if (current !== mcpRequest) return;
       setState((draft) => {
@@ -229,7 +237,7 @@ export function createWebServerSettings(options: {
   async function refreshMcpSignIns(): Promise<void> {
     const { admin } = requireAdmin();
     const states = await runTeamEffect(
-      listMcpSignInsRequest(admin.request).pipe(Effect.mapError((error) => error.cause)),
+      listMcpSignInsRequest(admin.request, mcpPages()).pipe(Effect.mapError((error) => error.cause)),
     ).catch(() => []);
     setState((draft) => {
       draft.mcpSignIns = mcpSignInRecord(states);
@@ -316,18 +324,22 @@ export function createWebServerSettings(options: {
     refreshMcp,
     saveMcpServer: (config: McpServerConfig) =>
       mutateMcp((admin) =>
-        runTeamEffect(saveMcpServerRequest(admin.request, { config }).pipe(Effect.mapError((error) => error.cause))),
+        runTeamEffect(
+          saveMcpServerRequest(admin.request, { config }, mcpPages()).pipe(Effect.mapError((error) => error.cause)),
+        ),
       ),
     removeMcpServer: (mcpServerId: string) =>
       mutateMcp((admin) =>
         runTeamEffect(
-          removeMcpServerRequest(admin.request, { mcpServerId }).pipe(Effect.mapError((error) => error.cause)),
+          removeMcpServerRequest(admin.request, { mcpServerId }, mcpPages()).pipe(
+            Effect.mapError((error) => error.cause),
+          ),
         ),
       ),
     setMcpServerEnabled: (mcpServerId: string, enabled: boolean) =>
       mutateMcp((admin) =>
         runTeamEffect(
-          setMcpServerEnabledRequest(admin.request, { mcpServerId, enabled }).pipe(
+          setMcpServerEnabledRequest(admin.request, { mcpServerId, enabled }, mcpPages()).pipe(
             Effect.mapError((error) => error.cause),
           ),
         ),
@@ -343,7 +355,7 @@ export function createWebServerSettings(options: {
     },
     signOutMcpServer: async (mcpServerId: string): Promise<void> => {
       const states = await runTeamEffect(
-        signOutMcpServerRequest(requireAdmin().admin.request, { mcpServerId }).pipe(
+        signOutMcpServerRequest(requireAdmin().admin.request, { mcpServerId }, mcpPages()).pipe(
           Effect.mapError((error) => error.cause),
         ),
       );

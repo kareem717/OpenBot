@@ -17,7 +17,7 @@ export interface MemoriesPort {
   ownerLabel: string;
   /** The word the page reads in its sentences: "This agent has no saved memories yet." */
   ownerNoun: "agent" | "channel";
-  /** Null when another computer holds the cap: its host refuses a memory past it. */
+  /** Null for unlimited storage, or when only the remote host knows its legacy quota. */
   limit: number | null;
   list: () => Promise<MemoryEntry[]>;
   selection?: {
@@ -91,12 +91,13 @@ export function channelMemoriesPort(
   channelId: string,
   channelName: string,
   api: ChannelMemoriesApi = window.openbot.agent,
+  limit: number | null = INPUT_LIMITS.channelMemories,
 ): MemoriesPort {
   return {
     ownerId: channelId,
     ownerLabel: channelName,
     ownerNoun: "channel",
-    limit: INPUT_LIMITS.channelMemories,
+    limit,
     list: () => api.listChannelMemories(channelId),
     create: async (text) => {
       await api.createChannelMemory({ channelId, text });

@@ -264,17 +264,8 @@ export class InstanceTransferService {
       }
 
       const skills: string[] = [];
-      // An import refuses an agent with more skills than the limit, so the export keeps the first ones.
       const folders = yield* skillFolders(agent.workspacePath);
-      if (folders.length > INPUT_LIMITS.agentSkills)
-        warnings.push(
-          sourceText("error.import.transferSkillLimit", {
-            name: agent.name,
-            limit: INPUT_LIMITS.agentSkills,
-            total: folders.length,
-          }),
-        );
-      for (const skill of folders.slice(0, INPUT_LIMITS.agentSkills)) {
+      for (const skill of folders) {
         const folder = `${prefix}skills/${skill.slug}`;
         skills.push(folder);
         for (const file of skill.files) {
@@ -921,12 +912,8 @@ export class InstanceTransferService {
               );
           }
 
-          // The limit can be lower here than on the computer that made the file.
-          const memoryLimit = this.options.agents.memoryLimit();
-          if (source.memories.length > memoryLimit)
-            warnings.push(sourceText("error.import.memoryLimit", { name: source.name, limit: memoryLimit }));
           const chosen = yield* archiveSync(() =>
-            source.memories.slice(0, memoryLimit).flatMap((memory) => {
+            source.memories.flatMap((memory) => {
               const created = this.options.agents.createMemory({ agentId: agent.id, text: memory.text });
               return memory.inclusion ? [{ memoryId: created.id, inclusion: memory.inclusion }] : [];
             }),

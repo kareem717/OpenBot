@@ -22,9 +22,8 @@ export interface MemoryTables {
   /** The owner's key in event payloads. */
   ownerKey: "agentId" | "channelId" | "connectionId";
   aggregateType: "agent-memory" | "channel-memory" | "messaging-memory";
-  /** Read at each save, because the agent cap is an app setting the user can change. */
+  /** The legacy setting, retained for callers that read an older host's preference. */
   limit: () => number;
-  limitMessage: (limit: number) => string;
 }
 
 export interface SaveAutomaticMemory {
@@ -46,7 +45,6 @@ export interface SaveMemoryInput {
   origin: AgentMemoryOrigin;
   sourceTurnId: string | null;
   commandId?: string | undefined;
-  uncapped?: boolean;
 }
 
 export class MemoryStore {
@@ -102,13 +100,10 @@ export class MemoryStore {
     return this.save(ownerId, { text, origin: "manual", sourceTurnId: null });
   }
 
-  /**
-   * Copies every memory, even past the cap: the user can lower the cap below what the source holds,
-   * and a copy that stops partway would lose memories.
-   */
+  /** Copies every memory and preserves the source entries. */
   duplicate(sourceOwnerId: string, targetOwnerId: string): MemoryEntry[] {
     return this.list(sourceOwnerId).map((memory) =>
-      this.save(targetOwnerId, { text: memory.text, origin: memory.origin, sourceTurnId: null, uncapped: true }),
+      this.save(targetOwnerId, { text: memory.text, origin: memory.origin, sourceTurnId: null }),
     );
   }
 
@@ -182,7 +177,7 @@ export class MemoryStore {
   }
 
   /**
-   * Validate, fold a duplicate, cap the owner, then keep `updatedAt` strictly increasing so the
+   * Validate, fold a duplicate, then keep `updatedAt` strictly increasing so the
    * `ORDER BY updated_at DESC` above is stable when two saves land in the same millisecond.
    */
   protected save(ownerId: string, input: SaveMemoryInput): MemoryEntry {
@@ -196,11 +191,6 @@ export class MemoryStore {
 
     const previous = input.memoryId ? this.get(ownerId, input.memoryId) : null;
     if (input.memoryId && !previous) throw new Error(sourceText("error.backend.memoryGone"));
-    if (!previous && !input.uncapped) {
-      const limit = this.tables.limit();
-      if (this.count(ownerId) >= limit) throw new Error(this.tables.limitMessage(limit));
-    }
-
     const now = new Date().toISOString();
     const updatedAt =
       previous && now <= previous.updatedAt ? new Date(Date.parse(previous.updatedAt) + 1).toISOString() : now;

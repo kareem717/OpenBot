@@ -10,7 +10,6 @@ const MESSAGING_MEMORY_TABLES: MemoryTables = {
   ownerKey: "connectionId",
   aggregateType: "messaging-memory",
   limit: () => INPUT_LIMITS.messagingMemories,
-  limitMessage: (limit) => sourceText("error.messaging.memoryLimit", { limit }),
 };
 
 /**

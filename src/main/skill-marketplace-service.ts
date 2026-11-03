@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentSummary,
   AgentTemplateSkill,
@@ -427,11 +426,6 @@ export class SkillMarketplaceService {
         )
       )
         return yield* new SkillMarketplaceFailure({ cause: new Error(sourceText("error.skill.folderTaken")) });
-      if (!existing && Object.keys(lock.skills).length >= INPUT_LIMITS.agentSkills) {
-        return yield* new SkillMarketplaceFailure({
-          cause: new Error(sourceText("error.skill.tooManySkills", { limit: INPUT_LIMITS.agentSkills })),
-        });
-      }
       if (existing) {
         const state = yield* installedState(agent.workspacePath, existing);
         if (state === "modified" && !replaceModified)

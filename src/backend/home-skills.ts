@@ -7,7 +7,6 @@ import { readSkillFrontmatter } from "./skill-frontmatter";
 
 /** The user's own skill folder, which the Agent Skills tools share across CLIs. */
 export const HOME_SKILL_FOLDER = ".agents/skills";
-const MAX_HOME_SKILLS = 200;
 const MAX_SKILL_FILE_BYTES = 256 * 1024;
 
 /** A skill in `~/.agents/skills` whose `SKILL.md` follows the Agent Skills specification. */
@@ -74,7 +73,7 @@ export const skillFolderNames = Effect.fn("HomeSkills.folderNames")(function* (d
 export const listHomeSkills = Effect.fn("HomeSkills.list")(function* () {
   const root = homeSkillRoot();
   const skills: HomeSkill[] = [];
-  for (const slug of [...(yield* skillFolderNames(root))].slice(0, MAX_HOME_SKILLS)) {
+  for (const slug of [...(yield* skillFolderNames(root))]) {
     const directory = join(root, slug);
     const file = join(directory, "SKILL.md");
     const size = yield* optionalRead(() => stat(file));

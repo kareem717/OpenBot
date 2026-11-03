@@ -4,6 +4,7 @@
  * data, so each part reads the open channel from `useChannels()`.
  */
 
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { Button, ErrorReference } from "@openbot/ui";
 import { SettingsPanel, SettingsPanelContent, SettingsPanelHeader } from "@openbot/ui/components/SettingsPanel";
 import { ChannelAvatar } from "@openbot/ui/features/channels/ChannelAvatar";
@@ -168,7 +169,11 @@ export function ChannelAboveComposer(props: { channelId: string }) {
  * pane header, as in the agent settings.
  */
 export function ChannelSettingsPane(
-  props: ConversationChannelSettingsPaneProps & { channelId: string; routines: ChannelRoutineHost },
+  props: ConversationChannelSettingsPaneProps & {
+    channelId: string;
+    routines: ChannelRoutineHost;
+    unlimitedMemories: boolean;
+  },
 ) {
   const channels = useChannels();
   const { t } = useText();
@@ -192,7 +197,14 @@ export function ChannelSettingsPane(
   const channelName = createMemo(() => page()?.channel.name ?? "");
   // Memoised on the name alone: a port rebuilt on every revision would drop and remake its event
   // subscription each time a message arrives.
-  const memoriesPort = createMemo(() => channelMemoriesPort(props.channelId, channelName(), runtime().agent));
+  const memoriesPort = createMemo(() =>
+    channelMemoriesPort(
+      props.channelId,
+      channelName(),
+      runtime().agent,
+      props.unlimitedMemories ? null : INPUT_LIMITS.channelMemories,
+    ),
+  );
   const routinesPort = createMemo(() => {
     const legacy = channelRoutinesPort(props.channelId, runtime().agent, props.routines.localHost());
     const serverId = props.routines.eventsServerId();

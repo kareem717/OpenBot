@@ -12,6 +12,7 @@ import { PROVIDERS_ADMIN_CODE_SIGN_IN_PROVIDERS } from "@openbot/contracts/team-
 import { PROVIDERS_SIGN_IN_V3_PROVIDERS } from "@openbot/contracts/team-protocol/providers-v3";
 import { PROVIDERS_V4_SIGN_IN_PROVIDERS } from "@openbot/contracts/team-protocol/providers-v4";
 import { SIGN_IN_RELAY_PROVIDERS } from "@openbot/contracts/team-protocol/sign-in-relay-v1";
+import { UNLIMITED_MEMORY_STORAGE_CAPABILITY } from "@openbot/contracts/team-protocol/unlimited-memory-storage-v1";
 
 /**
  * Whether a server can be asked for a capability-gated feature. A local server
@@ -23,7 +24,11 @@ export function serverSupportsCapability(
   capability: TeamCurrentCapability,
 ): boolean {
   if (
-    (capability === "remote-desktop-setup" ||
+    (capability === "mcp-server-pages-v1" ||
+      capability === "skill-pages-v1" ||
+      capability === "channel-memory-pages-v1" ||
+      capability === UNLIMITED_MEMORY_STORAGE_CAPABILITY ||
+      capability === "remote-desktop-setup" ||
       capability === "channel-chats-v1" ||
       capability === "channel-delete-v1" ||
       capability === "channel-attention-v1" ||
@@ -119,6 +124,15 @@ export function serverSupportsCapability(
  */
 export function remoteRoutineRecovery(server: ServerSummary | undefined): boolean {
   return server?.kind === "remote" && serverCanAdminister(server, "routine-recovery-v1");
+}
+
+/** This computer has no saved-memory count quota; a remote host must state the same policy. */
+export function serverHasUnlimitedMemoryStorage(server: ServerSummary | undefined): boolean {
+  return (
+    server?.kind === "local" ||
+    (server?.kind === "remote" &&
+      server.compatibility?.capabilities.includes(UNLIMITED_MEMORY_STORAGE_CAPABILITY) === true)
+  );
 }
 
 /** Whether the routine editor can ask the host for a test event: this computer, or a joined server with `webhook-tests-v1`. */

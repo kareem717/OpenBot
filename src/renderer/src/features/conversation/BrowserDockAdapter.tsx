@@ -277,7 +277,7 @@ export function BrowserDockAdapter(adapterProps: { tab: BrowserTab | undefined; 
     return snapshot({
       agent: dockAgent(agent),
       agents: props.agents.map(dockAgent),
-      skills: installedSkills().slice(0, BROWSER_DOCK_LIMITS.skills).map(dockSkill),
+      skills: installedSkills().map(dockSkill),
       mcpServers: mcpServers().map(dockMcpServer),
       draft: { text, revision: draftRevision },
       focusRequest: composerFocusRequest(),

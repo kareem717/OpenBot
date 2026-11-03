@@ -2353,7 +2353,7 @@ function threadConfigKey(config: ThreadConfig, withModel: boolean): string {
 function readMemoryContext(params: unknown): MemoryContext | null {
   const context = isRecord(params) ? params.memoryContext : undefined;
   if (!isRecord(context) || !Array.isArray(context.memories)) return null;
-  if (!isNumber(context.storedCount) || !isNumber(context.limit)) return null;
+  if (!isNumber(context.storedCount)) return null;
   const memories = context.memories.filter(
     (memory): memory is MemoryContext["memories"][number] =>
       isRecord(memory) &&
@@ -2361,7 +2361,7 @@ function readMemoryContext(params: unknown): MemoryContext | null {
       isString(memory.text) &&
       isOneOf(["automatic", "manual"] as const, memory.origin),
   );
-  return { memories, storedCount: context.storedCount, limit: context.limit };
+  return { memories, storedCount: context.storedCount };
 }
 
 function readSectionTeammates(value: unknown): SectionTeammates | null {

@@ -25,7 +25,7 @@ import { actionToast } from "../../action-toast";
 import { ServerMemoryLimitSetting } from "./ServerMemoryLimitSetting";
 import { ServerMemoryReviewSetting } from "./ServerMemoryReviewSetting";
 import { ServerTimezoneSetting } from "./ServerTimezoneSetting";
-import { serverCanAdminister } from "./server-capabilities";
+import { serverCanAdminister, serverHasUnlimitedMemoryStorage } from "./server-capabilities";
 import type { ServerSettingsSectionHost } from "./server-settings-section";
 
 /**
@@ -102,7 +102,10 @@ export function createServerGeneralSection(host: ServerSettingsSectionHost): Ser
   /** The host changes its own name and logo; an admin elsewhere asks it to while it is online. */
   const canEditIdentity = () => serverCanAdminister(props.server, "host-admin-v1") && actionsAvailable();
   const canSetTimezone = () => serverCanAdminister(props.server, "host-timezone-v1") && actionsAvailable();
-  const canSetMemoryLimit = () => serverCanAdminister(props.server, "agent-memory-limit-v1") && actionsAvailable();
+  const canSetMemoryLimit = () =>
+    !serverHasUnlimitedMemoryStorage(props.server) &&
+    serverCanAdminister(props.server, "agent-memory-limit-v1") &&
+    actionsAvailable();
   const canSetMemoryReview = () => serverCanAdminister(props.server, "memory-review-v1") && actionsAvailable();
   const trimmedName = () => panels.identity.name.trim();
   const nameError = () => {

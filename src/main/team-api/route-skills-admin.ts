@@ -31,7 +31,9 @@ export async function routeSkillsAdmin(
   const body = await readJson(request);
   requireVisibleBodyAgent(body, hiddenAgentIds);
   try {
-    if (list) return json(200, await runCauseEffect(skills.listInstalled(stringField(body, "agentId"))));
+    // skills-admin-v1 has a frozen 1,000-record list. Updated peers use skill-pages-v1 for all rows.
+    if (list)
+      return json(200, (await runCauseEffect(skills.listInstalled(stringField(body, "agentId")))).slice(0, 1_000));
     if (install) return json(200, await runCauseEffect(skills.install(parseInstallSkill(body))));
     if (uninstall) {
       await runCauseEffect(skills.uninstall(parseUninstallSkill(body)));

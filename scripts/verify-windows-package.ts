@@ -9,6 +9,7 @@ import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { parse as parseYaml } from "yaml";
 import { isMissingFileError } from "../src/backend/file-errors";
+import { verifyDesktopUpdateSource } from "./verify-desktop-update-source";
 
 const logger = createOpenBotLogger("verify-windows-package");
 
@@ -133,9 +134,7 @@ try {
 } catch (error) {
   if (requireUpdateMetadata) throw error;
 }
-if (updateMetadata !== null && !updateMetadata.includes("provider: github")) {
-  throw new Error("The packaged update provider is not GitHub.");
-}
+if (updateMetadata !== null) verifyDesktopUpdateSource(updateMetadata);
 
 const ownExecutables = [
   executablePath,

@@ -60,7 +60,6 @@ export interface ImportManifest {
 
 export function decodeImportManifest(
   bytes: Uint8Array,
-  agentMemoryLimit: number,
   now: () => Date = () => new Date(),
 ): { manifest: ImportManifest; warnings: string[] } {
   let value: unknown;
@@ -83,7 +82,7 @@ export function decodeImportManifest(
   const warnings: string[] = [];
   const keys = new Set<string>();
   const agents = value.agents.map((item, index) => {
-    const agent = decodeAgent(item, index, warnings, now, agentMemoryLimit);
+    const agent = decodeAgent(item, index, warnings, now);
     if (keys.has(agent.key)) throw new Error(`Two agents use the key "${agent.key}".`);
     keys.add(agent.key);
     return agent;
@@ -150,17 +149,11 @@ function decodeChannel(
     members: known,
     lead,
     routines: decodeRoutines(routines, name, warnings, now),
-    memories: decodeMemories(memories, name, warnings, INPUT_LIMITS.channelMemories),
+    memories: decodeMemories(memories, name, warnings),
   };
 }
 
-function decodeAgent(
-  value: unknown,
-  index: number,
-  warnings: string[],
-  now: () => Date,
-  memoryLimit: number,
-): ImportAgent {
+function decodeAgent(value: unknown, index: number, warnings: string[], now: () => Date): ImportAgent {
   if (!isDynamicRecord(value)) throw new Error(`Agent ${index + 1} is invalid.`);
   if (!isAgentImportKey(value.key)) throw new Error(`Agent ${index + 1} has an invalid key.`);
   const key = value.key;
@@ -179,7 +172,7 @@ function decodeAgent(
     return normalized;
   };
   const skills = value.skills === undefined ? [] : value.skills;
-  if (!Array.isArray(skills) || skills.length > INPUT_LIMITS.agentSkills) invalidField(key, "skill list");
+  if (!Array.isArray(skills)) invalidField(key, "skill list");
   const routines = value.routines === undefined ? [] : value.routines;
   if (!Array.isArray(routines)) invalidField(key, "routine list");
   const memories = value.memories === undefined ? [] : value.memories;
@@ -194,7 +187,7 @@ function decodeAgent(
     skills: skills.map((skill: unknown) => path(skill, "skill path") ?? invalidField(key, "skill path")),
     files: path(value.files, "files path"),
     routines: decodeRoutines(routines, name, warnings, now),
-    memories: decodeMemories(memories, name, warnings, memoryLimit),
+    memories: decodeMemories(memories, name, warnings),
   };
 }
 
@@ -250,7 +243,7 @@ function decodeRoutines(values: unknown[], agent: string, warnings: string[], no
   return routines;
 }
 
-function decodeMemories(values: unknown[], owner: string, warnings: string[], limit: number): string[] {
+function decodeMemories(values: unknown[], owner: string, warnings: string[]): string[] {
   const memories = values
     .filter(isString)
     .map((text) => text.trim())
@@ -264,6 +257,5 @@ function decodeMemories(values: unknown[], owner: string, warnings: string[], li
         limit: INPUT_LIMITS.agentMemoryText,
       }),
     );
-  if (kept.length > limit) warnings.push(sourceText("error.import.memoryLimit", { name: owner, limit }));
-  return kept.slice(0, limit);
+  return kept;
 }
