@@ -254,14 +254,24 @@ def external_ip(family):
     return str(ipaddress.ip_address(result.stdout.strip()))
 
 
-def dns_query(address):
+def application_dns(cfg):
+    # resolv.conf supports three servers. Preserve MagicDNS, then public fallbacks.
+    return ['100.100.100.100', *cfg['bootstrap_dns'][:2]]
+
+
+def dns_query(address, require_answer=False):
     # One uncached UDP query; no host NSS or systemd-resolved socket is used.
     packet = b'\x53\x29\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01'
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(3)
         try:
             sock.sendto(packet, (address, 53))
-            return sock.recv(2048).startswith(b'\x53\x29')
+            response = sock.recv(2048)
+            if len(response) < 12 or response[:2] != b'\x53\x29' or not response[2] & 0x80:
+                return False
+            if require_answer:
+                return response[3] & 0x0f == 0 and int.from_bytes(response[6:8], 'big') > 0
+            return True
         except (TimeoutError, OSError):
             return False
 
@@ -274,7 +284,7 @@ def probe(cfg, down):
         raise RuntimeError('Probe must not receive the daemon underlay exception')
     if down:
         # Test the TUN DNS and direct underlay DNS, with both UDP and TCP paths.
-        for address in ['100.100.100.100', *cfg['bootstrap_dns']]:
+        for address in dict.fromkeys([*application_dns(cfg), *cfg['bootstrap_dns']]):
             if dns_query(address):
                 raise RuntimeError('DNS leaked while the tunnel was stopped')
         for address in [cfg['bootstrap_dns'][0], '2606:4700:4700::1111']:
@@ -290,8 +300,8 @@ def probe(cfg, down):
             raise RuntimeError('IPv4 egress does not match the operator-verified exit address')
         if ipv6 != cfg.get('expected_exit_ipv6'):
             raise RuntimeError('IPv6 egress differs from expected address (omit it only if IPv6 is blocked)')
-        if not dns_query('100.100.100.100') or not dns_query(cfg['bootstrap_dns'][0]):
-            raise RuntimeError('Tunnel DNS or direct DNS through the tunnel failed')
+        if not dns_query(cfg['bootstrap_dns'][0], require_answer=True):
+            raise RuntimeError('Public DNS through the tunnel returned no valid answer')
         print(json.dumps({'exit_ipv4_verified': True, 'exit_ipv6': 'verified' if ipv6 else 'blocked', 'dns_verified': True}))
 
 
@@ -343,7 +353,7 @@ def install(cfg):
                 raise RuntimeError('Refusing to overwrite a unit with another owner')
         write(target, (source / name).read_text(), 0o755 if name.endswith('.py') else 0o644)
     write(BASE / 'bootstrap-resolv.conf', ''.join('nameserver ' + address + '\n' for address in cfg['bootstrap_dns']))
-    write(BASE / 'resolv.conf', 'nameserver 100.100.100.100\noptions timeout:2 attempts:2\n')
+    write(BASE / 'resolv.conf', ''.join('nameserver ' + address + '\n' for address in application_dns(cfg)) + 'options timeout:2 attempts:2\n')
     original = Path('/etc/nsswitch.conf').read_text().splitlines()
     write(BASE / 'nsswitch.conf', '\n'.join('hosts: files dns' if line.lstrip().startswith('hosts:') else line for line in original) + '\n')
     run('systemctl', 'daemon-reload')

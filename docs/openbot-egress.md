@@ -14,7 +14,10 @@ upstream adds a new network-using unit.
 The namespace covers `openbot.service`, its terminal/browser/provider/MCP children,
 the three updater service units, and installed OpenBot Agent Relay enroll, history,
 and identity services. Timers and path units only trigger those services. Each
-service uses the same namespace and Tailscale DNS. An NSS override prevents libc
+service uses the same namespace and resolver list. Quad100 comes first for
+MagicDNS, followed by the first two configured public resolvers. External queries
+can use a public fallback when Quad100 has no upstream with `--accept-dns=false`.
+All application DNS sockets still use the tunnel and its output guard. An NSS override prevents libc
 from asking the host `systemd-resolved` over its Unix socket.
 
 Only `tailscaled` enters `openbottunnel.slice`. Its documented `0x80000/0xff0000`
@@ -50,7 +53,9 @@ mode `0700`. Copy `config.example.json` to `/etc/openbot-egress/config.json`, se
 mode `0600`, and set its root ownership. Replace the placeholder values:
 
 - `exit_node`: the approved exit node's full Tailscale DNS name or IP.
-- `bootstrap_dns`: one to three IPv4 DNS resolvers reachable from the host.
+- `bootstrap_dns`: one to three IPv4 DNS resolvers reachable from the host and
+  through the exit node. The application uses the first two after Quad100, within
+  the three-server resolver limit. The daemon can use all three for bootstrap.
 - `expected_exit_ipv4`: the public IPv4 address independently checked on the exit node.
 - `expected_exit_ipv6`: optional public IPv6 address, independently checked there.
   Omit this key only if the exit node does not provide IPv6; preflight must prove
@@ -80,8 +85,8 @@ sudo /usr/local/libexec/openbot-egress/openbot-egress.py verify
 ```
 
 Preflight checks the selected online exit node, exact namespace guard fingerprint,
-owned FORWARD rules, tunnel route, expected public IPv4 and IPv6, and DNS through
-the tunnel. It then stops only the dedicated daemon and checks direct IPv4, IPv6,
+owned FORWARD rules, tunnel route, expected public IPv4 and IPv6, and a valid public DNS answer through
+the tunnel. A SERVFAIL response does not pass the positive DNS check. It then stops only the dedicated daemon and checks direct IPv4, IPv6,
 and DNS attempts in a root probe service outside the tunnel cgroup. Those attempts
 must fail. It restarts the daemon and checks egress again. A successful result
 writes a root-only, current-boot proof tied to the config. It cannot run after
