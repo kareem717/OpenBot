@@ -1,0 +1,48 @@
+name: Desktop macOS recovery
+
+on:
+  push:
+    branches: [codex/remove-capacity-limits]
+    paths: [.github/workflows/desktop-macos-recovery.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-macos-recovery
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: Verify desktop-v0.60.1 on macOS 26 ARM64
+    if: github.repository == 'kareem717/OpenBot'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: desktop-v0.60.1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun
+      - name: Require Apple silicon runner and exact release source
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = 76cf7e68c27538b7e82cd87ac79fb634ac4a1d8f
+          test "$(bun -p 'require("./package.json").version')" = 0.60.1
+      - name: Build local-install client
+        run: bun run dist:mac --publish never
+      - name: Verify archive integrity, fuses, runtimes, and launch
+        run: |
+          bun run verify:package
+          bun scripts/prepare-desktop-update-manifest.ts dist/latest-mac.yml
+          bun run verify:update-artifacts macos
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-macos-arm64
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.zip.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 14
