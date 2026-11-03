@@ -115,7 +115,7 @@ jobs:
         run: bun run dist:mac --publish never
       - name: Verify archive integrity, fuses, runtimes, and launch
         run: |
-          bun run verify:package:mac
+          bun run verify:package
           bun scripts/prepare-desktop-update-manifest.ts dist/latest-mac.yml
           bun run verify:update-artifacts macos
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
