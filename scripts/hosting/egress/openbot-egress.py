@@ -71,9 +71,10 @@ def config():
     cfg['expected_exit_ipv4'] = str(ipaddress.IPv4Address(cfg['expected_exit_ipv4']))
     if cfg.get('expected_exit_ipv6'):
         cfg['expected_exit_ipv6'] = str(ipaddress.IPv6Address(cfg['expected_exit_ipv6']))
-    network = ipaddress.IPv4Network(cfg.get('link_subnet', '169.254.177.0/30'))
-    if network.prefixlen != 30 or not network.subnet_of(ipaddress.IPv4Network('169.254.0.0/16')):
-        raise RuntimeError('link_subnet must be a link-local IPv4 /30')
+    network = ipaddress.IPv4Network(cfg.get('link_subnet', '10.254.177.0/30'))
+    private_ranges = map(ipaddress.IPv4Network, ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
+    if network.prefixlen != 30 or not any(network.subnet_of(block) for block in private_ranges):
+        raise RuntimeError('link_subnet must be an RFC1918 IPv4 /30')
     cfg['subnet'] = str(network)
     cfg['host_ip'], cfg['peer_ip'] = map(str, network.hosts())
     cfg['service_user'] = cfg.get('service_user', 'openbot')
@@ -134,8 +135,8 @@ def table_owned(command):
 
 
 def forward_rules(cfg):
-    return [('-i', HOST_LINK, '-s', cfg['peer_ip'] + '/32', '-m', 'comment', '--comment', OWNER, '-j', 'ACCEPT'),
-            ('-o', HOST_LINK, '-d', cfg['peer_ip'] + '/32', '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', OWNER, '-j', 'ACCEPT'),
+    return [('-s', cfg['peer_ip'] + '/32', '-i', HOST_LINK, '-m', 'comment', '--comment', OWNER, '-j', 'ACCEPT'),
+            ('-d', cfg['peer_ip'] + '/32', '-o', HOST_LINK, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', OWNER, '-j', 'ACCEPT'),
             ('-m', 'comment', '--comment', OWNER, '-j', 'DROP')]
 
 

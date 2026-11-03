@@ -56,7 +56,8 @@ mode `0600`, and set its root ownership. Replace the placeholder values:
   Omit this key only if the exit node does not provide IPv6; preflight must prove
   that IPv6 egress is blocked.
 - `service_user`: the existing non-root OpenBot service account.
-- `link_subnet`: optional unused link-local IPv4 `/30`; default `169.254.177.0/30`.
+- `link_subnet`: optional unused RFC1918 IPv4 `/30`; default `10.254.177.0/30`.
+  Tailscale excludes link-local IPv4 when it checks interface connectivity.
 
 Do not put this completed file, node state, auth keys, or private addresses in Git.
 The helper does not accept an auth key and does not print config values.
@@ -126,3 +127,20 @@ References: [Tailscale exit nodes](https://tailscale.com/docs/features/exit-node
 [MagicDNS without DNS replacement](https://tailscale.com/docs/reference/faq/dns-resolv-conf),
 [network namespace unit options](https://freedesktop.org/software/systemd/man/latest/systemd.exec.html#NetworkNamespacePath=),
 and [nftables socket cgroup matching](https://www.netfilter.org/projects/nftables/manpage.html).
+
+## Change the owned underlay subnet before attachment
+
+Do this only when application drop-ins are absent and no application process is in
+this namespace. Stop the dedicated daemon and network unit first. Keep the root
+config and dedicated node state. Record the old subnet and ownership marker.
+Remove only the two exact `FORWARD` jumps with the `openbot-egress-v1` comment,
+then flush/delete only `OPENBOT-EGRESS` after its rules match the helper's expected
+owned rules. Delete only the host `inet openbot_egress` table after its table
+comment matches `openbot-egress-v1`. Check the `obot-egress0` link alias matches
+that owner, then delete that link. Check that the namespace has no remaining PIDs
+and that `/run/openbot-egress/network.json` has the matching owner before deleting
+only `openbot-egress` and that runtime marker. Do not delete the Tailscale state.
+
+Set an unused RFC1918 `/30` in the root config. Install the corrected helper and
+restart the dedicated transport. Repeat login if needed, and repeat all preflight
+checks before attachment. Never delete or flush a foreign table, link, or chain.
