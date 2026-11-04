@@ -165,7 +165,7 @@ process.stdin.on("end", () => process.exit(0));
 const STAND_IN_CODEX = `#!/usr/bin/env node
 const fs = require("node:fs");
 const { randomUUID } = require("node:crypto");
-if (process.argv.includes("--version")) { console.log("codex-cli 0.160.1"); process.exit(0); }
+if (process.argv.includes("--version")) { console.log("codex-cli 0.166.0"); process.exit(0); }
 const threads = new Map();
 const active = new Map();
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\\n");

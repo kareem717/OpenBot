@@ -122,7 +122,7 @@ export const messages = {
     "ACP CLI не сообщил ни одной модели ACP. OpenBot не будет подбирать запасную модель наугад.",
   "error.provider.endpointRemoveBusy":
     "Дождитесь, пока завершатся текущий ход и очередь, прежде чем удалять этот эндпоинт.",
-  "error.provider.codexOutdated": "Codex CLI {version} слишком старый. OpenBot требует версию 0.156.0 или новее.",
+  "error.provider.codexOutdated": "Codex CLI {version} слишком старый. OpenBot требует версию 0.166.0 или новее.",
   "error.provider.codexNotStarted": "Codex CLI найден, но запустить его не удалось.",
   "error.provider.codexNotStartedHint":
     "Codex CLI найден, но запустить его не удалось. Выполните `codex --version` в новом терминале.",

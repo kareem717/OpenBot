@@ -85,7 +85,7 @@ const MEASURE_SUMMARY = `${SUMMARY_TEXT} ${"The members checked one more step of
 const FAKE_CODEX = `#!/usr/bin/env node
 const { appendFileSync, existsSync } = require("node:fs");
 if (process.argv.includes("--version")) {
-  process.stdout.write("codex-cli 0.160.1\\n");
+  process.stdout.write("codex-cli 0.166.0\\n");
   process.exit(0);
 }
 const LOG = ${JSON.stringify(fakeLog)};

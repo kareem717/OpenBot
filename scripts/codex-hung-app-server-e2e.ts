@@ -48,7 +48,7 @@ const { providerLabel } = await import("../src/backend/agent/thread-items");
 const FAKE_CODEX = `#!/usr/bin/env node
 const fs = require("node:fs");
 if (process.argv.includes("--version")) {
-  process.stdout.write("codex-cli 0.160.1\\n");
+  process.stdout.write("codex-cli 0.166.0\\n");
   process.exit(0);
 }
 const log = (entry) => fs.appendFileSync(process.env.OPENBOT_FAKE_CODEX_LOG, JSON.stringify({ pid: process.pid, ...entry }) + "\\n");

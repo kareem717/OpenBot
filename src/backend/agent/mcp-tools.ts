@@ -134,6 +134,8 @@ export function mcpServersFromGateway(
 }
 
 export interface McpServerToolCall {
+  /** The tool cannot finish setup without a person; the turn must not auto-continue. */
+  requireUserAction?(): void;
   tool: McpServerToolName;
   arguments: unknown;
   /**
@@ -167,20 +169,23 @@ export const marketplaceAppStatus = (
   servers: AgentMcpServers,
   app: MarketplaceAppServer,
   requestSignIn: McpServerToolCall["requestSignIn"],
-) => asToolResult(servers, runMarketplaceAppStatus(servers, app, requestSignIn));
+  requireUserAction?: () => void,
+) => asToolResult(servers, runMarketplaceAppStatus(servers, app, requestSignIn, requireUserAction));
 
 const runMarketplaceAppStatus = Effect.fn("McpServerTools.marketplaceAppStatus")(function* (
   servers: AgentMcpServers,
   { config, setupSteps }: MarketplaceAppServer,
   requestSignIn: McpServerToolCall["requestSignIn"],
+  requireUserAction?: () => void,
 ) {
   const server = describeServer(config, servers.signIns());
-  if (!config.enabled)
+  if (!config.enabled) {
     return openBotToolResult({
       status: "disabled",
       server,
       next: "The app is installed and turned off. Tell the user to turn it on in Server settings, MCP, or call openbot.set_mcp_server_enabled when the user asks.",
     });
+  }
   const outcome = yield* servers.inspect(config);
   if (outcome.error === null)
     return openBotToolResult({
@@ -190,7 +195,8 @@ const runMarketplaceAppStatus = Effect.fn("McpServerTools.marketplaceAppStatus")
       tools: outcome.tools,
       next: "The app answers. Use these tools when your tool search finds them. Otherwise they reach you from your next turn: ask the user to send the request again.",
     });
-  if (outcome.needs === null && setupSteps.length > 0)
+  if (outcome.needs === null && setupSteps.length > 0) {
+    requireUserAction?.();
     return openBotToolResult({
       status: "not_running",
       server,
@@ -198,7 +204,14 @@ const runMarketplaceAppStatus = Effect.fn("McpServerTools.marketplaceAppStatus")
       setupSteps,
       next: "Give the user these steps, end your turn, and call openbot.test_mcp_server when the user says it is done.",
     });
-  return yield* report(servers, { requestSignIn }, config, outcome, false);
+  }
+  return yield* report(
+    servers,
+    { requestSignIn, ...(requireUserAction ? { requireUserAction } : {}) },
+    config,
+    outcome,
+    false,
+  );
 });
 
 /** A failure is a result the agent can correct, with the MCP secrets masked. */
@@ -321,7 +334,7 @@ export const searchSignIns = Effect.fn("McpServerTools.searchSignIns")(function*
 /** What a test found, in words the agent acts on. A sign-in also puts its card in the conversation. */
 const report = Effect.fnUntraced(function* (
   servers: AgentMcpServers,
-  call: Pick<McpServerToolCall, "requestSignIn">,
+  call: Pick<McpServerToolCall, "requestSignIn" | "requireUserAction">,
   config: McpServerConfig,
   outcome: McpProbeOutcome,
   /** The server was just saved, so the agents get it from their next turn. */
@@ -347,13 +360,15 @@ const report = Effect.fnUntraced(function* (
       next: SIGN_IN_NEXT,
     });
   }
-  if (outcome.needs === "key")
+  if (outcome.needs === "key") {
+    call.requireUserAction?.();
     return openBotToolResult({
       status: "needs_key",
       server,
       error,
       next: "Ask the user to enter the key in Server settings, MCP. Do not ask for the key in the chat.",
     });
+  }
   return openBotToolResult({ status: "error", server, error });
 });
 

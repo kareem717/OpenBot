@@ -33,9 +33,29 @@ const ASKS_TO_CONTINUE = new RegExp(
 const NAMES_NEXT_STEP =
   /(?:\blet me now\b|\bnow let me\b|\bi['\u2019]ll now\b|\bi will now\b|\bnow i(?:['\u2019]ll| will)\b|\bnext,?\s+i(?:['\u2019]ll| will)\b)(?!\s+(?:wait|hold|pause|stop)\b)[^.!?\n]{0,100}[.:\u2026]?\s*$/i;
 
-/** A last line that says the agent waits for the user, such as "I'll now wait for your approval." */
+/** Prose that says the agent waits for the user, such as "I'll now wait for your approval." */
 const WAITS_FOR_USER =
   /\b(?:i['\u2019]ll|i will|i['\u2019]m going to|let me)\s+(?:now\s+)?(?:wait|hold|pause|stop)\b|\bwaiting\s+(?:for|on)\s+(?:you|your)\b/i;
+
+/** Explicit work handed to the person, not a description of what the agent can do next. */
+const USER_ACTION =
+  "(?:sign\\s*in|log\\s*in|connect|authori[sz]e|approve|confirm|generate|copy|paste|enter|provide|supply|choose|select|send|add|set|enable|install|finish|complete|configure|click|press|grant|unlock|open|create|rotate)";
+const USER_DEPENDENCY = new RegExp(
+  `\\b(?:i (?:need|require) you to|requires? you to|you (?:need to|must|have to)|(?:once|after|when|until) you|please)\\s+(?:first\\s+)?${USER_ACTION}\\b|\\b(?:once|after|when|until) you(?:['\\u2019]ve| have)\\s+[^.!?\\n]{1,160}\\b(?:i|we)(?: can| will|['\\u2019]ll)\\b|\\b(?:needs?|requires?) your (?:approval|confirmation|input|answer|permission|sign[- ]in)\\b|\\bi (?:need|require) [^.!?\\n]{0,100}\\bfrom you\\b|\\b(?:blocked|cannot continue|cannot proceed|can't continue|can't proceed)\\s+until\\s+(?:you|your|a person|the user|(?:the )?(?:signing keys?|approval|permission|credentials|sign[- ]in))\\b`,
+  "i",
+);
+
+/** Ignore code and quoted examples; scan a bounded amount of the actual answer, including its end. */
+function userDependencyText(answer: string | undefined): string {
+  const text = answer ?? "";
+  const bounded = text.length > 32_768 ? `${text.slice(0, 8_192)}\n${text.slice(-24_576)}` : text;
+  return bounded
+    .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, "")
+    .replace(/^\s*>.*$/gm, "")
+    .replace(/`[^`\n]*`/g, "")
+    .replace(/"[^"\n]*"|“[^”\n]*”/g, "")
+    .replace(/[*_]/g, "");
+}
 
 /** The last line of an answer, without Markdown emphasis, code, quote or heading marks. */
 function lastLine(answer: string | undefined): string {
@@ -47,13 +67,17 @@ function asksToContinue(answer: string | undefined): boolean {
 }
 
 /**
- * Whether the last line of the answer waits for the user: it asks a question, or says that the agent
- * waits. A question anywhere in the line counts, so Markdown or a closing remark after it does not
- * hide it. A question that only asks whether to continue does not count: the work continues by itself.
+ * Whether the answer asks for a person's required action or asks a real question.
+ * A closing remark must not hide an explicit dependency earlier in the answer. Asking only whether
+ * to continue still lets the work continue by itself.
  */
 export function waitsForUser(answer: string | undefined): boolean {
-  const line = lastLine(answer);
-  return (/[?？]/.test(line) && !ASKS_TO_CONTINUE.test(line)) || WAITS_FOR_USER.test(line);
+  const dependency = userDependencyText(answer);
+  const question = dependency.split("\n").some((part) => {
+    const text = part.replace(/[*_`>#]/g, "").trim();
+    return /[?？]/.test(text) && !ASKS_TO_CONTINUE.test(text);
+  });
+  return question || WAITS_FOR_USER.test(dependency) || USER_DEPENDENCY.test(dependency);
 }
 
 /** Whether a turn stopped before the next step: it named the step, or asked whether to continue. */

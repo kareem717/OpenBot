@@ -138,7 +138,7 @@ export const messages = {
   "error.provider.endpointRemoveBusy":
     "Attendez la fin du tour actif et de la file d’attente avant de supprimer ce point de terminaison.",
   "error.provider.codexOutdated":
-    "La CLI Codex {version} est trop ancienne. OpenBot nécessite la version 0.156.0 ou plus récente.",
+    "La CLI Codex {version} est trop ancienne. OpenBot nécessite la version 0.166.0 ou plus récente.",
   "error.provider.codexNotStarted": "La CLI Codex a été trouvée mais n’a pas pu démarrer.",
   "error.provider.codexNotStartedHint":
     "La CLI Codex a été trouvée mais n’a pas pu démarrer. Exécutez `codex --version` dans un nouveau terminal.",

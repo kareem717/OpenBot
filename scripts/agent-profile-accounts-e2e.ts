@@ -71,7 +71,7 @@ const CATALOG = [
 const FAKE_CODEX = `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
 if (process.argv.includes("--version")) {
-  process.stdout.write("codex-cli 0.160.1\\n");
+  process.stdout.write("codex-cli 0.166.0\\n");
   process.exit(0);
 }
 const LOG = ${JSON.stringify(fakeLog)};

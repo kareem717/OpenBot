@@ -676,6 +676,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       mailbox,
       conversation: this.#conversation,
       hooks: {
+        requireUserAction: (agentId, turnId) => this.#turn.requireUserAction(agentId, turnId),
         emit: (event) => this.#emit(event),
         emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
         emitQueue: (agentId) => this.#mailboxSync.emitQueue(agentId),
@@ -926,6 +927,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
     });
     this.#attention = new AttentionRegistry({
+      requireUserAction: (agentId, turnId) => this.#turn.requireUserAction(agentId, turnId),
       conversation: this.#conversation,
       browser: this.#browser,
       hostedSites: this.#hostedSites,
@@ -1430,6 +1432,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       routines: this.#routines,
       hooks: {
         channelAssignment: (deliveryId) => this.channels.store.assignmentForDelivery(deliveryId),
+        userMessageSteered: (client, agentId, threadId, turnId) =>
+          this.#attention.cancelBrowserTakeoverForSteer(client, agentId, threadId, turnId),
         taskThreadId: (deliveryId) => {
           // A steer must not reach the agent's own chat for a message of a deleted task.
           if (this.#tasks.deliveryTaskGone(deliveryId)) throw new Error(sourceText("error.backend.threadNotFound"));
@@ -1567,6 +1571,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...(options.marketplaceAppServer === undefined ? {} : { marketplaceAppServer: options.marketplaceAppServer }),
       apiKeys: options.agentApiKeys ?? null,
       hooks: {
+        requireUserAction: (agentId, turnId) => this.#turn.requireUserAction(agentId, turnId),
         listAgents: () => this.listAgents(),
         listModels: () => this.listModels(),
         providerAccounts: (provider) => this.getStatus().providers?.find((row) => row.id === provider)?.accounts,

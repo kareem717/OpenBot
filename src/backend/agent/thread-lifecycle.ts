@@ -29,7 +29,6 @@ import {
   type CodexOwnServers,
   type CodexOwnTransports,
   codexDisabledServers,
-  codexMcpNamespaces,
   codexMcpServerKey,
   codexMcpServers,
   codexThreadMcpServers,
@@ -96,8 +95,10 @@ const logger = createOpenBotLogger("thread-lifecycle");
  * add them on resume to a thread started without them, so a code-mode-only model saw no MCP tools.
  * Version 9 adds `image_gen` to those namespaces. Version 10 gives a stdio server its working
  * directory as `cwd`; before, Codex did not get such a server.
+ * Version 11 enables native code-mode tool search and defers external MCP schemas. Older sessions
+ * forced every MCP namespace direct and can exceed the model context even after compaction.
  */
-const CODEX_MCP_ADAPTER_VERSION = 10;
+const CODEX_MCP_ADAPTER_VERSION = 11;
 
 /** What a provider other than Codex, or a Codex with no file to read, has in its own files. */
 const NO_CODEX_OWN_SERVERS: CodexOwnServers = { disabled: {}, transports: {} };
@@ -132,8 +133,13 @@ const CODEX_TOOLS_CONFIG = { update_plan: { enabled: true } } as const;
  * Codex declares `create_goal`, `get_goal` and `update_goal` in each request, about 3.5k characters.
  * A goal continues the turn by itself until the agent marks it done, and only the user can pause or
  * resume it. OpenBot has no control for a goal, so it turns the feature off.
+ * Native code-mode tool search keeps external MCP schemas deferred. The minimum Codex runtime
+ * supports this feature; older runtimes would leave those tools undiscoverable in code mode.
  */
-export const CODEX_FEATURES_CONFIG = { "features.goals": false } as const;
+export const CODEX_FEATURES_CONFIG = {
+  "features.goals": false,
+  "features.code_mode_tool_search": true,
+} as const;
 
 /**
  * Codex gives each MCP server that is not `required` 1 second to start before a turn's first step,
@@ -147,11 +153,11 @@ const CODEX_MCP_STARTUP_GRACE_MS = 10_000;
  * after its yield time while `ask_user` still waits. A model that then ends its turn expires the
  * question within seconds. Direct calls keep the turn waiting for the answer. It goes in as one
  * dotted key, as the agent environment does, so it does not turn code mode on or off. Each thread
- * adds the namespaces of its MCP servers, see `codexMcpNamespaces`. `image_gen` is direct because
+ * leaves external MCP tools deferred behind native tool search. `image_gen` is direct because
  * from `exec` a model often reads `result.content` instead of `generatedImage(result)`: it then sees
  * no image and tells the user that the image failed, although the chat shows it.
  */
-const CODEX_DIRECT_ONLY_NAMESPACES = [...VISIBLE_DYNAMIC_TOOLS.map((namespace) => namespace.name), "image_gen"];
+export const CODEX_DIRECT_ONLY_NAMESPACES = [...VISIBLE_DYNAMIC_TOOLS.map((namespace) => namespace.name), "image_gen"];
 
 /** The provider switch waits for the capture, so its read is short. */
 const CAPTURE_READ_TIMEOUT_MS = 10_000;
@@ -827,6 +833,7 @@ export class ThreadLifecycle {
         project_doc_max_bytes: number;
         mcp_optional_startup_grace_ms: number;
         "features.goals": false;
+        "features.code_mode_tool_search": true;
         "features.code_mode.direct_only_tool_namespaces": string[];
         [variable: `shell_environment_policy.set.${string}`]: string;
       } & ReturnType<typeof codexSandboxConfig>;
@@ -849,10 +856,7 @@ export class ThreadLifecycle {
         // script can be longer, and Codex would drop its end.
         project_doc_max_bytes: AGENT_INSTRUCTIONS_FILE_BYTES,
         mcp_optional_startup_grace_ms: CODEX_MCP_STARTUP_GRACE_MS,
-        "features.code_mode.direct_only_tool_namespaces": [
-          ...CODEX_DIRECT_ONLY_NAMESPACES,
-          ...codexMcpNamespaces(servers),
-        ],
+        "features.code_mode.direct_only_tool_namespaces": CODEX_DIRECT_ONLY_NAMESPACES,
         ...codexSandboxConfig(agent, this.#store.sharedRoot),
         ...Object.fromEntries(
           Object.entries(environment).map(([name, value]) => [`shell_environment_policy.set.${name}`, value]),

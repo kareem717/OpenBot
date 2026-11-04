@@ -1313,6 +1313,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             const hostRestart = this.#connections.hostRestartFor(serverId);
             this.#connections.markConnected(serverId);
             this.#connections.setHostRestart(serverId, hostRestart);
+            // There was no connected event to negotiate after markConnected cleared the old
+            // capabilities. Complete that same read before returning this still-open session.
+            yield* this.#client.refreshWebRtcCompatibility(server);
             this.#emitChanged();
           }
           return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));

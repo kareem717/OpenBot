@@ -65,6 +65,9 @@ export class AppServerError extends Error {
 export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   readonly contextCompaction = "events";
   readonly provider: AgentProvider = "codex";
+  /** Only threads configured for native discovery get that guidance in OpenBot's tool catalog. */
+  readonly deferredMcpTools = (externalThreadId: string): boolean => this.#deferredMcpThreads.has(externalThreadId);
+  readonly #deferredMcpThreads = new Set<string>();
   readonly #executable: string;
   readonly #requestTimeoutMs: number;
   #decoder = new JsonLineDecoder();
@@ -95,6 +98,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   start(): void {
     if (this.running) return;
 
+    this.#deferredMcpThreads.clear();
     this.#stopping = false;
     this.#decoder = new JsonLineDecoder();
     const target = cliSpawnTarget(this.#executable, ["app-server", "--listen", "stdio://"]);
@@ -159,6 +163,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   }
 
   readonly stop = Effect.fn("CodexAppServer.stop")(function* (this: CodexAppServerClient) {
+    this.#deferredMcpThreads.clear();
     const child = this.#process;
     if (!child) {
       if (this.#ending) yield* Fiber.join(this.#ending);
@@ -191,6 +196,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   ) {
     if (!this.running) return;
     yield* this.request("thread/unsubscribe", { threadId }, decodeRecordResponse);
+    this.#deferredMcpThreads.delete(threadId);
   });
 
   /**
@@ -209,6 +215,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   ) {
     if (!this.running) return;
     yield* this.request("thread/archive", { threadId }, decodeRecordResponse);
+    this.#deferredMcpThreads.delete(threadId);
   });
 
   /**
@@ -307,7 +314,27 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
         resolve: (value) =>
           resume(
             Effect.try({
-              try: () => decoder(value),
+              try: () => {
+                const decoded = decoder(value);
+                if (
+                  (method === "thread/start" || method === "thread/resume") &&
+                  isRecord(params) &&
+                  isRecord(params.config) &&
+                  isRecord(value) &&
+                  isRecord(value.thread) &&
+                  isString(value.thread.id)
+                ) {
+                  const direct = params.config["features.code_mode.direct_only_tool_namespaces"];
+                  if (
+                    params.config["features.code_mode_tool_search"] === true &&
+                    Array.isArray(direct) &&
+                    !direct.some((name) => isString(name) && name.startsWith("mcp__"))
+                  )
+                    this.#deferredMcpThreads.add(value.thread.id);
+                  else this.#deferredMcpThreads.delete(value.thread.id);
+                }
+                return decoded;
+              },
               catch: (cause) => new ProviderClientOperationError({ cause }),
             }),
           ),

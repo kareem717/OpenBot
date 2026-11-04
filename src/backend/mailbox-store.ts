@@ -1491,6 +1491,12 @@ export class MailboxStore {
     );
   }
 
+  /** A person wrote this delivery in an agent chat or side thread, outside external messaging. */
+  isPersonChatDelivery(deliveryId: string): boolean {
+    const delivery = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);
+    return delivery !== undefined && isChatMessageFromPerson(this.#requireMessage(delivery.messageId));
+  }
+
   /**
    * A queued message from another agent that can steer its recipient's running chat turn. Channel,
    * messaging and task work runs outside that turn. The answers to a request that went to several

@@ -1,13 +1,18 @@
 import type { AgentMessage, ChatActionMarkerModel } from "@openbot/ui/data";
 import { createMemo } from "solid-js";
 import { remoteRoutineRecovery } from "../servers/server-capabilities";
+import { createChatWebhookRoutines } from "./chat-webhook-routines";
 import type { ConversationProps } from "./conversation-types";
-import { createChatWebhookRoutines } from "./RoutineWebhookChatCard";
 import { desktopChatEventRoutinesApi } from "./routine-webhooks-api";
+
+export type ConversationRoutineCardsProps = Pick<
+  ConversationProps,
+  "agent" | "server" | "runtime" | "routines" | "availableRoutineIds"
+>;
 
 /** The routine cards of one history, with the same permissions in the chat and its side threads. */
 export function createConversationRoutineCards(
-  props: ConversationProps,
+  props: ConversationRoutineCardsProps,
   messages: () => readonly AgentMessage[],
   historyId: () => string | undefined = () => undefined,
 ) {
@@ -58,6 +63,7 @@ export function createConversationRoutineCards(
             api,
             agentId,
             serverId: props.server?.id,
+            connectionSequence: props.server?.connectionSequence,
             recovery: remoteRoutineRecovery(props.server),
             historyId: historyId(),
           }
@@ -68,6 +74,7 @@ export function createConversationRoutineCards(
       equals: (left, right) =>
         left?.agentId === right?.agentId &&
         left?.serverId === right?.serverId &&
+        left?.connectionSequence === right?.connectionSequence &&
         left?.recovery === right?.recovery &&
         left?.historyId === right?.historyId,
     },

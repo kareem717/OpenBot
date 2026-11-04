@@ -12,9 +12,9 @@ import type { SignInRegion } from "./kimi-region";
 import { type ProviderClientOperationError, providerCall, providerFailure } from "./provider-client-effects";
 
 const execFileAsync = promisify(execFile);
-// Paged history (`excludeTurns`, `thread/turns/list`, and `thread/items/list`) is required by the
-// Codex adapter. Older app-server versions only return the full thread snapshot on resume.
-const MINIMUM_CODEX_VERSION = [0, 156, 0] as const;
+// Deferred MCP discovery needs the native tool-search protocol checked in Codex 0.166.0.
+// Older runtimes must be replaced before OpenBot starts a provider session.
+const MINIMUM_CODEX_VERSION = [0, 166, 0] as const;
 const MINIMUM_CLAUDE_VERSION = [2, 1, 232] as const;
 const MINIMUM_GROK_VERSION = [1, 0, 5] as const;
 // The first Cline CLI that OpenBot was checked with: its sessions run in-process and it answers a lost

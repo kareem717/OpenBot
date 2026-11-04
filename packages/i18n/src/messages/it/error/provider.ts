@@ -126,7 +126,7 @@ export const messages = {
   "error.provider.endpointRemoveBusy":
     "Attendi che il turno attivo e la coda finiscano prima di rimuovere questo endpoint.",
   "error.provider.codexOutdated":
-    "La CLI di Codex {version} è troppo vecchia. OpenBot richiede la 0.156.0 o successiva.",
+    "La CLI di Codex {version} è troppo vecchia. OpenBot richiede la 0.166.0 o successiva.",
   "error.provider.codexNotStarted": "La CLI di Codex è stata trovata ma non è stato possibile avviarla.",
   "error.provider.codexNotStartedHint":
     "La CLI di Codex è stata trovata ma non è stato possibile avviarla. Esegui `codex --version` in un nuovo terminale.",

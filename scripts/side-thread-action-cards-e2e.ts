@@ -255,7 +255,7 @@ const fakeSource = join(root, "codex-fixture.cjs");
 await writeFile(
   fakeSource,
   `
-if (process.argv.includes('--version')) { process.stdout.write('codex-cli 0.160.1\\n'); process.exit(0); }
+if (process.argv.includes('--version')) { process.stdout.write('codex-cli 0.166.0\\n'); process.exit(0); }
 const readline = require('node:readline'); const crypto = require('node:crypto');
 const send = (value) => process.stdout.write(JSON.stringify(value)+'\\n');
 const config = {config:{mcp_servers:{}},layers:[{name:{type:'user',file:'/local/config.toml',profile:null},version:'1',config:{mcp_servers:{}}}]};

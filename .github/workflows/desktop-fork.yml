@@ -46,8 +46,21 @@ jobs:
           bun scripts/unlimited-memory-storage-e2e.ts
           bun scripts/agent-webhook-routine-e2e.ts
           bun scripts/plan-continuation-e2e.ts
+          bun scripts/remote-server-retry-e2e.ts
+          bun --conditions=browser scripts/webhook-card-reconnect-e2e.mjs
+          bun scripts/codex-minimum-runtime-e2e.ts
+          bun scripts/codex-mcp-session-recovery-e2e.ts
+          bun scripts/browser-takeover-steer-e2e.ts
           bun scripts/desktop-feed-e2e.ts
           bash -n scripts/install-server.sh scripts/hosting/openbot-hosted-update
+      - name: Install and verify the pinned Codex runtime
+        run: bun scripts/install-codex-runtime.ts linux x64
+      - name: Check native MCP discovery and steering
+        env:
+          OPENBOT_CODEX_PATH: ${{ github.workspace }}/build/codex/linux/x64/bin/codex
+        run: |
+          bun scripts/codex-deferred-mcp-e2e.ts
+          bun scripts/codex-held-tool-steer-e2e.ts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -57,6 +70,13 @@ jobs:
             .openbot-build/unlimited-memory-storage-e2e/report.json
             .openbot-build/agent-webhook-routine-e2e/report.json
             .openbot-build/plan-continuation-e2e/report.json
+            .openbot-build/remote-server-retry-e2e/report.json
+            .openbot-build/webhook-card-reconnect-e2e/report.json
+            .openbot-build/codex-deferred-mcp-e2e/report.json
+            .openbot-build/codex-minimum-runtime-e2e/report.json
+            .openbot-build/codex-mcp-session-recovery-e2e/report.json
+            .openbot-build/codex-held-tool-steer-e2e/report.json
+            .openbot-build/browser-takeover-steer-e2e/report.json
             .openbot-build/desktop-feed-e2e.json
           if-no-files-found: ignore
 

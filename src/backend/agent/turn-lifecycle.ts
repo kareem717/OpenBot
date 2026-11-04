@@ -314,6 +314,8 @@ export class TurnLifecycle {
    * answer, and the drain must not then mark the turn active again. Past the cap, the oldest goes.
    */
   readonly #endedTurns = new Set<string>();
+  /** Tools handed required work to a person during this running turn. Never carried to another turn. */
+  readonly #userActionTurns = new Set<string>();
   /** Turns whose normal end runs now. A Stop must not settle one of them as an orphan (#2214). */
   readonly #completingTurns = new Set<string>();
   /**
@@ -395,6 +397,7 @@ export class TurnLifecycle {
     this.#noUpdateTurns.clear();
     this.#reportedFailures.clear();
     this.#endedTurns.clear();
+    this.#userActionTurns.clear();
     this.#refusedRetries.clear();
     this.#lastEventAt.clear();
     this.#itemTurns.clear();
@@ -457,6 +460,11 @@ export class TurnLifecycle {
     return this.#endedTurns.has(turnId);
   }
 
+  /** A tool or declined input needs a person before this turn's plan can continue automatically. */
+  requireUserAction(agentId: string, turnId: string): void {
+    if (this.#runningTurns.get(turnId)?.agentId === agentId) this.#userActionTurns.add(turnId);
+  }
+
   /** A turn id that starts again, as a requeued delivery's does, has not ended. */
   forgetEnded(turnId: string): void {
     this.#endedTurns.delete(turnId);
@@ -475,7 +483,8 @@ export class TurnLifecycle {
 
   /**
    * Whether a completed turn may continue its plan: it served only the user's or the agent's own
-   * messages, the user did not stop it, its last line asks nothing but whether to continue and does not say it waits, opened no wait and holds no question,
+   * messages, the user did not stop it, its answer asks nothing but whether to continue and hands no
+   * required action to a person, opened no wait and holds no question,
    * approval or takeover, and no other message waits in its lane.
    */
   #planContinues(
@@ -988,6 +997,7 @@ export class TurnLifecycle {
   readonly #completeTurn = Effect.fn("TurnLifecycle.completeTurn")(
     function* (this: TurnLifecycle, agentId: string, threadId: string, turnId: string, status: string) {
       const running = this.#runningTurns.get(turnId);
+      const userActionRequired = this.#userActionTurns.delete(turnId);
       this.#runningTurns.delete(turnId);
       this.#markEnded(turnId);
       this.#completingTurns.add(turnId);
@@ -1209,6 +1219,7 @@ export class TurnLifecycle {
         outcome === "completed" &&
         reportedFailure === undefined &&
         running !== undefined &&
+        !userActionRequired &&
         !channelTurn &&
         !routineSession &&
         (!taskTurn || laneTaskId !== null) &&
@@ -1460,6 +1471,7 @@ export class TurnLifecycle {
   }, Effect.uninterruptible);
 
   #markEnded(turnId: string): void {
+    this.#userActionTurns.delete(turnId);
     this.#endedTurns.add(turnId);
     if (this.#endedTurns.size > ENDED_TURN_LIMIT) {
       const [oldest] = this.#endedTurns;

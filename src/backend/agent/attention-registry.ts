@@ -122,6 +122,8 @@ interface PendingPrompt {
 export interface SurfacedUiBlock {
   blockId: string;
   spec: UiBlockSpec;
+  /** A built-in block's explicit stop action. Custom ask_ui action names have no such meaning. */
+  stopActionId?: string;
   apiKey?: { name: string };
   vault?: { kind: UiVaultRequestKind };
 }
@@ -380,6 +382,8 @@ type AttentionConversation = Pick<
 >;
 
 export interface AttentionRegistryOptions {
+  /** A declined approval or skipped input must not be retried by an automatic plan continuation. */
+  requireUserAction?(agentId: string, turnId: string): void;
   conversation: AttentionConversation;
   browser: AttentionBrowserHost;
   hostedSites: HostedSiteApprovals;
@@ -455,6 +459,7 @@ export class AttentionRegistry {
   readonly #agentName: (agentId: string) => string | undefined;
   readonly #noteVaultChange: (agentId: string, threadId: string, turnId: string, text: string) => void;
   readonly #apiKeys: AgentApiKeys | null;
+  readonly #requireUserAction: (agentId: string, turnId: string) => void;
   readonly #prompts = new Map<RequestId, PendingPrompt>();
   readonly #approvals = new Map<RequestId, PendingApproval>();
   readonly #takeovers = new Map<RequestId, PendingBrowserTakeover>();
@@ -476,6 +481,7 @@ export class AttentionRegistry {
     this.#agentName = options.agentName ?? (() => undefined);
     this.#noteVaultChange = options.noteVaultChange ?? (() => undefined);
     this.#apiKeys = options.apiKeys ?? null;
+    this.#requireUserAction = options.requireUserAction ?? (() => undefined);
   }
 
   /** The agent that asks `requestId`: a prompt, an approval, a browser takeover or a browser secret. */
@@ -592,6 +598,20 @@ export class AttentionRegistry {
       }
       // A refused UI block answer leaves the block open for an answer that fits.
       const uiBlockResponse = pending.uiBlock ? uiBlockAnswer(pending.uiBlock.spec, input.answers, responder) : null;
+      const missingAnswer = pending.uiBlock
+        ? pending.uiBlock.apiKey
+          ? !saved
+          : pending.uiBlock.vault
+            ? !savedItem
+            : uiBlockResponse === null
+        : pending.responseKind === "mcp-elicitation"
+          ? mcpElicitationResult(pending.params, input.answers).action !== "accept"
+          : pending.questions.some((question) => !input.answers[question.id]?.length);
+      if (
+        missingAnswer ||
+        (pending.uiBlock?.stopActionId !== undefined && uiBlockResponse?.actionId === pending.uiBlock.stopActionId)
+      )
+        this.#requireUserAction(pending.agentId, pending.turnId);
       this.#routines.markRunningForTurn(getString(pending.params, "turnId"));
 
       // The forms of `request_api_key` and `request_vault_item` never give the agent their values.
@@ -747,6 +767,8 @@ export class AttentionRegistry {
     });
     this.#routines.markRunningForTurn(getString(pending.params, "turnId"));
 
+    if (input.decision === "decline") this.#requireUserAction(pending.approval.agentId, pending.approval.turnId);
+
     const mutation = pending.hostedSiteMutation;
     if (pending.decide) {
       pending.decide(input.decision);
@@ -777,6 +799,25 @@ export class AttentionRegistry {
    */
   hasBrowserTakeoverForAgent(agentId: string): boolean {
     return [...this.#takeovers.values()].some((pending) => pending.request.agentId === agentId);
+  }
+
+  /**
+   * An accepted user steer replaces the instruction that opened a browser handoff. Return its tool
+   * result as cancelled so the provider can read the new input. This is not a declined request:
+   * the new user instruction may need more work. A secret already being submitted finishes first.
+   */
+  cancelBrowserTakeoverForSteer(client: AgentClient, agentId: string, threadId: string, turnId: string): void {
+    for (const [requestId, pending] of this.#takeovers) {
+      if (
+        pending.client === client &&
+        pending.request.agentId === agentId &&
+        pending.params.threadId === threadId &&
+        pending.params.turnId === turnId &&
+        !pending.submitting
+      ) {
+        this.#resolveBrowserTakeover(requestId, pending, "cancel", undefined, { requireUserAction: false });
+      }
+    }
   }
 
   readonly respondToBrowserTakeover = Effect.fn("AttentionRegistry.respondToBrowserTakeover")(
@@ -1958,7 +1999,10 @@ export class AttentionRegistry {
     pending: PendingBrowserTakeover,
     decision: RespondToBrowserTakeoverInput["decision"],
     vault?: string,
+    options: { requireUserAction: boolean } = { requireUserAction: true },
   ): void {
+    if (decision === "cancel" && options.requireUserAction)
+      this.#requireUserAction(pending.request.agentId, pending.request.turnId);
     pending.secret?.cancel();
     this.#routines.markRunningForTurn(pending.request.turnId);
     this.#takeovers.delete(requestId);

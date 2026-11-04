@@ -47,7 +47,7 @@ const { OpenBotDatabase } = await import("../src/backend/openbot-database");
 const FAKE_CODEX = `#!/usr/bin/env node
 const { appendFileSync, existsSync, readFileSync, rmSync } = require("node:fs");
 if (process.argv.includes("--version")) {
-  process.stdout.write("codex-cli 0.160.1\\n");
+  process.stdout.write("codex-cli 0.166.0\\n");
   process.exit(0);
 }
 const config = { config: { mcp_servers: {} }, layers: [{ name: { type: "user", file: "/fake/.codex/config.toml", profile: null }, version: "1", config: { mcp_servers: {} } }] };

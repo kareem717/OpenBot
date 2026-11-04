@@ -34,7 +34,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { AGENT_PROVIDERS, type AgentEvent, mcpSignInEvent, PLAN_CONTINUATION_ITEM_TYPE } from "@openbot/contracts/ipc";
+import {
+  AGENT_PROVIDERS,
+  type AgentEvent,
+  type BrowserTab,
+  mcpSignInEvent,
+  PLAN_CONTINUATION_ITEM_TYPE,
+  routineConversationEvent,
+} from "@openbot/contracts/ipc";
+import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
+import { uiBlockAnswersFromResponse } from "@openbot/contracts/ui-blocks";
 import { Effect } from "effect";
 import type { AgentBrowserHost } from "../src/backend/agent/turn-lifecycle";
 
@@ -57,6 +66,7 @@ const { AgentStore } = await import("../src/backend/agent-store");
 const { runCauseEffect } = await import("../src/backend/effect-boundary");
 const { MailboxStore } = await import("../src/backend/mailbox-store");
 const { OpenBotDatabase } = await import("../src/backend/openbot-database");
+const { agentWebhookRoutineWriter, HostEventsService } = await import("../src/main/host-events-service");
 
 type StepStatus = "pending" | "inProgress" | "completed";
 
@@ -65,7 +75,7 @@ interface FakeTurn {
   steps: [string, StepStatus][];
   answer?: string;
   delayMs?: number;
-  calls?: { tool: string; arguments: Record<string, string> }[];
+  calls?: { tool: string; namespace?: "openbot" | "openbot_browser"; arguments: TeamProtocolV2Json }[];
 }
 
 const plan = (...turns: FakeTurn[]) => `<<PLAN${JSON.stringify(turns)}PLAN>>`;
@@ -73,7 +83,7 @@ const plan = (...turns: FakeTurn[]) => `<<PLAN${JSON.stringify(turns)}PLAN>>`;
 const FAKE_CODEX = `#!/usr/bin/env node
 const fs = require("node:fs");
 if (process.argv.includes("--version")) {
-  process.stdout.write("codex-cli 0.160.1\\n");
+  process.stdout.write("codex-cli 0.166.0\\n");
   process.exit(0);
 }
 const LOG = ${JSON.stringify(fakeLog)};
@@ -106,7 +116,7 @@ const callNext = (turn) => {
   if (!call) return timers.set(turn.turnId, setTimeout(() => finish(turn), turn.script.delayMs || 5));
   const id = "tool-" + turn.turnId + "-" + turn.calls.length;
   waiting.set(id, turn);
-  write({ id, method: "item/tool/call", params: { threadId: turn.threadId, turnId: turn.turnId, callId: "call-" + id, namespace: "openbot", tool: call.tool, arguments: call.arguments } });
+  write({ id, method: "item/tool/call", params: { threadId: turn.threadId, turnId: turn.turnId, callId: "call-" + id, namespace: call.namespace || "openbot", tool: call.tool, arguments: call.arguments } });
 };
 const answer = (message) => {
   const params = message.params || {};
@@ -184,9 +194,10 @@ const report: {
 };
 
 const unused = () => Effect.die(new Error("Not used by this check."));
+const browserTabs: BrowserTab[] = [];
 const browser: AgentBrowserHost = {
-  listTabs: () => [],
-  beginTakeover: unused,
+  listTabs: () => browserTabs,
+  beginTakeover: () => Effect.void,
   endTakeover: () => {},
   resolveUploadTarget: unused,
   handleDynamicTool: unused,
@@ -245,16 +256,37 @@ function openService() {
   const database = new OpenBotDatabase(userData);
   const store = new AgentStore(userData, home, database);
   const mailbox = new MailboxStore(userData, store.sharedRoot, store.database);
-  const service = new AgentService({
+  const service: InstanceType<typeof AgentService> = new AgentService({
     store,
     mailbox,
     browser,
     preferredProvider: "codex",
     offProviders: AGENT_PROVIDERS.filter((provider) => provider !== "codex"),
+    webhookRoutines: () => agentWebhookRoutineWriter(hostEvents),
+    marketplaceAppServer: (appId) => {
+      const config = service.listMcpServers().find((row) => row.name === appId);
+      return config ? { config, setupSteps: ["Start the service in its settings."] } : null;
+    },
+  });
+  const hostEvents = new HostEventsService({
+    routines: service.routineRecords,
+    cipher: {
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+    },
+    relay: {
+      connected: () => true,
+      setEnabled: () => {},
+      setAccountActive: () => {},
+      refresh: () => {},
+      registerRoute: (id) => Effect.succeed(`https://signal.example.test/v1/webhooks/${id}`),
+      revokeRoute: () => Effect.void,
+    },
+    accountPrincipal: () => "plan-check",
   });
   const events: AgentEvent[] = [];
   service.on("event", (event) => events.push(event));
-  return { database, store, mailbox, service, events };
+  return { database, store, mailbox, service, events, hostEvents };
 }
 
 let current = openService();
@@ -530,6 +562,51 @@ try {
     return { turns: turns.length };
   });
 
+  await check("explicit human dependencies survive a closing paragraph while runnable work continues", async () => {
+    const agent = await createAgent("HumanDependencies");
+    const cases: Array<[string, boolean]> = [
+      [
+        "OpenBot requires you to create signing keys from the routine cards before I can finish the sender setup.\n\nThe two webhook routines are ready.",
+        true,
+      ],
+      [
+        "Once you've copied the signing keys into the sending service, I can finish the setup.\n\nThe webhook URLs are ready.",
+        true,
+      ],
+      ["I need you to sign in with the card.\n\nThe report outline is ready.", true],
+      ["Which workspace should I use?\n\nThe report outline is ready.", true],
+      ["Blocked until the signing keys are configured.\n\nThe routines are ready.", true],
+      ["I cannot continue until you approve the account connection.\n\nThe rest is prepared.", true],
+      ["You approved it; I can now run the tests.", false],
+      ["After you signed in, I verified the account. I will now run the report.", false],
+      ["The signing key is already configured. I'll now run the check.", false],
+      ["I will generate a local test key and run the tests.", false],
+      ["The build is still running. I'll now inspect its output.", false],
+      ["> OpenBot requires you to create signing keys.\n\nThat is a quoted example. I'll now write the test.", false],
+      ["```text\nPlease sign in.\nWhich account do you want?\n```\n\nI'll now write the test.", false],
+      ['The documentation says "Please sign in". I can test the parser locally.', false],
+      ["No user action is required. I'll now run the tests.", false],
+    ];
+    for (const [index, [answer, blocked]] of cases.entries()) {
+      const mark = loggedTurns().length;
+      const step = `Finish case ${index}`;
+      const id = await send(
+        agent.id,
+        `Check this case. ${plan({ steps: [[step, "pending"]], answer }, { steps: [[step, "completed"]], answer: "Done." })}`,
+      );
+      assert.equal(await settled(id), "completed");
+      assert.deepEqual(
+        turnsSince(mark).map((turn) => turn.note),
+        blocked ? [false] : [false, true],
+        answer,
+      );
+    }
+    return {
+      blocked: cases.filter(([, blocked]) => blocked).length,
+      runnable: cases.filter(([, blocked]) => !blocked).length,
+    };
+  });
+
   await check("a turn with no plan continues after it names a next step or asks to continue", async () => {
     const agent = await createAgent("Announcer");
     const mark = loggedTurns().length;
@@ -655,120 +732,527 @@ try {
   });
 
   for (const side of [false, true]) {
-    await check(
-      `an MCP sign-in card stops the ${side ? "side thread" : "main chat"} plan until a new user request`,
-      async () => {
-        const server = createServer((_request, response) => {
-          response.writeHead(401, {
-            "content-type": "application/json",
-            "www-authenticate": 'Bearer realm="plan-check"',
+    for (const needsKey of [false, true]) {
+      await check(
+        `an MCP ${needsKey ? "key request" : "sign-in card"} stops the ${side ? "side thread" : "main chat"} plan until a new user request`,
+        async () => {
+          const server = createServer((_request, response) => {
+            response.writeHead(401, {
+              "content-type": "application/json",
+              ...(needsKey ? {} : { "www-authenticate": 'Bearer realm="plan-check"' }),
+            });
+            response.end(JSON.stringify({ error: "unauthorized" }));
           });
-          response.end(JSON.stringify({ error: "unauthorized" }));
-        });
-        server.listen(0, "127.0.0.1");
-        await once(server, "listening");
-        try {
-          const address = server.address();
-          assert.ok(address && typeof address === "object");
-          const name = `sign-in-${side ? "side" : "main"}`;
-          await runCauseEffect(
-            current.service.saveMcpServer({
-              config: {
-                id: "",
-                name,
-                transport: "http",
-                enabled: false,
-                url: `http://127.0.0.1:${address.port}/mcp`,
-                command: "",
-                args: [],
-                env: [],
-                envPassthrough: [],
-                workingDirectory: "",
-                headers: [],
-              },
-            }),
-          );
-          const config = current.service.listMcpServers().find((row) => row.name === name);
-          assert.ok(config);
-          const agent = await createAgent(side ? "SignInSide" : "SignInMain");
-          const task = side
-            ? await runCauseEffect(current.service.startTask({ agentId: agent.id, text: "Set up the account." }))
-            : undefined;
-          if (task)
-            await waitFor(
-              "the sign-in side thread setup",
-              () =>
-                current.service.listTasks(agent.id).tasks.find((item) => item.id === task.id)?.outcome === "completed",
+          server.listen(0, "127.0.0.1");
+          await once(server, "listening");
+          try {
+            const address = server.address();
+            assert.ok(address && typeof address === "object");
+            const name = `auth-${needsKey ? "key" : "sign-in"}-${side ? "side" : "main"}`;
+            await runCauseEffect(
+              current.service.saveMcpServer({
+                config: {
+                  id: "",
+                  name,
+                  transport: "http",
+                  enabled: false,
+                  url: `http://127.0.0.1:${address.port}/mcp`,
+                  command: "",
+                  args: [],
+                  env: [],
+                  envPassthrough: [],
+                  workingDirectory: "",
+                  headers: [],
+                },
+              }),
             );
-          const mark = loggedTurns().length;
-          const id = await send(
-            agent.id,
-            `Read the account. ${plan(
-              {
-                steps: [["Read the account", "pending"]],
-                calls: [{ tool: "test_mcp_server", arguments: { name } }],
-                // This wording has no question or textual wait that the existing last-line rule catches.
-                answer: "Use the Sign in card to connect your account. The account report comes next.",
-              },
-              { steps: [["Read the account", "completed"]], answer: "This turn must not run before sign-in." },
-            )}`,
-            task?.id,
-          );
-          assert.equal(await settled(id), "completed");
-          const turns = turnsSince(mark);
-          assert.deepEqual(
-            turns.map((turn) => turn.note),
-            [false],
-            "An actual sign-in request does not auto-continue.",
-          );
-          const cards = chatMessages(agent.id, task?.threadId).filter(
-            (message) => mcpSignInEvent(message)?.mcpServerId === config.id,
-          );
-          assert.equal(cards.length, 1, "The real MCP auth-required response posts one valid sign-in card.");
-          assert.equal(cards[0]?.turnId, turns[0]?.turnId, "The sign-in card belongs to the current turn.");
-          assert.equal(continuationLines(agent.id, task?.threadId).length, 0);
-          if (task)
+            const config = current.service.listMcpServers().find((row) => row.name === name);
+            assert.ok(config);
+            const agent = await createAgent(side ? "SignInSide" : "SignInMain");
+            const task = side
+              ? await runCauseEffect(current.service.startTask({ agentId: agent.id, text: "Set up the account." }))
+              : undefined;
+            if (task)
+              await waitFor(
+                "the sign-in side thread setup",
+                () =>
+                  current.service.listTasks(agent.id).tasks.find((item) => item.id === task.id)?.outcome ===
+                  "completed",
+              );
+            const mark = loggedTurns().length;
+            const id = await send(
+              agent.id,
+              `Read the account. ${plan(
+                {
+                  steps: [["Read the account", "pending"]],
+                  calls: [{ tool: "test_mcp_server", arguments: { name } }],
+                  // This wording has no question or textual wait that the existing last-line rule catches.
+                  answer: "The account connection is ready for setup. The account report comes next.",
+                },
+                { steps: [["Read the account", "completed"]], answer: "This turn must not run before sign-in." },
+              )}`,
+              task?.id,
+            );
+            assert.equal(await settled(id), "completed");
+            const turns = turnsSince(mark);
+            assert.deepEqual(
+              turns.map((turn) => turn.note),
+              [false],
+              "An actual sign-in request does not auto-continue.",
+            );
+            const cards = chatMessages(agent.id, task?.threadId).filter(
+              (message) => mcpSignInEvent(message)?.mcpServerId === config.id,
+            );
             assert.equal(
-              chatMessages(agent.id).filter((message) => mcpSignInEvent(message)).length,
-              0,
-              "The side thread's sign-in card stays out of the main chat.",
+              cards.length,
+              needsKey ? 0 : 1,
+              "Only the sign-in challenge posts a card; key setup still pauses without one.",
             );
+            if (!needsKey)
+              assert.equal(cards[0]?.turnId, turns[0]?.turnId, "The sign-in card belongs to the current turn.");
+            assert.equal(continuationLines(agent.id, task?.threadId).length, 0);
+            if (task)
+              assert.equal(
+                chatMessages(agent.id).filter((message) => mcpSignInEvent(message)).length,
+                0,
+                "The side thread's sign-in card stays out of the main chat.",
+              );
 
-          const resumedMark = loggedTurns().length;
-          const next = await send(
-            agent.id,
-            `Now prepare the report. ${plan(
-              {
-                steps: [
-                  ["Read the account", "completed"],
-                  ["Finish the report", "pending"],
-                ],
-                answer: "The account data is ready.",
-              },
-              {
-                steps: [
-                  ["Read the account", "completed"],
-                  ["Finish the report", "completed"],
-                ],
-                answer: "The report is complete.",
-              },
-            )}`,
-            task?.id,
+            const resumedMark = loggedTurns().length;
+            const next = await send(
+              agent.id,
+              `Now prepare the report. ${plan(
+                {
+                  steps: [
+                    ["Read the account", "completed"],
+                    ["Finish the report", "pending"],
+                  ],
+                  answer: "The account data is ready.",
+                },
+                {
+                  steps: [
+                    ["Read the account", "completed"],
+                    ["Finish the report", "completed"],
+                  ],
+                  answer: "The report is complete.",
+                },
+              )}`,
+              task?.id,
+            );
+            assert.equal(await settled(next), "completed");
+            assert.deepEqual(
+              turnsSince(resumedMark).map((turn) => turn.note),
+              [false, true],
+              "An earlier turn's sign-in card does not stop a new user request.",
+            );
+            return { signInTurn: turns[0]?.turnId, resumedTurns: turnsSince(resumedMark).length, sideThread: side };
+          } finally {
+            server.closeAllConnections();
+            await new Promise<void>((done) => server.close(() => done()));
+          }
+        },
+      );
+    }
+  }
+
+  for (const [side, crossAgent] of [
+    [false, false],
+    [true, false],
+    [true, true],
+  ] as const) {
+    await check(
+      `new ${crossAgent ? "cross-agent " : ""}webhook signing-key setup pauses the ${side ? "side thread" : "main chat"} without exposing its secret`,
+      async () => {
+        const agent = await createAgent(side ? "WebhookSide" : "WebhookMain");
+        const target = crossAgent ? await createAgent("WebhookTarget") : agent;
+        const task = side
+          ? await runCauseEffect(current.service.startTask({ agentId: agent.id, text: "Set up signed webhooks." }))
+          : undefined;
+        if (task)
+          await waitFor(
+            "the webhook side thread setup",
+            () =>
+              current.service.listTasks(agent.id).tasks.find((item) => item.id === task.id)?.outcome === "completed",
           );
-          assert.equal(await settled(next), "completed");
-          assert.deepEqual(
-            turnsSince(resumedMark).map((turn) => turn.note),
-            [false, true],
-            "An earlier turn's sign-in card does not stop a new user request.",
+        const mark = loggedTurns().length;
+        const name = `Signed events ${side ? "side" : "main"}`;
+        const id = await send(
+          agent.id,
+          `Connect the event sender. ${plan(
+            {
+              steps: [
+                ["Create the webhook", "completed"],
+                ["Configure the event sender", "pending"],
+              ],
+              calls: [
+                {
+                  tool: "create_webhook_routine",
+                  arguments: {
+                    name,
+                    instruction: "Summarize the event.",
+                    active: false,
+                    ...(crossAgent ? { agentId: target.id } : {}),
+                  },
+                },
+              ],
+              // Even a neutral final answer must respect the tool's structured human handoff.
+              answer: "The webhook routine is ready. The sender setup is the remaining step.",
+            },
+            { steps: [["Configure the event sender", "completed"]], answer: "This must not run before key setup." },
+          )}`,
+          task?.id,
+        );
+        assert.equal(await settled(id), "completed");
+        assert.deepEqual(
+          turnsSince(mark).map((turn) => turn.note),
+          [false],
+        );
+        const routine = (
+          await Effect.runPromise(current.hostEvents.listRoutines({ owner: { kind: "agent", id: target.id } }))
+        ).find((item) => item.name === name);
+        assert.ok(routine?.trigger.kind === "webhook");
+        assert.equal(routine.active, false);
+        const messages = chatMessages(agent.id, task?.threadId);
+        if (crossAgent) {
+          assert.ok(
+            !messages.some((message) => routineConversationEvent(message)?.routineId === routine.id),
+            "Cross-agent creation uses the target settings, not a caller secret card.",
           );
-          return { signInTurn: turns[0]?.turnId, resumedTurns: turnsSince(resumedMark).length, sideThread: side };
-        } finally {
-          server.closeAllConnections();
-          await new Promise<void>((done) => server.close(() => done()));
-        }
+          assert.ok(!JSON.stringify(chatMessages(target.id)).includes("whsec_"));
+        } else
+          assert.ok(
+            messages.some(
+              (message) =>
+                routineConversationEvent(message)?.routineId === routine.id &&
+                message.turnId === turnsSince(mark)[0]?.turnId,
+            ),
+          );
+        assert.ok(!JSON.stringify(messages).includes("whsec_"), "The chat never contains the signing secret.");
+        assert.equal(continuationLines(agent.id, task?.threadId).length, 0);
+
+        // A later human request may update that webhook, create a schedule routine, and continue.
+        const resumeMark = loggedTurns().length;
+        const next = await send(
+          agent.id,
+          `The sender is configured. Finish the report. ${plan(
+            {
+              steps: [
+                ["Configure the event sender", "completed"],
+                ["Finish the report", "pending"],
+              ],
+              calls: [
+                {
+                  tool: "update_webhook_routine",
+                  arguments: {
+                    routineId: routine.id,
+                    ...(crossAgent ? { agentId: target.id } : {}),
+                    active: false,
+                    eventType: "build.failed",
+                  },
+                },
+                {
+                  tool: "create_routine",
+                  arguments: {
+                    name: "Daily summary",
+                    instruction: "Summarize events.",
+                    active: false,
+                    timezone: "UTC",
+                    schedule: { kind: "daily", time: "09:00" },
+                  },
+                },
+              ],
+              answer: "The routine settings are saved. The report is next.",
+            },
+            { steps: [["Finish the report", "completed"]], answer: "The report is complete." },
+          )}`,
+          task?.id,
+        );
+        assert.equal(await settled(next), "completed");
+        assert.deepEqual(
+          turnsSince(resumeMark).map((turn) => turn.note),
+          [false, true],
+          "Old holds, webhook updates and schedule routine creation do not block runnable work.",
+        );
+        assert.ok(current.service.listRoutines(agent.id).some((item) => item.name === "Daily summary"));
+        return { sideThread: side, crossAgent, resumedTurns: turnsSince(resumeMark).length };
       },
     );
   }
+
+  await check("a marketplace install handoff pauses its plan", async () => {
+    const agent = await createAgent("InstallHandoff");
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Connect GitHub and finish the report. ${plan(
+        {
+          steps: [["Connect GitHub", "pending"]],
+          calls: [{ tool: "suggest_marketplace_app", arguments: { app: "github" } }],
+          answer: "The connection card is ready. The report outline is prepared.",
+        },
+        { steps: [["Connect GitHub", "completed"]], answer: "This must not run." },
+      )}`,
+    );
+    assert.equal(await settled(id), "completed");
+    assert.deepEqual(
+      turnsSince(mark).map((turn) => turn.note),
+      [false],
+    );
+    assert.ok(chatMessages(agent.id).some((message) => message.itemType?.startsWith("marketplace-suggestion:")));
+    return { turns: 1 };
+  });
+
+  await check("ready MCP and a disabled app remain runnable, while an app setup handoff pauses", async () => {
+    let available = true;
+    let probes = 0;
+    const server = createServer((request, response) => {
+      void (async () => {
+        if (!available) {
+          response.writeHead(503).end();
+          return;
+        }
+        if (request.method !== "POST") {
+          response.writeHead(405).end();
+          return;
+        }
+        let text = "";
+        for await (const chunk of request) text += chunk.toString();
+        const message = JSON.parse(text);
+        if (message.id === undefined) {
+          response.writeHead(202).end();
+          return;
+        }
+        probes += 1;
+        const result =
+          message.method === "initialize"
+            ? {
+                protocolVersion: "2025-06-18",
+                capabilities: { tools: { listChanged: false } },
+                serverInfo: { name: "plan-check", version: "1" },
+              }
+            : {
+                tools: [
+                  {
+                    name: "read_account",
+                    description: "Read the account.",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              };
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+      })().catch(() => response.writeHead(500).end());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const address = server.address();
+      assert.ok(address && typeof address === "object");
+      const name = "github";
+      const config = {
+        id: "",
+        name,
+        transport: "http" as const,
+        enabled: false,
+        url: `http://127.0.0.1:${address.port}/mcp`,
+        command: "",
+        args: [],
+        env: [],
+        envPassthrough: [],
+        workingDirectory: "",
+        headers: [],
+      };
+      await runCauseEffect(current.service.saveMcpServer({ config }));
+      const saved = current.service.listMcpServers().find((row) => row.name === name);
+      assert.ok(saved);
+      const agent = await createAgent("ReadyMcp");
+      for (const mode of ["ready", "disabled", "setup"] as const) {
+        available = mode !== "setup";
+        if (mode === "setup")
+          await runCauseEffect(current.service.setMcpServerEnabled({ mcpServerId: saved.id, enabled: true }));
+        const mark = loggedTurns().length;
+        const step = `Finish MCP ${mode}`;
+        const call: NonNullable<FakeTurn["calls"]>[number] =
+          mode === "ready"
+            ? { tool: "test_mcp_server", arguments: { name } }
+            : { tool: "suggest_marketplace_app", arguments: { app: name } };
+        const id = await send(
+          agent.id,
+          `Prepare the report. ${plan({ steps: [[step, "pending"]], calls: [call], answer: "The report outline is prepared." }, { steps: [[step, "completed"]], answer: "The report is complete." })}`,
+        );
+        assert.equal(await settled(id), "completed");
+        assert.deepEqual(
+          turnsSince(mark).map((turn) => turn.note),
+          mode === "setup" ? [false] : [false, true],
+          mode,
+        );
+        if (mode === "ready") assert.ok(probes > 0, "The real MCP server was inspected successfully.");
+      }
+      await runCauseEffect(current.service.setMcpServerEnabled({ mcpServerId: saved.id, enabled: false }));
+      return { cases: 3, probes };
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  });
+
+  await check("skipped questions and declined approvals pause while answered inputs permit continuation", async () => {
+    const agent = await createAgent("AttentionDecisions");
+    const config = current.service.listMcpServers()[0];
+    assert.ok(config);
+    for (const kind of ["question", "approval"] as const) {
+      for (const accept of [false, true]) {
+        const mark = loggedTurns().length;
+        const since = current.events.length;
+        const step = `Finish ${kind} ${accept}`;
+        const call: NonNullable<FakeTurn["calls"]>[number] =
+          kind === "question"
+            ? {
+                tool: "ask_user",
+                arguments: {
+                  questions: [
+                    {
+                      id: "account",
+                      header: "Account",
+                      question: "Which account should I use?",
+                      options: [{ label: "Development", description: "Use the development account." }],
+                    },
+                  ],
+                },
+              }
+            : { tool: "set_mcp_server_enabled", arguments: { name: config.name, enabled: false } };
+        const id = await send(
+          agent.id,
+          `Prepare the report. ${plan({ steps: [[step, "pending"]], calls: [call], answer: "The report outline is ready." }, { steps: [[step, "completed"]], answer: "The report is complete." })}`,
+        );
+        if (kind === "question") {
+          const pending = await waitFor("the user question", () =>
+            current.events.slice(since).find((event) => event.type === "prompt" && event.agentId === agent.id),
+          );
+          assert.ok(pending.type === "prompt");
+          await runCauseEffect(
+            current.service.respondToPrompt({
+              requestId: pending.requestId,
+              answers: accept ? { account: ["Development"] } : {},
+            }),
+          );
+        } else {
+          const pending = await waitFor("the user approval", () =>
+            current.events
+              .slice(since)
+              .find((event) => event.type === "approval" && event.approval.agentId === agent.id),
+          );
+          assert.ok(pending.type === "approval");
+          await runCauseEffect(
+            current.service.respondToApproval({
+              requestId: pending.approval.requestId,
+              decision: accept ? "accept" : "decline",
+            }),
+          );
+        }
+        assert.equal(await settled(id), "completed");
+        assert.deepEqual(
+          turnsSince(mark).map((turn) => turn.note),
+          accept ? [false, true] : [false],
+          `${kind}: ${accept ? "accepted" : "not accepted"}`,
+        );
+      }
+    }
+    return { cases: 4 };
+  });
+
+  await check("acknowledgement cancel stops the plan but start and a custom cancel-named choice do not", async () => {
+    const agent = await createAgent("AcknowledgementDecisions");
+    await runCauseEffect(current.service.updateAgent({ agentId: agent.id, quickAcknowledgement: true }));
+    for (const mode of ["cancel", "start", "custom"] as const) {
+      const mark = loggedTurns().length;
+      const since = current.events.length;
+      const step = `Finish acknowledgement ${mode}`;
+      const call: NonNullable<FakeTurn["calls"]>[number] =
+        mode === "custom"
+          ? {
+              tool: "ask_ui",
+              arguments: {
+                block: {
+                  type: "confirm",
+                  title: "Choose the example action.",
+                  actions: [{ id: "cancel", label: "Use cancellation sample" }],
+                },
+              },
+            }
+          : {
+              tool: "acknowledge_request",
+              arguments: {
+                message: "I can prepare the report.",
+                steps: [{ label: "First", step: "Prepare the report." }],
+                startLabel: "Start",
+                cancelLabel: "Cancel",
+              },
+            };
+      const id = await send(
+        agent.id,
+        `Prepare the report. ${plan({ steps: [[step, "pending"]], calls: [call], answer: "The report outline is ready." }, { steps: [[step, "completed"]], answer: "The report is complete." })}`,
+      );
+      const pending = await waitFor("the confirmation card", () =>
+        current.events.slice(since).find((event) => event.type === "prompt" && event.agentId === agent.id),
+      );
+      assert.ok(pending.type === "prompt");
+      const block = chatMessages(agent.id).find(
+        (message) => message.turnId === pending.turnId && message.uiBlock,
+      )?.uiBlock;
+      assert.ok(block);
+      const answers = uiBlockAnswersFromResponse(block.spec, { actionId: mode === "custom" ? "cancel" : mode });
+      await runCauseEffect(current.service.respondToPrompt({ requestId: pending.requestId, answers }));
+      assert.equal(await settled(id), "completed");
+      assert.deepEqual(
+        turnsSince(mark).map((turn) => turn.note),
+        mode === "cancel" ? [false] : [false, true],
+      );
+    }
+    return { cases: 3 };
+  });
+
+  await check("cancelled browser takeover pauses while a completed takeover permits continuation", async () => {
+    const agent = await createAgent("BrowserDecisions");
+    const threadId = current.store.list().find((row) => row.id === agent.id)?.threadId;
+    assert.ok(threadId);
+    browserTabs.push({
+      id: "plan-check-tab",
+      title: "Account",
+      url: "https://account.example.test",
+      loading: false,
+      ownerAgentId: agent.id,
+      ownerThreadId: threadId,
+    });
+    try {
+      for (const decision of ["cancel", "complete"] as const) {
+        const mark = loggedTurns().length;
+        const since = current.events.length;
+        const step = `Finish browser ${decision}`;
+        const id = await send(
+          agent.id,
+          `Prepare the report. ${plan({ steps: [[step, "pending"]], calls: [{ namespace: "openbot_browser", tool: "request_takeover", arguments: { tabId: "plan-check-tab", reason: "login" } }], answer: "The report outline is ready." }, { steps: [[step, "completed"]], answer: "The report is complete." })}`,
+        );
+        const pending = await waitFor("the browser takeover", () =>
+          current.events
+            .slice(since)
+            .find((event) => event.type === "browser-takeover-requested" && event.request.agentId === agent.id),
+        );
+        assert.ok(pending.type === "browser-takeover-requested");
+        await runCauseEffect(
+          current.service.respondToBrowserTakeover({ requestId: pending.request.requestId, decision }),
+        );
+        assert.equal(await settled(id), "completed");
+        assert.deepEqual(
+          turnsSince(mark).map((turn) => turn.note),
+          decision === "cancel" ? [false] : [false, true],
+        );
+      }
+      return { cases: 2 };
+    } finally {
+      browserTabs.length = 0;
+    }
+  });
 
   await check("Stop during a continuation ends the chain, and the next message works", async () => {
     const agent = await createAgent("Stopped");

@@ -686,9 +686,9 @@ export function codexThreadMcpServers(
 }
 
 /**
- * The namespace Codex gives the tools of each server OpenBot turns on. For a code-mode-only model,
- * such as GPT-6, Codex otherwise defers MCP tools into `exec` without naming them, and the model
- * does not find them. These join the direct-only list, so the request names the tools. The keys are
+ * The namespace Codex gives the tools of each server OpenBot turns on. Kept for diagnostics and
+ * the old direct-only comparison in the real-runtime E2E. Production leaves these namespaces
+ * deferred behind native tool search so unused schemas do not fill the context. The keys are
  * the ones `codexMcpServers` chose, renamed keys included; a name Codex's own files declare is turned
  * off and has no tools. Codex changes each character other than a letter, a digit or `_` to `_`, then
  * adds `mcp__` unless the name starts with it.

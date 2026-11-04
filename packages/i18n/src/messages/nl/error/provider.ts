@@ -122,7 +122,7 @@ export const messages = {
   "error.provider.acpNoModels": "ACP CLI heeft geen ACP-modellen aangeboden. OpenBot raadt geen reservemodel.",
   "error.provider.endpointRemoveBusy":
     "Wacht tot de actieve beurt en de wachtrij klaar zijn voordat je dit endpoint verwijdert.",
-  "error.provider.codexOutdated": "Codex CLI {version} is te oud. OpenBot vereist 0.156.0 of nieuwer.",
+  "error.provider.codexOutdated": "Codex CLI {version} is te oud. OpenBot vereist 0.166.0 of nieuwer.",
   "error.provider.codexNotStarted": "Codex CLI is gevonden, maar kon niet worden gestart.",
   "error.provider.codexNotStartedHint":
     "Codex CLI is gevonden, maar kon niet worden gestart. Voer `codex --version` uit in een nieuwe terminal.",

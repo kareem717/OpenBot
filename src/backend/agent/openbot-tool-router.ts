@@ -149,6 +149,8 @@ function captureFailure(failure: ScreenCaptureFailed) {
 }
 
 export interface OpenBotToolRouterHooks {
+  /** Prevents an automatic continuation after a tool hands required setup to a person. */
+  requireUserAction?(agentId: string, turnId: string): void;
   listAgents(): AgentSummary[];
   listModels(): AgentModelOption[];
   /** The accounts of a signed-in provider, as the settings page lists them. */
@@ -684,7 +686,7 @@ export class OpenBotToolRouter {
     this.#attention.surfaceUiBlock(
       client,
       request,
-      { blockId: randomUUID(), spec },
+      { blockId: randomUUID(), spec, stopActionId: ACKNOWLEDGE_REQUEST_ACTIONS.cancel },
       { actionId: ACKNOWLEDGE_REQUEST_ACTIONS.start, afterMs: ACKNOWLEDGE_START_MS },
     );
   }
@@ -1091,9 +1093,13 @@ export class OpenBotToolRouter {
       }
       const installed = this.#marketplaceAppServer(args.app);
       if (installed && this.#mcpServers)
-        return yield* marketplaceAppStatus(this.#mcpServers, installed, (config) =>
-          toolStep(() => this.#postMcpSignInCard(senderAgentId, executionThreadId, params.turnId, config)),
+        return yield* marketplaceAppStatus(
+          this.#mcpServers,
+          installed,
+          (config) => toolStep(() => this.#postMcpSignInCard(senderAgentId, executionThreadId, params.turnId, config)),
+          () => this.#hooks.requireUserAction?.(senderAgentId, params.turnId),
         );
+      this.#hooks.requireUserAction?.(senderAgentId, params.turnId);
       this.#postSystemCard(senderAgentId, executionThreadId, params.turnId, {
         itemType: marketplaceSuggestionItemType({ appId: args.app }),
         text: sourceText("status.agent.marketplaceSuggested", { app: args.app }),
@@ -1342,6 +1348,7 @@ export class OpenBotToolRouter {
             toToolOperationFailed,
           ),
       requestSignIn: (config) => toolStep(() => this.#postMcpSignInCard(agentId, threadId, params.turnId, config)),
+      requireUserAction: () => this.#hooks.requireUserAction?.(agentId, params.turnId),
     });
   });
 
@@ -1384,6 +1391,7 @@ export class OpenBotToolRouter {
    * test in the same turn, or the same search sent twice, ask for the same sign-in.
    */
   #postMcpSignInCard(agentId: string, threadId: string, turnId: string, config: McpServerConfig): void {
+    this.#hooks.requireUserAction?.(agentId, turnId);
     const itemType = mcpSignInItemType({ mcpServerId: config.id });
     const messages = this.#conversation.ensureSnapshot(agentId, threadId).messages;
     if (messages.some((message) => message.turnId === turnId && message.itemType === itemType)) return;

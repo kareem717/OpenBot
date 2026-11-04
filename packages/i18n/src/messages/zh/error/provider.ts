@@ -114,7 +114,7 @@ export const messages = {
   "error.provider.noModelNamed": "{provider} 没有可用模型。",
   "error.provider.acpNoModels": "ACP CLI 未公布任何 ACP 模型。OpenBot 不会猜测备用模型。",
   "error.provider.endpointRemoveBusy": "请等待当前对话与队列结束，再移除该端点。",
-  "error.provider.codexOutdated": "Codex CLI {version} 版本过低。OpenBot 需要 0.156.0 或更高版本。",
+  "error.provider.codexOutdated": "Codex CLI {version} 版本过低。OpenBot 需要 0.166.0 或更高版本。",
   "error.provider.codexNotStarted": "找到了 Codex CLI，但无法启动。",
   "error.provider.codexNotStartedHint": "找到了 Codex CLI，但无法启动。请在新终端中运行 `codex --version`。",
   "error.provider.codexManagedNotStarted": "ChatGPT 已下载，但无法启动。请在 OpenBot 中重新下载。",

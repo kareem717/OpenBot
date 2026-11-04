@@ -9,6 +9,7 @@ import type {
 import { QueueEditRejectedError, type QueueEditRequest } from "@openbot/contracts/team-protocol/queue-edit-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { Effect, Schema } from "effect";
+import type { AgentClient } from "../agent-client";
 import type { AgentStore } from "../agent-store";
 import type { ChannelAssignment } from "../channel-store";
 import { causeHelpers } from "../effect-boundary";
@@ -31,6 +32,8 @@ export interface QueueControlsHooks {
    * deleted task.
    */
   taskThreadId(deliveryId: string): string | null;
+  /** An accepted user message releases that turn's browser handoff without accepting it. */
+  userMessageSteered(client: AgentClient, agentId: string, threadId: string, turnId: string): void;
 }
 
 export interface QueueControlsOptions {
@@ -292,6 +295,8 @@ export class QueueControls {
       );
     yield* this.#mailbox.markRunning(input.deliveryId, turnId).pipe(toQueueOperationFailed);
     yield* queueStep(() => {
+      if (this.#mailbox.isPersonChatDelivery(input.deliveryId))
+        this.#hooks.userMessageSteered(client, agent.id, session, turnId);
       this.#mailboxSync.syncMailboxMessages(snapshot);
       this.#mailboxSync.emitQueue(agent.id);
       this.#conversation.emitConversation(snapshot, "queue.message-steered", { deliveryId: input.deliveryId });

@@ -131,6 +131,11 @@ export function webhookRoutineToolResult(routine: EventRoutine, cardInChat: bool
     url: trigger?.url ?? null,
     ...(trigger?.url ? {} : { urlPending: "The URL is not ready. The routine settings show it when it is." }),
     request: WEBHOOK_REQUEST_FORMAT,
+    ...(updated
+      ? {}
+      : {
+          next: "Tell the user to generate the signing key from the chat card or routine settings and put it directly in the sending service. Never ask them to paste it in chat. End this turn while that setup waits for the user; a new user message resumes the remaining work.",
+        }),
     secret: updated
       ? "The signing secret did not change. You do not have it."
       : cardInChat

@@ -84,6 +84,8 @@ export interface RoutineTriggerAccess {
  * `conversation` directly.
  */
 export interface RoutineHooks {
+  /** A new webhook's signing-key setup is handed to a person, without giving the key to the model. */
+  requireUserAction?(agentId: string, turnId: string): void;
   emit(event: AgentEvent): void;
   emitError(code: string, error: unknown, agentId?: string): void;
   emitQueue(agentId: string): void;
@@ -665,6 +667,7 @@ export class RoutineScheduler implements RoutineDueSource {
         ...webhookToolTrigger(args),
         ...(limitPolicy === undefined ? {} : { limitPolicy }),
       });
+      this.#hooks.requireUserAction?.(senderAgentId, params.turnId);
       // A card stays with its calling turn, including a side thread. A cross-agent change has no
       // caller turn in the target's chat, so its secret is available in the routine settings only.
       const options = this.#toolMutationOptions(agentId, senderAgentId, params);

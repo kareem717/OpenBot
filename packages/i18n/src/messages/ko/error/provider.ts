@@ -121,7 +121,7 @@ export const messages = {
   "error.provider.acpNoModels": "ACP CLI가 ACP 모델을 알리지 않았어요. OpenBot은 대체 모델을 추측하지 않아요.",
   "error.provider.endpointRemoveBusy":
     "이 엔드포인트를 제거하기 전에 진행 중인 턴과 대기열이 끝날 때까지 기다려 주세요.",
-  "error.provider.codexOutdated": "Codex CLI {version}이(가) 너무 오래되었어요. OpenBot에는 0.156.0 이상이 필요해요.",
+  "error.provider.codexOutdated": "Codex CLI {version}이(가) 너무 오래되었어요. OpenBot에는 0.166.0 이상이 필요해요.",
   "error.provider.codexNotStarted": "Codex CLI를 찾았지만 시작할 수 없었어요.",
   "error.provider.codexNotStartedHint":
     "Codex CLI를 찾았지만 시작할 수 없었어요. 새 터미널에서 `codex --version`을 실행해 보세요.",

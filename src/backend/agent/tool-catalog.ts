@@ -110,11 +110,11 @@ const BROWSER_SEARCH_NOTE =
   "No browser tool is in these results. A website or web app with no dedicated tool, such as mail or a calendar, is reached through openbot_browser. Call openbot_browser.list_tabs first: your signed-in tabs stay open across sessions.";
 
 /**
- * Pi declares the tools of the user's MCP servers only after its own `tool_search` loads them. A model
- * that searches here instead finds none of them, and tool_call refuses their names (#4410).
+ * Deferred MCP tools belong to the provider's native search, not OpenBot's built-in catalog.
+ * Codex code mode searches through exec; ordinary Codex and Pi expose native tool_search directly.
  */
 export const DEFERRED_MCP_NOTE =
-  "The tools of the MCP servers in <mcp_servers> are not in this catalog. Load them with the separate tool named exactly tool_search, then call them directly by their mcp__ names.";
+  "External MCP tools are not in this OpenBot catalog. Use the provider's native search: in Codex code mode, call tools.tool_search({query, limit}) inside exec, inspect the returned declarations, and invoke the returned tools names inside a later exec. If the provider exposes a separate tool named exactly tool_search, use that and call the loaded tools by the returned names. Never use openbot.tool_call for external MCP tools.";
 
 function words(text: string): string[] {
   return text
