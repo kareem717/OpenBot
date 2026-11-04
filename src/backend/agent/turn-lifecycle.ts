@@ -628,7 +628,9 @@ export class TurnLifecycle {
         if (itemId) this.#itemTurns.set(itemId, turnId);
         this.#markProduced(turnId, isRepeatedWork(item));
         if (item.type === "contextCompaction") {
-          if (this.#conversation.loadedClientFor(threadId) !== source) return;
+          // A profile change requires fresh instructions on the next turn, but this client still
+          // owns an open session and can finish its compaction before that reload.
+          if (this.#conversation.openClientFor(threadId) !== source) return;
           if (notification.method === "item/started") this.#observedCompactions.set(threadId, turnId);
           else this.#observedCompactions.delete(threadId);
           if (!this.#compaction.isCompactionTurn(threadId, turnId))
@@ -758,7 +760,7 @@ export class TurnLifecycle {
       }
       case "thread/tokenUsage/updated": {
         if (!threadId || !agentId) return;
-        if (this.#conversation.loadedClientFor(threadId) !== source) return;
+        if (this.#conversation.openClientFor(threadId) !== source) return;
         this.#compaction.updateBudget(threadId, params, agentId);
         const usage = getRecord(params, "tokenUsage");
         const last = getRecord(usage, "last");

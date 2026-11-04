@@ -52,6 +52,7 @@ jobs:
           bun --conditions=browser scripts/webhook-card-reconnect-e2e.mjs
           bun scripts/codex-minimum-runtime-e2e.ts
           bun scripts/codex-mcp-session-recovery-e2e.ts
+          bun scripts/codex-open-session-compaction-e2e.ts
           bun scripts/browser-takeover-steer-e2e.ts
           bun scripts/steer-history-e2e.ts
           bun scripts/desktop-feed-e2e.ts
@@ -80,6 +81,7 @@ jobs:
             .openbot-build/codex-deferred-mcp-e2e/report.json
             .openbot-build/codex-minimum-runtime-e2e/report.json
             .openbot-build/codex-mcp-session-recovery-e2e/report.json
+            .openbot-build/codex-open-session-compaction-e2e/report.json
             .openbot-build/codex-held-tool-steer-e2e/report.json
             .openbot-build/browser-takeover-steer-e2e/report.json
             .openbot-build/steer-history-e2e/report.json
