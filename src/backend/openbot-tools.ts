@@ -673,7 +673,7 @@ export const OPENBOT_TOOL_DEFINITIONS: readonly OpenBotToolDefinition[] = [
   {
     name: "list_api_keys",
     description:
-      'List the API keys you can use, from request_api_key or the Vault ("source":"vault"): the name and the file path of each. Values are never shown.',
+      'List saved API keys, database (DB) credentials, and connection strings from request_api_key or the Vault ("source":"vault"). A database credential, connection string, or password saved as an API key is included. Returns each name and file path, never values.',
     shape: {},
   },
   {

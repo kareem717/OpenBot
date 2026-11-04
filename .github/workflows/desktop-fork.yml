@@ -48,6 +48,7 @@ jobs:
           bun scripts/plan-continuation-e2e.ts
           bun scripts/remote-server-retry-e2e.ts
           bun scripts/agent-api-keys-e2e.ts
+          bun scripts/vault-credential-discovery-e2e.ts
           bun --conditions=browser scripts/webhook-card-reconnect-e2e.mjs
           bun scripts/codex-minimum-runtime-e2e.ts
           bun scripts/codex-mcp-session-recovery-e2e.ts
@@ -74,6 +75,7 @@ jobs:
             .openbot-build/plan-continuation-e2e/report.json
             .openbot-build/remote-server-retry-e2e/report.json
             .openbot-build/agent-api-keys-e2e/report.json
+            .openbot-build/vault-credential-discovery-e2e/report.json
             .openbot-build/webhook-card-reconnect-e2e/report.json
             .openbot-build/codex-deferred-mcp-e2e/report.json
             .openbot-build/codex-minimum-runtime-e2e/report.json

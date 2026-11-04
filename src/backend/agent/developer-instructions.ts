@@ -92,7 +92,8 @@ function vaultInstruction(vault: VaultContents): string {
       ? ""
       : "No card is saved. When the user wants you to pay, call openbot_browser.request_vault_item kind=card, or use request_takeover for the card fields.";
   return [
-    "The OpenBot Vault keeps logins, cards, and contact info for all agents of this server.",
+    "The OpenBot Vault keeps logins, cards, contact info, and API keys for all agents of this server.",
+    "Database credentials and connection strings can be saved as API keys. Call openbot.list_api_keys before asking for database access: it returns saved names and private file paths, never values. Browser Vault tools do not list API keys, so an empty browser Vault list does not mean a database credential is missing. Read a saved credential only inside the command that needs it; never print or copy its value.",
     saved ? `The user saved ${saved}.` : "",
     "At a checkout or address form, call openbot_browser.list_vault_items, use the item that fits the request, ask when more than one fits, and follow the browser guidance.",
     "Save contact info that the user asks you to keep with openbot_browser.save_vault_item kind=contact. When a task needs a login, a card or contact info that the Vault does not have, call openbot_browser.request_vault_item, with the fields that you know filled in.",
