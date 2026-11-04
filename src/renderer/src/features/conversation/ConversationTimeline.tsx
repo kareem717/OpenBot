@@ -23,14 +23,13 @@ import { ReplyReturnButton, ScrollToLatestButton } from "@openbot/ui/features/co
 import { MessageActions, MessageMenu } from "@openbot/ui/features/conversation/MessageRendering";
 import { PendingSendStatus } from "@openbot/ui/features/conversation/PendingSendStatus";
 import { SubagentGroup } from "@openbot/ui/features/conversation/Subagents";
-import { TaskList } from "@openbot/ui/features/conversation/TaskList";
+import { ConversationPlan } from "@openbot/ui/features/conversation/TaskList";
 import { UnreadMessagesBanner, UnreadMessagesDivider } from "@openbot/ui/features/conversation/UnreadMessages";
 import { VoicePlayer } from "@openbot/ui/features/conversation/VoicePlayer";
 import { teamMemberName } from "@openbot/ui/features/team/TeamPersonAvatar";
 import { useText } from "@openbot/ui/text";
 import { createMemo, createSignal, For, Loading, lazy, onCleanup, Show, untrack } from "solid-js";
 import { useShowAgentSteps } from "../../agent-steps-preference";
-import { planItems, planTitle } from "../../app-message-projection";
 import { currentDevicePlatform } from "../../send-shortcut-preference";
 import { speechModelReady } from "../speech/speech-model";
 import { recordingGone, speechReading, spokenReply } from "../speech/speech-playback";
@@ -907,9 +906,9 @@ export function ConversationTimeline() {
                         >
                           <Show when={plan()}>
                             {(current) => (
-                              <TaskList
-                                items={planItems(current(), message()?.streaming === true)}
-                                title={planTitle(current())}
+                              <ConversationPlan
+                                plan={current()}
+                                streaming={message()?.streaming === true}
                                 defaultOpen={untrack(() => initialMessage.streaming === true)}
                               />
                             )}

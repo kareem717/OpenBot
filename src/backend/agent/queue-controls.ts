@@ -287,6 +287,9 @@ export class QueueControls {
               queueStep(() => {
                 this.#mailboxSync.syncMailboxMessages(snapshot);
                 this.#mailboxSync.emitQueue(agent.id);
+                this.#conversation.emitConversation(snapshot, "queue.message-steer-restored", {
+                  deliveryId: input.deliveryId,
+                });
                 this.#drain.scheduleDrain(agent.id);
               }),
             ),
@@ -295,6 +298,7 @@ export class QueueControls {
       );
     yield* this.#mailbox.markRunning(input.deliveryId, turnId).pipe(toQueueOperationFailed);
     yield* queueStep(() => {
+      this.#mailboxSync.syncDeliveryInput(snapshot, input.deliveryId);
       if (this.#mailbox.isPersonChatDelivery(input.deliveryId))
         this.#hooks.userMessageSteered(client, agent.id, session, turnId);
       this.#mailboxSync.syncMailboxMessages(snapshot);

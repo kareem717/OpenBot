@@ -62,6 +62,8 @@ export interface AgentTasksHooks {
   hold(agentId: string, taskId: string): string | null;
   /** A message is queued in a task: the queue and the drain take it. */
   queued(agentId: string): void;
+  /** Repairs accepted mailbox inputs when a task's saved history is read. */
+  reconcileMessages(snapshot: ConversationSnapshot, taskId: string): void;
   /** The stored active turn of a thread, also when its conversation is not loaded. */
   turnActive(agentId: string, threadId: string): boolean;
   /** OpenBot archived finished tasks of one agent: their memory reviews start, and a waiting task lane can start. */
@@ -165,7 +167,9 @@ export class AgentTasks implements TaskLanes {
     const task = this.#store.task(taskId);
     if (!task || task.agentId !== agentId) throw new Error(sourceText("error.backend.threadNotFound"));
     this.#conversation.registerTaskThread(agentId, task.threadId);
-    return this.#conversation.ensureSnapshot(agentId, task.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(agentId, task.threadId);
+    this.#hooks.reconcileMessages(snapshot, taskId);
+    return snapshot;
   }
 
   /** The open task of this agent, ready for a message. */

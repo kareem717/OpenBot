@@ -1,5 +1,7 @@
+import type { AppTranslate } from "@openbot/i18n";
 import { Button, ChevronDown } from "@openbot/ui";
 import { createMemo, createSignal, createUniqueId, For, onSettled, Show, untrack } from "solid-js";
+import type { AgentMessagePlan } from "../../data";
 import { createDigitRoll } from "../../digit-roll";
 import { DigitRuns } from "../../digit-runs";
 import { useText } from "../../text";
@@ -23,6 +25,36 @@ export interface TaskListProps {
   /** The list starts collapsed when this is false. */
   defaultOpen?: boolean;
   class?: string;
+}
+
+/** A step runs only while its turn runs. An unfinished step waits after that turn ends. */
+function planItems(plan: AgentMessagePlan, streaming: boolean): TaskListItem[] {
+  return plan.steps.map((step) => {
+    const state =
+      step.status === "completed" ? "done" : step.status === "inProgress" && streaming ? "active" : "pending";
+    return { id: step.id, label: state === "active" ? (step.activeText ?? step.text) : step.text, state };
+  });
+}
+
+const PLAN_TITLE_LIMIT = 80;
+
+/** A short explanation names the plan. A stopped plan says that it stopped. */
+function planTitle(plan: AgentMessagePlan, t: AppTranslate): string {
+  if (plan.stopped && plan.steps.some((step) => step.status !== "completed")) return t("chat.taskList.stopped");
+  if (plan.explanation && plan.explanation.length <= PLAN_TITLE_LIMIT) return plan.explanation;
+  return t("chat.taskList.title");
+}
+
+/** The same live plan controls in an agent chat, a side thread, and a branch. */
+export function ConversationPlan(props: { plan: AgentMessagePlan; streaming: boolean; defaultOpen?: boolean }) {
+  const { t } = useText();
+  return (
+    <TaskList
+      items={planItems(props.plan, props.streaming)}
+      title={planTitle(props.plan, t)}
+      defaultOpen={props.defaultOpen ?? untrack(() => props.streaming)}
+    />
+  );
 }
 
 const STATE_LABEL = {

@@ -36,6 +36,7 @@ import { ContextUsageMeter, type ContextUsageView } from "@openbot/ui/features/c
 import { ApprovalCard } from "@openbot/ui/features/conversation/ConversationPrompts";
 import { MessageActions, MessageMenu } from "@openbot/ui/features/conversation/MessageRendering";
 import type { SendShortcut } from "@openbot/ui/features/conversation/send-shortcut";
+import { ConversationPlan } from "@openbot/ui/features/conversation/TaskList";
 import { ComposerVoiceControls, type VoicePhase } from "@openbot/ui/features/conversation/VoiceRecordingMorph";
 import { type TextValue, useText } from "@openbot/ui/text";
 import type { JSX } from "@solidjs/web";
@@ -444,33 +445,44 @@ export function AgentThreadView(props: AgentThreadViewProps) {
                   )}
                 </Show>
                 <Show
-                  when={message().actionMarker && props.actionMarker}
+                  when={message().kind === "plan" && message().plan}
                   fallback={
-                    <ChatMessageRow
-                      message={message()}
-                      author={author(message())}
-                      agents={props.agents}
-                      skills={props.skills}
-                      onSelectAgent={() => undefined}
-                      onOpenLink={props.onOpenLink}
-                      onPreview={props.onPreview}
-                      onAttachmentAction={props.onAttachmentAction}
-                      mediaSource={props.mediaSource}
-                      downloads={props.downloads}
-                      onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
-                      macWindowControls={props.macWindowControls}
-                      referencedMessage={referenced(message())}
-                      onOpenReference={() => {
-                        const id = message().replyToMessageId;
-                        if (id) showMessage(id);
-                      }}
-                      actions={messageActions(message())}
-                      menu={messageMenu(message())}
-                      data-chat-search-message={message().id}
-                    />
+                    <Show
+                      when={message().actionMarker && props.actionMarker}
+                      fallback={
+                        <ChatMessageRow
+                          message={message()}
+                          author={author(message())}
+                          agents={props.agents}
+                          skills={props.skills}
+                          onSelectAgent={() => undefined}
+                          onOpenLink={props.onOpenLink}
+                          onPreview={props.onPreview}
+                          onAttachmentAction={props.onAttachmentAction}
+                          mediaSource={props.mediaSource}
+                          downloads={props.downloads}
+                          onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
+                          macWindowControls={props.macWindowControls}
+                          referencedMessage={referenced(message())}
+                          onOpenReference={() => {
+                            const id = message().replyToMessageId;
+                            if (id) showMessage(id);
+                          }}
+                          actions={messageActions(message())}
+                          menu={messageMenu(message())}
+                          data-chat-search-message={message().id}
+                        />
+                      }
+                    >
+                      {(render) => <article data-chat-search-message={message().id}>{render()(message())}</article>}
+                    </Show>
                   }
                 >
-                  {(render) => <article data-chat-search-message={message().id}>{render()(message())}</article>}
+                  {(plan) => (
+                    <article data-chat-search-message={message().id}>
+                      <ConversationPlan plan={plan()} streaming={message().streaming === true} />
+                    </article>
+                  )}
                 </Show>
                 <Show when={branchDividerAfter(message().id)}>{(source) => <BranchDivider source={source()} />}</Show>
               </div>

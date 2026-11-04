@@ -73,6 +73,34 @@ export class MailboxSync {
     };
   }
 
+  /** Adds an input once, using its stored identity and content rather than a provider echo. */
+  syncDeliveryInput(snapshot: ConversationSnapshot, deliveryId: string): void {
+    if (!snapshot.messages.some((message) => message.id === deliveryId)) {
+      const message = this.#mailbox.deliveryConversationMessage(deliveryId);
+      if (message) snapshot.messages.push(message);
+    }
+    this.syncDeliveryMessage(snapshot, deliveryId);
+  }
+
+  /** Repairs accepted task steers from older builds without sending them to the provider again. */
+  reconcileTaskMessages(snapshot: ConversationSnapshot, taskId: string): void {
+    const previousSignature = conversationContentSignature(snapshot);
+    const accepted = this.#mailbox.acceptedTaskSteerMessages(snapshot.agentId, taskId);
+    for (const message of accepted) this.syncDeliveryInput(snapshot, message.id);
+    for (const message of snapshot.messages) {
+      if (message.delivery) this.syncDeliveryMessage(snapshot, message.delivery.id);
+    }
+    const reactions = this.#mailbox.reactionsFor(snapshot.agentId);
+    for (const message of snapshot.messages) {
+      if (!message.delivery) continue;
+      message.reactions = reactions.get(message.id) ?? [];
+      message.reaction = message.reactions.find((reaction) => reaction.actor.kind === "user")?.emoji ?? null;
+    }
+    sortConversationMessages(snapshot.messages);
+    if (conversationContentSignature(snapshot) !== previousSignature)
+      this.#conversation.emitConversation(snapshot, "conversation.mailbox-reconciled");
+  }
+
   syncMailboxMessages(snapshot: ConversationSnapshot, mailboxMessages?: readonly ConversationMessage[]): void {
     if (this.#conversation.isExecutionThread(snapshot.threadId)) return;
     const fromCreatedAt = snapshot.messages[0]?.createdAt;

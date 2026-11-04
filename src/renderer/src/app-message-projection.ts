@@ -27,7 +27,6 @@ import type {
   ChatActionMarkerModel,
 } from "@openbot/ui/data";
 import { formatChatTimestamp } from "@openbot/ui/features/conversation/chat-timestamp";
-import type { TaskListItem } from "@openbot/ui/features/conversation/TaskList";
 import { currentText } from "@openbot/ui/text";
 import { isRoutineEventItem } from "./features/conversation/conversation-read-state";
 
@@ -142,28 +141,6 @@ function messagePlan(message: ConversationMessage): AgentMessagePlan | null {
   const plan = message.plan ?? parseConversationPlanText(message.text);
   if (!plan?.steps.length) return null;
   return { ...plan, stopped: message.status === "interrupted" || message.status === "failed" };
-}
-
-/**
- * The rows of a plan block. A step runs only while its turn runs: after the turn ends, a step that
- * was not finished shows as not started.
- */
-export function planItems(plan: AgentMessagePlan, streaming: boolean): TaskListItem[] {
-  return plan.steps.map((step) => {
-    const state =
-      step.status === "completed" ? "done" : step.status === "inProgress" && streaming ? "active" : "pending";
-    return { id: step.id, label: state === "active" ? (step.activeText ?? step.text) : step.text, state };
-  });
-}
-
-const PLAN_TITLE_LIMIT = 80;
-
-/** The header of a plan block: a short explanation, else "Tasks", or "Stopped" for a stopped plan. */
-export function planTitle(plan: AgentMessagePlan): string {
-  const { t } = currentText();
-  if (plan.stopped && plan.steps.some((step) => step.status !== "completed")) return t("chat.taskList.stopped");
-  if (plan.explanation && plan.explanation.length <= PLAN_TITLE_LIMIT) return plan.explanation;
-  return t("chat.taskList.title");
 }
 
 /**

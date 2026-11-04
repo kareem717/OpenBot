@@ -2,6 +2,7 @@
 // one loopback fixture. No user account, provider, or external sign-in is used.
 // CI: xvfb-run -a bun scripts/side-thread-action-cards-e2e.ts dist/linux-unpacked/openbot
 // Mac: bun scripts/side-thread-action-cards-e2e.ts '/path/OpenBot.app/Contents/MacOS/OpenBot'
+// Also checks live plans and accepted steering in main, side, and branch histories.
 // Writes .openbot-build/side-thread-action-cards-e2e/report.json and one screenshot.
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -252,13 +253,28 @@ await writeFile(
 // The provider answers Continue locally. It never reads the user's provider configuration.
 const fakeCodex = join(root, "codex-fixture");
 const fakeSource = join(root, "codex-fixture.cjs");
+const planControl = join(root, "plan-control.json");
+const planTitle = "Routine fixture plan";
+const planStart = "Start the controlled routine-plan fixture.";
+await writeFile(planControl, "{}");
 await writeFile(
   fakeSource,
   `
 if (process.argv.includes('--version')) { process.stdout.write('codex-cli 0.166.0\\n'); process.exit(0); }
-const readline = require('node:readline'); const crypto = require('node:crypto');
+const readline = require('node:readline'); const crypto = require('node:crypto'); const fs = require('node:fs');
 const send = (value) => process.stdout.write(JSON.stringify(value)+'\\n');
 const config = {config:{mcp_servers:{}},layers:[{name:{type:'user',file:'/local/config.toml',profile:null},version:'1',config:{mcp_servers:{}}}]};
+const held = new Map(); let lastCommand = '';
+const plan = (turn, phase) => send({method:'turn/plan/updated',params:{threadId:turn.threadId,turnId:turn.id,explanation:${JSON.stringify(planTitle)},plan:['Inspect routines','Repair routine links','Verify stored history'].map((step,index)=>({step,status:phase==='finish'||(phase==='advance'&&index===0)?'completed':index===(phase==='advance'?1:0)?'inProgress':'pending'}))}});
+const finish = (turn) => {
+ send({method:'item/completed',params:{threadId:turn.threadId,turnId:turn.id,item:{id:'answer-'+turn.id,type:'agentMessage',text:'Local fixture continued.',phase:'final_answer'}}});
+ send({method:'turn/completed',params:{threadId:turn.threadId,turn:{id:turn.id,status:'completed'}}});
+};
+setInterval(()=>{
+ let command; try { const text=fs.readFileSync(${JSON.stringify(planControl)},'utf8');if(text===lastCommand)return;command=JSON.parse(text);lastCommand=text; } catch { return; }
+ const turn=held.get(command.turnId);if(!turn)return;plan(turn,command.phase);
+ if(command.phase==='finish'){held.delete(turn.id);finish(turn);}
+},25).unref();
 readline.createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line), p=m.params||{}; if(m.id===undefined)return;
  let r={};
@@ -275,8 +291,15 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  case 'turn/start': {
   const id='turn-'+crypto.randomUUID();send({id:m.id,result:{turn:{id,status:'inProgress',items:[]}}});
   send({method:'turn/started',params:{threadId:p.threadId,turn:{id}}});
-  send({method:'item/completed',params:{threadId:p.threadId,turnId:id,item:{id:'answer-'+id,type:'agentMessage',text:'Local fixture continued.',phase:'final_answer'}}});
-  send({method:'turn/completed',params:{threadId:p.threadId,turn:{id,status:'completed'}}});return;
+  const turn={id,threadId:p.threadId};
+  const text=(p.input||[]).map(x=>x.text||'').join('\\n').split('--- current message ---').at(-1);
+  if(text.includes(${JSON.stringify(planStart)})){held.set(id,turn);plan(turn,'start');return;}
+  finish(turn);return;
+ }
+ case 'turn/steer': {
+  const turn=held.get(p.expectedTurnId);
+  if(!turn||turn.threadId!==p.threadId){send({id:m.id,error:{code:-32000,message:'Fixture turn changed'}});return;}
+  send({id:m.id,result:{turnId:turn.id}});return;
  }
  }
  send({id:m.id,result:r});
@@ -451,6 +474,98 @@ try {
     .getByRole("button", { name: new RegExp(`^${escapeRegExp(agentName)}[,.]`) })
     .first()
     .click();
+  await page.evaluate(
+    (agentId) => window.openbot.agent.updateAgentHostSettings({ agentId, busyMessageMode: "steer" }),
+    agent.id,
+  );
+  async function checkPlan(lane: string, taskId?: string) {
+    const input = { agentId: agent.id, taskId };
+    const read = () =>
+      page.evaluate(
+        (target) =>
+          target.taskId
+            ? window.openbot.agent.readTask({ agentId: target.agentId, taskId: target.taskId })
+            : window.openbot.agent.readConversation(target.agentId),
+        input,
+      );
+    const send = (text: string) =>
+      page.evaluate(
+        (target) =>
+          window.openbot.agent.sendMessage({
+            agentId: target.agentId,
+            text: target.text,
+            attachmentDraftIds: [],
+            ...(target.taskId ? { taskId: target.taskId } : {}),
+            clientMessageId: crypto.randomUUID(),
+          }),
+        { ...input, text },
+      );
+    await send(planStart);
+    const started = await until("the live plan starts", read, (snapshot) =>
+      Boolean(
+        snapshot.activeTurnId && snapshot.messages.some((message) => message.id === `${snapshot.activeTurnId}:plan`),
+      ),
+    );
+    const turnId = started.activeTurnId;
+    assert.ok(turnId);
+    const row = page.locator(`[data-chat-search-message="${turnId}:plan"]`);
+    const summary = (done: number) => english("chat.taskList.summary", { done, total: 3 });
+    const control = (done: number) => row.getByRole("button", { name: new RegExp(escapeRegExp(summary(done))) });
+    await row.getByRole("button", { name: new RegExp(escapeRegExp(planTitle)) }).waitFor();
+    await control(0).waitFor();
+    assert.equal(await control(0).getAttribute("aria-expanded"), "true");
+    await row.getByRole("img", { name: english("chat.taskList.state.active"), exact: true }).waitFor();
+    assert.equal(await row.getByRole("img", { name: english("chat.taskList.state.pending"), exact: true }).count(), 2);
+    await control(0).click();
+    assert.equal(await control(0).getAttribute("aria-expanded"), "false");
+    await control(0).click();
+    assert.equal(await control(0).getAttribute("aria-expanded"), "true");
+    check(`${lane} history uses the same accessible plan controls and live step states`);
+
+    const text = `Revise the ${lane} routine check without losing this steering message.`;
+    const receipt = await send(text);
+    const id = receipt.deliveries[0]?.id;
+    assert.ok(id);
+    const messageRow = page.locator(`[data-chat-search-message="${id}"]`);
+    await until("the accepted steer is in its conversation", read, (snapshot) =>
+      snapshot.messages.some((message) => message.id === id && message.delivery?.status === "running"),
+    );
+    await messageRow.getByText(text, { exact: true }).waitFor();
+    await control(0).click();
+    assert.equal(await control(0).getAttribute("aria-expanded"), "false");
+    await writeFile(planControl, JSON.stringify({ turnId, phase: "advance" }));
+    await control(1).waitFor();
+    assert.equal(await control(1).getAttribute("aria-expanded"), "false");
+    await control(1).click();
+    await until(
+      "the plan keeps one active step",
+      () => row.getByRole("img", { name: english("chat.taskList.state.active"), exact: true }).count(),
+      (count) => count === 1,
+    );
+    assert.equal(await control(1).getAttribute("aria-expanded"), "true");
+    assert.equal(await row.getByRole("img", { name: english("chat.taskList.state.done"), exact: true }).count(), 1);
+    await messageRow.getByText(text, { exact: true }).waitFor();
+    await writeFile(planControl, JSON.stringify({ turnId, phase: "finish" }));
+    await control(3).waitFor();
+    const finished = await until(
+      "the plan and accepted steer finish",
+      read,
+      (snapshot) =>
+        snapshot.activeTurnId === null &&
+        snapshot.messages.some((message) => message.id === id && message.delivery?.status === "completed"),
+    );
+    assert.equal(finished.messages.filter((message) => message.id === `${turnId}:plan`).length, 1);
+    assert.equal(finished.messages.filter((message) => message.id === id && message.text === text).length, 1);
+    assert.equal(await control(3).getAttribute("aria-expanded"), "true");
+    await until(
+      "all three plan steps finish",
+      () => row.getByRole("img", { name: english("chat.taskList.state.done"), exact: true }).count(),
+      (count) => count === 3,
+    );
+    await messageRow.getByText(text, { exact: true }).waitFor();
+    check(`${lane} plan updates keep their ID, open state, and one visible accepted steering message`);
+    return { id, text };
+  }
   const signIn = (name: string, title?: string) => {
     const history = title
       ? page.getByRole("region", { name: english("conversation.threads.view.label", { title }), exact: true })
@@ -459,6 +574,7 @@ try {
   };
   await signIn(serverName).waitFor();
   check("Main history renders its saved MCP sign-in card");
+  await checkPlan("Main");
   // This row is added after the composer first loaded MCP configs. Opening its branch must reload them.
   await page.evaluate(
     (saved) => window.openbot.agent.saveMcpServer({ config: saved }, "local"),
@@ -477,9 +593,22 @@ try {
   await openThread(sideTitle);
   await signIn(serverName, sideTitle).waitFor();
   check("Side history renders its saved MCP sign-in card");
+  const sideSteer = await checkPlan("Side", side.taskId);
   await openThread(branchTitle);
   await signIn(laterName, branchTitle).waitFor();
   check("Branch history reloads newly saved MCP configs and renders its sign-in card");
+  const branchSteer = await checkPlan("Branch", branch.taskId);
+  await openThread(sideTitle);
+  await page
+    .locator(`[data-chat-search-message="${sideSteer.id}"]`)
+    .getByText(sideSteer.text, { exact: true })
+    .waitFor();
+  await openThread(branchTitle);
+  await page
+    .locator(`[data-chat-search-message="${branchSteer.id}"]`)
+    .getByText(branchSteer.text, { exact: true })
+    .waitFor();
+  check("Accepted side and branch steering messages remain visible after reopening their histories");
   await signIn(laterName, branchTitle).click();
   await until(
     "the local fixture sign-in completes",

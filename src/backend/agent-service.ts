@@ -584,6 +584,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#mailboxSync.emitQueue(agentId);
           this.#drain.scheduleDrain(agentId);
         },
+        reconcileMessages: (snapshot, taskId) => this.#mailboxSync.reconcileTaskMessages(snapshot, taskId),
         turnActive: (agentId, threadId) => this.#store.database.readActiveTurnId(agentId, threadId) !== null,
         // As `closeTask` does after its Stop: the plan continuation ends, and the memory review starts.
         archived: Effect.fn("AgentService.archivedTasks")(function* (

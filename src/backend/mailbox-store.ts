@@ -255,6 +255,8 @@ export class MailboxStore {
   readonly #files: AttachmentFiles;
   readonly #database: OpenBotDatabase;
   readonly #queueUpdates = new Set<string>();
+  /** A turn can end before its steer acknowledgement; that is not proof the input was accepted. */
+  readonly #pendingSteers = new Set<string>();
   readonly #deliveryGate = new MailboxDeliveryGate();
   readonly #stagedGeneratedAttachments = new Map<string, StoredGeneratedAttachment>();
   #state: StoredState = structuredClone(EMPTY_STATE);
@@ -1194,68 +1196,112 @@ export class MailboxStore {
 
       for (const storedDelivery of deliveries) {
         if (storedDelivery.recipientAgentId !== agentId) continue;
-        const delivery = this.#publicDelivery(storedDelivery, positions, message);
-        messages.push({
-          id: delivery.id,
-          // A plan continuation keeps the request in its first turn, like `syncDeliveryMessage`.
-          turnId: storedDelivery.planContinuation?.turnIds[0] ?? storedDelivery.turnId ?? undefined,
-          author: message.sender.kind === "agent" ? "agent" : "user",
-          source: message.sender.kind === "agent" ? "agent" : message.sender.kind === "routine" ? "routine" : "user",
-          text: message.text,
-          senderAgentId: message.sender.kind === "agent" ? message.sender.agentId : undefined,
-          ...(message.senderMember ? { senderMember: { ...message.senderMember } } : {}),
-          attachments: message.attachments.map(toAttachmentSummary),
-          ...(message.voiceRecording && !message.voiceRecording.deletedAt
-            ? { voiceRecording: toAttachmentSummary(message.voiceRecording) }
-            : {}),
-          replyToMessageId: message.replyToMessageId,
-          delivery: {
-            id: delivery.id,
-            status: delivery.status,
-            position: delivery.position,
-          },
-          exchange:
-            message.sender.kind === "agent"
-              ? {
-                  direction: "incoming",
-                  messageId: message.id,
-                  senderAgentId: message.sender.agentId,
-                  recipientAgentIds: deliveries.map((item) => item.recipientAgentId),
-                  replyToMessageId: message.replyToMessageId,
-                  ...(message.expectsReply === false ? { expectsReply: false } : {}),
-                  deliveries: deliveries.map((item) => {
-                    const publicItem = this.#publicDelivery(item, positions, message);
-                    return {
-                      id: publicItem.id,
-                      recipientAgentId: publicItem.recipientAgentId,
-                      status: publicItem.status,
-                      position: publicItem.position,
-                      error: publicItem.error,
-                    };
-                  }),
-                }
-              : undefined,
-          routine:
-            message.sender.kind === "routine"
-              ? {
-                  routineId: message.sender.routineId,
-                  runId: message.sender.runId,
-                  name: message.sender.routineName,
-                  scheduledFor: message.sender.scheduledFor,
-                }
-              : undefined,
-          createdAt: storedDelivery.steeredAt ?? message.createdAt,
-          status: delivery.status === "failed" ? "failed" : "completed",
-          itemType:
-            message.sender.kind === "agent"
-              ? AGENT_EXCHANGE_ITEM_TYPE
-              : message.sender.kind === "routine"
-                ? "routine"
-                : undefined,
-        });
+        messages.push(this.#conversationDeliveryMessage(message, storedDelivery, positions, deliveries));
       }
     }
     return messages;
+  }
+
+  /** The stored input of one delivery, shared by turn starts, steering and history repair. */
+  deliveryConversationMessage(deliveryId: string): ConversationMessage | null {
+    const storedDelivery = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);
+    if (!storedDelivery) return null;
+    const message = this.#requireMessage(storedDelivery.messageId);
+    return this.#conversationDeliveryMessage(
+      message,
+      storedDelivery,
+      this.#queuedPositions(),
+      this.#state.deliveries.filter((candidate) => candidate.messageId === message.id),
+    );
+  }
+
+  /** Only accepted person steers can repair a missing task input; a queued request stays queued. */
+  acceptedTaskSteerMessages(agentId: string, taskId: string): ConversationMessage[] {
+    const messages = this.#messagesById();
+    const positions = this.#queuedPositions();
+    return this.#state.deliveries.flatMap((delivery) => {
+      if (
+        delivery.recipientAgentId !== agentId ||
+        this.#pendingSteers.has(delivery.id) ||
+        delivery.steeredAt === undefined ||
+        delivery.turnId === null ||
+        delivery.status === "queued" ||
+        delivery.status === "starting" ||
+        delivery.status === "cancelled"
+      )
+        return [];
+      const message = this.#requireMessage(delivery.messageId, messages);
+      if (message.taskId !== taskId || message.sender.kind !== "user" || message.channelId || message.messaging)
+        return [];
+      return [this.#conversationDeliveryMessage(message, delivery, positions, [delivery])];
+    });
+  }
+
+  #conversationDeliveryMessage(
+    message: StoredMessage,
+    storedDelivery: StoredDelivery,
+    positions: ReadonlyMap<string, number>,
+    deliveries: readonly StoredDelivery[],
+  ): ConversationMessage {
+    const delivery = this.#publicDelivery(storedDelivery, positions, message);
+    return {
+      id: delivery.id,
+      // A plan continuation keeps the request in its first turn, like `syncDeliveryMessage`.
+      turnId: storedDelivery.planContinuation?.turnIds[0] ?? storedDelivery.turnId ?? undefined,
+      author: message.sender.kind === "agent" ? "agent" : "user",
+      source: message.sender.kind === "agent" ? "agent" : message.sender.kind === "routine" ? "routine" : "user",
+      text: message.text,
+      senderAgentId: message.sender.kind === "agent" ? message.sender.agentId : undefined,
+      ...(message.senderMember ? { senderMember: { ...message.senderMember } } : {}),
+      attachments: message.attachments.map(toAttachmentSummary),
+      ...(message.voiceRecording && !message.voiceRecording.deletedAt
+        ? { voiceRecording: toAttachmentSummary(message.voiceRecording) }
+        : {}),
+      replyToMessageId: message.replyToMessageId,
+      delivery: {
+        id: delivery.id,
+        status: delivery.status,
+        position: delivery.position,
+      },
+      exchange:
+        message.sender.kind === "agent"
+          ? {
+              direction: "incoming",
+              messageId: message.id,
+              senderAgentId: message.sender.agentId,
+              recipientAgentIds: deliveries.map((item) => item.recipientAgentId),
+              replyToMessageId: message.replyToMessageId,
+              ...(message.expectsReply === false ? { expectsReply: false } : {}),
+              deliveries: deliveries.map((item) => {
+                const publicItem = this.#publicDelivery(item, positions, message);
+                return {
+                  id: publicItem.id,
+                  recipientAgentId: publicItem.recipientAgentId,
+                  status: publicItem.status,
+                  position: publicItem.position,
+                  error: publicItem.error,
+                };
+              }),
+            }
+          : undefined,
+      routine:
+        message.sender.kind === "routine"
+          ? {
+              routineId: message.sender.routineId,
+              runId: message.sender.runId,
+              name: message.sender.routineName,
+              scheduledFor: message.sender.scheduledFor,
+            }
+          : undefined,
+      createdAt: storedDelivery.steeredAt ?? message.createdAt,
+      status: delivery.status === "failed" ? "failed" : "completed",
+      itemType:
+        message.sender.kind === "agent"
+          ? AGENT_EXCHANGE_ITEM_TYPE
+          : message.sender.kind === "routine"
+            ? "routine"
+            : undefined,
+    };
   }
 
   reactionFor(
@@ -1794,6 +1840,7 @@ export class MailboxStore {
           ? { planContinuation: { turnIds: [...new Set([...planContinuation.turnIds, turnId])] } }
           : {}),
       });
+      this.#pendingSteers.delete(deliveryId);
     } catch (cause) {
       return yield* new StoredStateFailure({ cause });
     }
@@ -2205,6 +2252,7 @@ export class MailboxStore {
     try {
       this.#assertQueueNotEditing(deliveryId);
       this.#clearSteerFallback(deliveryId);
+      this.#pendingSteers.add(deliveryId);
       yield* this.#updateDeliveryEffect(deliveryId, ["queued"], {
         status: "starting",
         turnId,
@@ -2212,6 +2260,7 @@ export class MailboxStore {
         error: null,
       });
     } catch (cause) {
+      this.#pendingSteers.delete(deliveryId);
       return yield* new StoredStateFailure({ cause });
     }
   }, Effect.uninterruptible).bind(this);
@@ -2227,6 +2276,7 @@ export class MailboxStore {
     turnId: string,
   ): Effect.fn.Return<void, StoredStateFailure> {
     try {
+      this.#pendingSteers.delete(deliveryId);
       const delivery = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);
       if (!delivery || delivery.turnId !== turnId || delivery.status === "queued" || delivery.status === "cancelled") {
         return;

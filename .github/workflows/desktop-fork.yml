@@ -51,6 +51,7 @@ jobs:
           bun scripts/codex-minimum-runtime-e2e.ts
           bun scripts/codex-mcp-session-recovery-e2e.ts
           bun scripts/browser-takeover-steer-e2e.ts
+          bun scripts/steer-history-e2e.ts
           bun scripts/desktop-feed-e2e.ts
           bash -n scripts/install-server.sh scripts/hosting/openbot-hosted-update
       - name: Install and verify the pinned Codex runtime
@@ -77,6 +78,7 @@ jobs:
             .openbot-build/codex-mcp-session-recovery-e2e/report.json
             .openbot-build/codex-held-tool-steer-e2e/report.json
             .openbot-build/browser-takeover-steer-e2e/report.json
+            .openbot-build/steer-history-e2e/report.json
             .openbot-build/desktop-feed-e2e.json
           if-no-files-found: ignore
 
@@ -116,7 +118,7 @@ jobs:
           xvfb-run -a bun run verify:package:linux dist/linux-unpacked --require-update-metadata
           bun scripts/prepare-desktop-update-manifest.ts dist/latest-linux.yml
           bun run verify:update-artifacts linux
-      - name: Check side-thread sign-in cards through the packaged app
+      - name: Check thread cards, live plans, and steering through the packaged app
         run: xvfb-run -a bun scripts/side-thread-action-cards-e2e.ts dist/linux-unpacked/openbot
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
