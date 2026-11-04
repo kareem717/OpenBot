@@ -16,6 +16,7 @@ import {
   conversationSubagentsText,
   isAgentContextCategories,
   latestTurnAnswer,
+  mcpSignInEvent,
   PLAN_CONTINUATION_ITEM_TYPE,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isString } from "@openbot/contracts/runtime-values";
@@ -1211,6 +1212,9 @@ export class TurnLifecycle {
         !channelTurn &&
         !routineSession &&
         (!taskTurn || laneTaskId !== null) &&
+        // Sign-in needs the person even when the answer does not end with a question or a wait.
+        // An earlier turn's card stays in history and must not block a new request.
+        !snapshot.messages.some((message) => message.turnId === turnId && mcpSignInEvent(message) !== null) &&
         this.#planContinues(agentId, laneTaskId, turnId, deliveries, latestAssistant?.text);
       const continuation = planContinues
         ? this.#planContinuation.consider({

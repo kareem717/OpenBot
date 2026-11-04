@@ -8,7 +8,7 @@ export interface McpSignInChatCardProps {
   signedIn: boolean;
   onSignIn?: ((trigger: HTMLElement | null) => void) | undefined;
   /** Sends the message that tells the agent to test again. False when it could not be sent now. */
-  onContinue: (body: string) => boolean;
+  onContinue: (body: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -39,8 +39,8 @@ export function McpSignInChatCard(props: McpSignInChatCardProps) {
           ? () => props.onSignIn?.(document.activeElement instanceof HTMLElement ? document.activeElement : null)
           : undefined
       }
-      onContinue={() => {
-        if (props.onContinue(t("chat.mcpSignIn.message", { name: props.config.name }))) setSent(true);
+      onContinue={async () => {
+        if (await props.onContinue(t("chat.mcpSignIn.message", { name: props.config.name }))) setSent(true);
       }}
     />
   );

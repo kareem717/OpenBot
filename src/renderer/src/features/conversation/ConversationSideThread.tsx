@@ -15,6 +15,7 @@ import { usePlatform } from "../../platform";
 import { latestVisibleAgentMessageId } from "./conversation-read-state";
 import { useConversationViewScope } from "./conversation-scope";
 import type { SideThread } from "./conversation-types";
+import { createThreadActionCards } from "./thread-action-cards";
 import { createTurnSteps } from "./turn-steps";
 
 /**
@@ -59,6 +60,11 @@ export function ConversationSideThread(props: { threadId: string }) {
     },
     [],
     { key: "id" },
+  );
+  const ActionCard = createThreadActionCards(
+    () => messages,
+    (body) => thread()?.onSend(body, [], null) ?? Promise.resolve(false),
+    () => thread()?.task.id,
   );
   const turnSteps = createTurnSteps({
     messages: () => messages,
@@ -142,6 +148,7 @@ export function ConversationSideThread(props: { threadId: string }) {
             agent={current().agent}
             agents={view.agents}
             messages={messages}
+            actionMarker={(message) => <ActionCard message={message} />}
             skills={installedSkills()}
             skillsLoadFailed={installedSkillsLoadFailed()}
             mcpServers={mcpServers()}

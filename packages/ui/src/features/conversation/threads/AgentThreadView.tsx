@@ -106,6 +106,8 @@ export interface AgentThreadViewProps {
   agent: AgentProfile;
   agents: AgentProfile[];
   messages: readonly AgentMessage[];
+  /** The app draws action cards with the permissions and actions of this thread. */
+  actionMarker?: ((message: AgentMessage) => JSX.Element) | undefined;
   /** The agent's skills, for the `$` picker and the skill tags in messages. */
   skills?: InstalledSkill[] | undefined;
   /** The last skill list request failed, so an empty picker says so instead of "no skills". */
@@ -441,28 +443,35 @@ export function AgentThreadView(props: AgentThreadViewProps) {
                     />
                   )}
                 </Show>
-                <ChatMessageRow
-                  message={message()}
-                  author={author(message())}
-                  agents={props.agents}
-                  skills={props.skills}
-                  onSelectAgent={() => undefined}
-                  onOpenLink={props.onOpenLink}
-                  onPreview={props.onPreview}
-                  onAttachmentAction={props.onAttachmentAction}
-                  mediaSource={props.mediaSource}
-                  downloads={props.downloads}
-                  onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
-                  macWindowControls={props.macWindowControls}
-                  referencedMessage={referenced(message())}
-                  onOpenReference={() => {
-                    const id = message().replyToMessageId;
-                    if (id) showMessage(id);
-                  }}
-                  actions={messageActions(message())}
-                  menu={messageMenu(message())}
-                  data-chat-search-message={message().id}
-                />
+                <Show
+                  when={message().actionMarker && props.actionMarker}
+                  fallback={
+                    <ChatMessageRow
+                      message={message()}
+                      author={author(message())}
+                      agents={props.agents}
+                      skills={props.skills}
+                      onSelectAgent={() => undefined}
+                      onOpenLink={props.onOpenLink}
+                      onPreview={props.onPreview}
+                      onAttachmentAction={props.onAttachmentAction}
+                      mediaSource={props.mediaSource}
+                      downloads={props.downloads}
+                      onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
+                      macWindowControls={props.macWindowControls}
+                      referencedMessage={referenced(message())}
+                      onOpenReference={() => {
+                        const id = message().replyToMessageId;
+                        if (id) showMessage(id);
+                      }}
+                      actions={messageActions(message())}
+                      menu={messageMenu(message())}
+                      data-chat-search-message={message().id}
+                    />
+                  }
+                >
+                  {(render) => <article data-chat-search-message={message().id}>{render()(message())}</article>}
+                </Show>
                 <Show when={branchDividerAfter(message().id)}>{(source) => <BranchDivider source={source()} />}</Show>
               </div>
             )}

@@ -21,16 +21,20 @@
 //   8. A side thread continues in its own thread only.
 //   9. A routine run does not continue.
 //  10. A restart while a continuation waits completes the request with no new turn.
+//  11. An MCP sign-in card stops an open plan in the main chat and a side thread. A new user
+//      message can continue its plan even though the old card stays in that conversation.
 // Not checked: a message sent in the short gap before a continuation starts. The drain starts the
 // continuation at once, and a hidden agent refuses new messages. Check 7 covers the same rule.
 // No provider, account or network is used. `bun run test:plan-continuation`.
 // Writes .openbot-build/plan-continuation-e2e/report.json.
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { AGENT_PROVIDERS, type AgentEvent, PLAN_CONTINUATION_ITEM_TYPE } from "@openbot/contracts/ipc";
+import { AGENT_PROVIDERS, type AgentEvent, mcpSignInEvent, PLAN_CONTINUATION_ITEM_TYPE } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
 import type { AgentBrowserHost } from "../src/backend/agent/turn-lifecycle";
 
@@ -73,6 +77,7 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 const LOG = ${JSON.stringify(fakeLog)};
+const session = require("node:crypto").randomUUID();
 const NOTE = ${JSON.stringify(NOTE_MARKER)};
 const config = { config: { mcp_servers: {} }, layers: [{ name: { type: "user", file: "/fake/.codex/config.toml", profile: null }, version: "1", config: { mcp_servers: {} } }] };
 let buffer = "";
@@ -113,7 +118,7 @@ const answer = (message) => {
     case "plugin/list": return write({ id: message.id, result: { marketplaces: [] } });
     case "config/read": return write({ id: message.id, result: config });
     case "config/batchWrite": return write({ id: message.id, result: {} });
-    case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + (++threads), turns: [] } } });
+    case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + session + "-" + (++threads), turns: [] } } });
     case "thread/resume": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
     case "thread/unsubscribe": return write({ id: message.id, result: { status: "Unsubscribed" } });
     case "thread/turns/list":
@@ -648,6 +653,122 @@ try {
     assert.equal(continuationLines(agent.id).length, 0);
     return { turns: 1 };
   });
+
+  for (const side of [false, true]) {
+    await check(
+      `an MCP sign-in card stops the ${side ? "side thread" : "main chat"} plan until a new user request`,
+      async () => {
+        const server = createServer((_request, response) => {
+          response.writeHead(401, {
+            "content-type": "application/json",
+            "www-authenticate": 'Bearer realm="plan-check"',
+          });
+          response.end(JSON.stringify({ error: "unauthorized" }));
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        try {
+          const address = server.address();
+          assert.ok(address && typeof address === "object");
+          const name = `sign-in-${side ? "side" : "main"}`;
+          await runCauseEffect(
+            current.service.saveMcpServer({
+              config: {
+                id: "",
+                name,
+                transport: "http",
+                enabled: false,
+                url: `http://127.0.0.1:${address.port}/mcp`,
+                command: "",
+                args: [],
+                env: [],
+                envPassthrough: [],
+                workingDirectory: "",
+                headers: [],
+              },
+            }),
+          );
+          const config = current.service.listMcpServers().find((row) => row.name === name);
+          assert.ok(config);
+          const agent = await createAgent(side ? "SignInSide" : "SignInMain");
+          const task = side
+            ? await runCauseEffect(current.service.startTask({ agentId: agent.id, text: "Set up the account." }))
+            : undefined;
+          if (task)
+            await waitFor(
+              "the sign-in side thread setup",
+              () =>
+                current.service.listTasks(agent.id).tasks.find((item) => item.id === task.id)?.outcome === "completed",
+            );
+          const mark = loggedTurns().length;
+          const id = await send(
+            agent.id,
+            `Read the account. ${plan(
+              {
+                steps: [["Read the account", "pending"]],
+                calls: [{ tool: "test_mcp_server", arguments: { name } }],
+                // This wording has no question or textual wait that the existing last-line rule catches.
+                answer: "Use the Sign in card to connect your account. The account report comes next.",
+              },
+              { steps: [["Read the account", "completed"]], answer: "This turn must not run before sign-in." },
+            )}`,
+            task?.id,
+          );
+          assert.equal(await settled(id), "completed");
+          const turns = turnsSince(mark);
+          assert.deepEqual(
+            turns.map((turn) => turn.note),
+            [false],
+            "An actual sign-in request does not auto-continue.",
+          );
+          const cards = chatMessages(agent.id, task?.threadId).filter(
+            (message) => mcpSignInEvent(message)?.mcpServerId === config.id,
+          );
+          assert.equal(cards.length, 1, "The real MCP auth-required response posts one valid sign-in card.");
+          assert.equal(cards[0]?.turnId, turns[0]?.turnId, "The sign-in card belongs to the current turn.");
+          assert.equal(continuationLines(agent.id, task?.threadId).length, 0);
+          if (task)
+            assert.equal(
+              chatMessages(agent.id).filter((message) => mcpSignInEvent(message)).length,
+              0,
+              "The side thread's sign-in card stays out of the main chat.",
+            );
+
+          const resumedMark = loggedTurns().length;
+          const next = await send(
+            agent.id,
+            `Now prepare the report. ${plan(
+              {
+                steps: [
+                  ["Read the account", "completed"],
+                  ["Finish the report", "pending"],
+                ],
+                answer: "The account data is ready.",
+              },
+              {
+                steps: [
+                  ["Read the account", "completed"],
+                  ["Finish the report", "completed"],
+                ],
+                answer: "The report is complete.",
+              },
+            )}`,
+            task?.id,
+          );
+          assert.equal(await settled(next), "completed");
+          assert.deepEqual(
+            turnsSince(resumedMark).map((turn) => turn.note),
+            [false, true],
+            "An earlier turn's sign-in card does not stop a new user request.",
+          );
+          return { signInTurn: turns[0]?.turnId, resumedTurns: turnsSince(resumedMark).length, sideThread: side };
+        } finally {
+          server.closeAllConnections();
+          await new Promise<void>((done) => server.close(() => done()));
+        }
+      },
+    );
+  }
 
   await check("Stop during a continuation ends the chain, and the next message works", async () => {
     const agent = await createAgent("Stopped");

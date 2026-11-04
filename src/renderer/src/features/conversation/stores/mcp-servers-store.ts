@@ -1,4 +1,4 @@
-import { MCP_SERVERS_CAPABILITY, type McpServerConfig } from "@openbot/contracts/ipc";
+import { MCP_SERVERS_CAPABILITY, type McpServerConfig, mcpSignInEvent } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { serverCanAdminister } from "../../servers/server-capabilities";
 import { conversationRuntime } from "../conversation-runtime";
@@ -25,11 +25,23 @@ export function createMcpServersStore(deps: McpServersStoreDeps) {
   let request = 0;
   // An agent that saves a server asks for its sign-in with a card, which draws from this list. Each
   // new card is read again, or the card would wait for the settings to close.
-  const signInCards = createMemo(() =>
-    deps.props.messages
-      .flatMap((message) => (message.actionMarker?.kind === "mcp-sign-in" ? [message.actionMarker.mcpServerId] : []))
-      .join(","),
-  );
+  const signInCards = createMemo(() => {
+    const ids = deps.props.messages.flatMap((message) =>
+      message.actionMarker?.kind === "mcp-sign-in" ? [message.actionMarker.mcpServerId] : [],
+    );
+    const threads = deps.props.threads;
+    const histories = [
+      threads?.conversation,
+      ...(threads?.side.tabs.map((tab) => threads.side.thread(tab.id)?.conversation) ?? []),
+    ];
+    for (const history of histories) {
+      for (const message of history?.messages ?? []) {
+        const event = mcpSignInEvent(message);
+        if (event) ids.push(event.mcpServerId);
+      }
+    }
+    return ids.join(",");
+  });
   const source = createMemo(() => {
     const server = deps.props.server;
     // A host that predates the capability answers 404, and a host refuses its list to a member with

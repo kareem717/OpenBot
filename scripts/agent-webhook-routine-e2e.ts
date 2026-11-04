@@ -46,6 +46,7 @@ const { agentWebhookRoutineWriter, HostEventsService } = await import("../src/ma
 
 const RELAY_ORIGIN = "https://signal.example.test";
 const CALL_MARK = "WEBHOOK-CALL";
+const AGENT_BRIEF_MARK = "WEBHOOK-AGENT-BRIEF";
 
 /**
  * A Codex app-server with the methods that the service calls. A turn whose input has
@@ -59,6 +60,7 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 const LOG = ${JSON.stringify(fakeLog)};
+const session = require("node:crypto").randomUUID();
 const config = { config: { mcp_servers: {} }, layers: [{ name: { type: "user", file: "/fake/.codex/config.toml", profile: null }, version: "1", config: { mcp_servers: {} } }] };
 let buffer = "";
 let threads = 0;
@@ -86,19 +88,29 @@ const answer = (message) => {
     case "plugin/list": return write({ id: message.id, result: { marketplaces: [] } });
     case "config/read": return write({ id: message.id, result: config });
     case "config/batchWrite": return write({ id: message.id, result: {} });
-    case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + (++threads), turns: [] } } });
+    case "thread/start": return write({ id: message.id, result: { thread: { id: "thread-" + session + "-" + (++threads), turns: [] } } });
     case "thread/resume": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
     case "thread/unsubscribe": return write({ id: message.id, result: { status: "Unsubscribed" } });
     case "thread/turns/list":
     case "thread/items/list": return write({ id: message.id, result: { data: [], nextCursor: null } });
     case "thread/read": return write({ id: message.id, result: { thread: { id: params.threadId, turns: [] } } });
     case "turn/start": {
-      const turnId = "turn-" + (++turns);
+      const turnId = "turn-" + session + "-" + (++turns);
       const text = (params.input || []).map((item) => item.text || "").join("\\n");
       write({ id: message.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
       write({ method: "turn/started", params: { threadId: params.threadId, turn: { id: turnId } } });
-      const match = text.includes(${JSON.stringify(CALL_MARK)}) ? /<<ARGS([\\s\\S]*?)ARGS>>/.exec(text) : null;
-      if (!match) return setTimeout(() => finish(params.threadId, turnId), 20);
+      const calls = text.includes(${JSON.stringify(CALL_MARK)}) ? [...text.matchAll(/<<ARGS([\\s\\S]*?)ARGS>>/g)] : [];
+      const match = calls.at(-1);
+      // A branch includes earlier calls in its copied history. Execute the newest request only.
+      // A self-addressed task brief uses a separate marker, so it needs no nested ARGS delimiters.
+      let toolArgs = null;
+      if (match) {
+        try { toolArgs = JSON.parse(match[1]); }
+        catch { toolArgs = JSON.parse(match[1].replace(/\\\\"/g, '"')); }
+      } else if (text.includes(${JSON.stringify(AGENT_BRIEF_MARK)})) {
+        toolArgs = { name: "From agent brief", instruction: "Never runs.", active: false };
+      }
+      if (!toolArgs) return setTimeout(() => finish(params.threadId, turnId), 20);
       const id = "tool-" + turnId;
       waiting.set(id, { threadId: params.threadId, turnId });
       return write({
@@ -111,7 +123,7 @@ const answer = (message) => {
           namespace: "openbot",
           tool: "tool_call",
           arguments: (() => {
-            const { __tool = "create_webhook_routine", ...args } = JSON.parse(match[1]);
+            const { __tool = "create_webhook_routine", ...args } = toolArgs;
             return { name: "openbot." + __tool, arguments: args };
           })(),
         },
@@ -156,17 +168,27 @@ interface ToolLog {
 /** The arguments the fake passes to the tool. */
 /** The arguments the fake passes to the tool that `__tool` names (default `create_webhook_routine`). */
 interface WebhookToolArgs {
-  __tool?: "create_webhook_routine" | "update_webhook_routine" | "list_routines" | "delete_routine" | "test_routine";
+  __tool?:
+    | "create_webhook_routine"
+    | "update_webhook_routine"
+    | "list_routines"
+    | "delete_routine"
+    | "test_routine"
+    | "start_task";
+  title?: string;
+  brief?: string;
   routineId?: string;
   name?: string;
   instruction?: string;
   eventType?: string;
   filters?: { pointer: string; value: string }[];
+  active?: boolean;
 }
 
 /** The fields of a tool result that the check reads. The router sends them as JSON text. */
 interface WebhookToolBody {
   error?: string;
+  taskId?: string;
   deleted?: boolean;
   webhookRoutines?: { routineId: string; eventType: string | null; filters: unknown[] }[];
   eventType?: string | null;
@@ -275,9 +297,13 @@ agents.on("event", (event) => agentEvents.push(event));
  * Sends a chat message that makes the fake call the tool, and returns the tool result it logged for
  * that message's turn. A webhook run can call a tool at the same time in its own session.
  */
-async function callTool(name: string, agentId: string, args: WebhookToolArgs) {
+async function callTool(name: string, agentId: string, args: WebhookToolArgs, taskId?: string) {
   const receipt = await runCauseEffect(
-    agents.sendMessage({ agentId, text: `${CALL_MARK} <<ARGS${JSON.stringify(args)}ARGS>>` }),
+    agents.sendMessage({
+      agentId,
+      text: `${CALL_MARK} <<ARGS${JSON.stringify(args)}ARGS>>`,
+      ...(taskId ? { taskId } : {}),
+    }),
   );
   const deliveryId = receipt.deliveries[0]?.id;
   assert.ok(deliveryId, `${name}: no delivery`);
@@ -292,6 +318,23 @@ async function callTool(name: string, agentId: string, args: WebhookToolArgs) {
   const body: WebhookToolBody | null = text ? JSON.parse(text) : null;
   report.calls.push({ name, turnId: entry.turnId, success: entry.result?.success ?? null, body });
   return { entry, text, body };
+}
+
+async function expectDenied(name: string, agentId: string, entry: ToolLog, before: EventRoutine[]) {
+  const text = entry.result?.contentItems.map((item) => item.text).join("\n") ?? "";
+  const after = await Effect.runPromise(events.listRoutines({ owner: { kind: "agent", id: agentId } }));
+  report.calls.push({
+    name,
+    turnId: entry.turnId,
+    success: entry.result?.success ?? null,
+    body: text ? JSON.parse(text) : null,
+  });
+  pass(
+    `${name} cannot create a webhook routine`,
+    entry.result?.success === false && text.includes("Only a person's message"),
+    text,
+  );
+  pass(`${name} leaves the webhook routines unchanged`, JSON.stringify(after) === JSON.stringify(before));
 }
 
 try {
@@ -496,6 +539,238 @@ try {
       !afterDelete.some((item) => item.id === result.routineId),
     deleted.text,
   );
+  // A person's side thread and a branch are chats too. They must not inherit the refusal of
+  // channel or messaging execution threads, and their cards belong to the calling thread.
+  const side = await runCauseEffect(agents.startTask({ agentId: agent.id, text: "Webhook setup in a side thread." }));
+  await waitFor("side thread setup", () => {
+    const task = agents.listTasks(agent.id).tasks.find((item) => item.id === side.id);
+    return task?.state === "idle" && task.outcome === "completed";
+  });
+  const sideCreated = await callTool(
+    "create in side thread",
+    agent.id,
+    {
+      name: "Side thread webhook",
+      instruction: "Report an event.",
+      active: false,
+    },
+    side.id,
+  );
+  pass(
+    "A direct user message in a side thread creates a paused webhook",
+    sideCreated.entry.result?.success === true,
+    sideCreated.text,
+  );
+  const sideRoutineId = sideCreated.body?.routineId;
+  assert.ok(sideRoutineId);
+  const sideConversation = agents.readTask(agent.id, side.id);
+  const hasCard = (messages: typeof sideConversation.messages, action: string, turnId: string) =>
+    messages.some((message) => {
+      const event = routineConversationEvent(message);
+      return event?.routineId === sideRoutineId && event.action === action && message.turnId === turnId;
+    });
+  pass(
+    "The create card is saved in the side thread",
+    hasCard(sideConversation.messages, "created", sideCreated.entry.turnId),
+  );
+  pass(
+    "The create card is absent from the main chat",
+    !hasCard((await runCauseEffect(agents.readConversation(agent.id))).messages, "created", sideCreated.entry.turnId),
+  );
+  const branchPoint = sideConversation.messages.findLast(
+    (message) => message.author === "assistant" && message.turnId && message.status === "completed",
+  );
+  assert.ok(branchPoint);
+  const branch = await runCauseEffect(
+    agents.branchTask(
+      { agentId: agent.id, taskId: side.id, messageId: branchPoint.id, requestId: randomUUID() },
+      "local",
+    ),
+  );
+  const branchCreated = await callTool(
+    "create in branch",
+    agent.id,
+    {
+      name: "Branch webhook",
+      instruction: "Report a branch event.",
+      active: false,
+    },
+    branch.id,
+  );
+  const branchRoutineId = branchCreated.body?.routineId;
+  pass(
+    "A direct user message in a branch creates a webhook",
+    branchCreated.entry.result?.success === true && Boolean(branchRoutineId),
+    branchCreated.text,
+  );
+  assert.ok(branchRoutineId);
+  pass(
+    "The branch create card stays in the branch",
+    agents
+      .readTask(agent.id, branch.id)
+      .messages.some(
+        (message) =>
+          routineConversationEvent(message)?.routineId === branchRoutineId &&
+          message.turnId === branchCreated.entry.turnId,
+      ) &&
+      !(await runCauseEffect(agents.readConversation(agent.id))).messages.some(
+        (message) => routineConversationEvent(message)?.routineId === branchRoutineId,
+      ) &&
+      !agents
+        .readTask(agent.id, side.id)
+        .messages.some((message) => routineConversationEvent(message)?.routineId === branchRoutineId),
+  );
+  const branchUpdated = await callTool(
+    "update in branch",
+    agent.id,
+    {
+      __tool: "update_webhook_routine",
+      routineId: sideRoutineId,
+      eventType: "build.failed",
+      active: false,
+    },
+    branch.id,
+  );
+  pass(
+    "A direct user message in a branch updates a webhook",
+    branchUpdated.entry.result?.success === true,
+    branchUpdated.text,
+  );
+  pass(
+    "The update card is saved only in the branch",
+    hasCard(agents.readTask(agent.id, branch.id).messages, "updated", branchUpdated.entry.turnId) &&
+      !hasCard(
+        (await runCauseEffect(agents.readConversation(agent.id))).messages,
+        "updated",
+        branchUpdated.entry.turnId,
+      ) &&
+      !hasCard(agents.readTask(agent.id, side.id).messages, "updated", branchUpdated.entry.turnId),
+  );
+  pass(
+    "The side thread routine stays paused",
+    (await Effect.runPromise(events.listRoutines({ owner }))).find((item) => item.id === sideRoutineId)?.active ===
+      false,
+  );
+  const branchDeleted = await callTool(
+    "delete in branch",
+    agent.id,
+    { __tool: "delete_routine", routineId: sideRoutineId },
+    branch.id,
+  );
+  pass(
+    "A direct user message in a branch deletes its webhook",
+    branchDeleted.entry.result?.success === true &&
+      !(await Effect.runPromise(events.listRoutines({ owner }))).some((item) => item.id === sideRoutineId),
+    branchDeleted.text,
+  );
+  const branchOwnDeleted = await callTool(
+    "delete branch-created webhook",
+    agent.id,
+    { __tool: "delete_routine", routineId: branchRoutineId },
+    branch.id,
+  );
+  pass(
+    "The webhook created in the branch can be deleted there",
+    branchOwnDeleted.entry.result?.success === true &&
+      !(await Effect.runPromise(events.listRoutines({ owner }))).some((item) => item.id === branchRoutineId),
+    branchOwnDeleted.text,
+  );
+
+  // A task started by the agent has an agent-authored brief, even when its parent turn is human.
+  const beforeBrief = await Effect.runPromise(events.listRoutines({ owner }));
+  const briefLogStart = toolLogs().length;
+  const started = await callTool("start agent task", agent.id, {
+    __tool: "start_task",
+    title: "Untrusted task brief",
+    brief: AGENT_BRIEF_MARK,
+  });
+  pass(
+    "The agent starts a task through its tool",
+    started.entry.result?.success === true && Boolean(started.body?.taskId),
+    started.text,
+  );
+  assert.ok(started.body?.taskId);
+  const briefResult = await waitFor("agent task brief tool result", () =>
+    toolLogs()
+      .slice(briefLogStart)
+      .find((entry) => entry.turnId !== started.entry.turnId),
+  );
+  await waitFor("agent task brief end", () => {
+    const task = agents.listTasks(agent.id).tasks.find((item) => item.id === started.body?.taskId);
+    return task?.state === "idle" && task.outcome === "completed";
+  });
+  await expectDenied("An agent-started task brief", agent.id, briefResult, beforeBrief);
+
+  // Channel messages arrive as sender.kind=user too, but their execution thread stays untrusted.
+  const channelId = randomUUID();
+  const person = { id: "local", name: "Alex" };
+  await runCauseEffect(
+    agents.channels.command(
+      {
+        type: "save",
+        operationId: randomUUID(),
+        channelId,
+        draft: {
+          name: "Webhook boundary",
+          title: "",
+          instructions: "Answer the person.",
+          members: [{ agentId: agent.id }],
+          leadAgentId: agent.id,
+        },
+      },
+      person,
+    ),
+  );
+  const beforeChannel = await Effect.runPromise(events.listRoutines({ owner }));
+  const channelLogStart = toolLogs().length;
+  await runCauseEffect(
+    agents.channels.command(
+      {
+        type: "send",
+        operationId: randomUUID(),
+        channelId,
+        text: `${CALL_MARK} <<ARGS${JSON.stringify({ name: "From channel", instruction: "Never runs.", active: false })}ARGS>>`,
+        recipientAgentId: agent.id,
+        replyToMessageId: null,
+        attachmentDraftIds: [],
+      },
+      person,
+    ),
+  );
+  const channelResult = await waitFor("channel webhook tool result", () => toolLogs()[channelLogStart]);
+  await waitFor("channel task end", () =>
+    agents.channels.store.tasks(channelId).every((task) => !["queued", "running", "waiting"].includes(task.state)),
+  );
+  await expectDenied("A person's channel message", agent.id, channelResult, beforeChannel);
+
+  // Messaging uses the same human-shaped sender but a separate execution thread as well.
+  const connection = agents.messaging.store.ensureConnection("slack", "webhook-check", "Webhook check");
+  const beforeMessaging = await Effect.runPromise(events.listRoutines({ owner }));
+  const received = await runCauseEffect(
+    agents.messaging.receive({
+      connectionId: connection.connectionId,
+      agentId: agent.id,
+      platformChannelId: "channel-1",
+      threadKey: "thread-1",
+      isDirect: true,
+      title: "Direct message",
+      sourcePaths: [],
+      idempotencyKey: randomUUID(),
+      text: `${CALL_MARK} <<ARGS${JSON.stringify({ name: "From messaging", instruction: "Never runs.", active: false })}ARGS>>`,
+      origin: { authorId: "external-person", authorName: "Alex", platformMessageId: "message-1" },
+    }),
+  );
+  assert.equal(received.status, "queued");
+  assert.ok(received.status === "queued");
+  const messagingTurnId = await waitFor(
+    "messaging turn",
+    () => mailbox.getDelivery(received.deliveryId)?.delivery.turnId,
+  );
+  const messagingResult = await waitFor("messaging webhook tool result", () =>
+    toolLogs().find((entry) => entry.turnId === messagingTurnId),
+  );
+  await waitFor("messaging turn end", () => mailbox.getDelivery(received.deliveryId)?.delivery.status === "completed");
+  await expectDenied("A person's messaging message", agent.id, messagingResult, beforeMessaging);
   report.passed = true;
 } catch (error) {
   report.error = error instanceof Error ? (error.stack ?? error.message) : String(error);

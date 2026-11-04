@@ -20,6 +20,7 @@ import { ConversationQuestionPrompt } from "./ConversationQuestionPrompt";
 import { latestVisibleAgentMessageId } from "./conversation-read-state";
 import { useConversationViewScope } from "./conversation-scope";
 import type { ConversationThreads } from "./conversation-types";
+import { createThreadActionCards } from "./thread-action-cards";
 import { createTurnSteps } from "./turn-steps";
 
 /** A thread takes files only from this computer, which reads every supported type. */
@@ -94,6 +95,11 @@ export function ConversationThread() {
     },
     [],
     { key: "id" },
+  );
+  const ActionCard = createThreadActionCards(
+    () => messages,
+    (body) => props.threads?.onSend(body, [], null) ?? Promise.resolve(false),
+    () => props.threads?.open?.id,
   );
   // The thread gets only the latest progress line of a running turn, so its steps are the thoughts,
   // and after the turn the tool steps of its stored trace.
@@ -249,6 +255,7 @@ export function ConversationThread() {
             agent={current().agent}
             agents={props.agents}
             messages={messages}
+            actionMarker={(message) => <ActionCard message={message} />}
             skills={installedSkills()}
             skillsLoadFailed={installedSkillsLoadFailed()}
             mcpServers={mcpServers()}

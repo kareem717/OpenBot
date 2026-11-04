@@ -665,10 +665,11 @@ export class RoutineScheduler implements RoutineDueSource {
         ...webhookToolTrigger(args),
         ...(limitPolicy === undefined ? {} : { limitPolicy }),
       });
-      // Only the caller's own chat shows the card with the secret: the card needs the turn.
-      const turnId = agentId === senderAgentId ? params.turnId : undefined;
-      const recorded = this.#recordWebhookEvent(agentId, "created", routine, turnId);
-      return openBotToolResult(webhookRoutineToolResult(routine, recorded && turnId !== undefined));
+      // A card stays with its calling turn, including a side thread. A cross-agent change has no
+      // caller turn in the target's chat, so its secret is available in the routine settings only.
+      const options = this.#toolMutationOptions(agentId, senderAgentId, params);
+      const recorded = this.#recordWebhookEvent(agentId, "created", routine, options);
+      return openBotToolResult(webhookRoutineToolResult(routine, recorded && options.turnId !== undefined));
     }
 
     if (params.tool === UPDATE_WEBHOOK_ROUTINE_TOOL) {
@@ -714,9 +715,9 @@ export class RoutineScheduler implements RoutineDueSource {
         ...webhookToolTrigger(args, current.trigger),
         ...(limitPolicy === undefined ? {} : { limitPolicy }),
       });
-      const turnId = agentId === senderAgentId ? params.turnId : undefined;
-      const recorded = this.#recordWebhookEvent(agentId, "updated", routine, turnId);
-      return openBotToolResult(webhookRoutineToolResult(routine, recorded && turnId !== undefined, true));
+      const options = this.#toolMutationOptions(agentId, senderAgentId, params);
+      const recorded = this.#recordWebhookEvent(agentId, "updated", routine, options);
+      return openBotToolResult(webhookRoutineToolResult(routine, recorded && options.turnId !== undefined, true));
     }
 
     if (params.tool === "update_routine") {
@@ -1235,13 +1236,14 @@ export class RoutineScheduler implements RoutineDueSource {
   #webhookTool(senderAgentId: string, threadId: string, turnId: string): WebhookRoutineWriter {
     const webhooks = this.#webhookRoutines?.();
     if (!webhooks) throw new RoutineInputError("This server cannot create webhook routines.");
-    // Every delivery of the turn: a message steered into a routine run shares the run's turn. Only
-    // the agent's own chat: a channel task and a Slack or Telegram message also arrive as `user`.
+    // Every delivery of the turn: a message steered into a routine run shares the run's turn. A
+    // registered side thread is also the person's chat; channels and messaging threads are not.
     const deliveries = this.#mailbox.findDeliveriesByTurn(senderAgentId, turnId);
+    const publicThreadId = this.#conversation.publicThreadId(senderAgentId, threadId);
     const requested =
       deliveries.length > 0 &&
       deliveries.every(({ delivery }) => delivery.sender.kind === "user") &&
-      !this.#conversation.isExecutionThread(this.#conversation.publicThreadId(senderAgentId, threadId));
+      (!this.#conversation.isExecutionThread(publicThreadId) || this.#conversation.isTaskThread(publicThreadId));
     if (!requested) {
       throw new RoutineInputError(
         "Only a person's message can create, change or delete a webhook routine. Ask the user to request it in the chat.",
@@ -1270,7 +1272,7 @@ export class RoutineScheduler implements RoutineDueSource {
     agentId: string,
     action: "created" | "updated",
     routine: EventRoutine,
-    turnId: string | undefined,
+    options: RoutineMutationOptions,
   ): boolean {
     try {
       this.#mutateWithConversation(
@@ -1278,7 +1280,9 @@ export class RoutineScheduler implements RoutineDueSource {
         action,
         () => routine,
         (saved) => saved,
-        turnId,
+        options.turnId,
+        undefined,
+        options.sideThreadId,
       );
       return true;
     } catch (error) {

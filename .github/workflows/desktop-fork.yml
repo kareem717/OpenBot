@@ -44,6 +44,8 @@ jobs:
         run: |
           bun scripts/unlimited-capacity-e2e.ts
           bun scripts/unlimited-memory-storage-e2e.ts
+          bun scripts/agent-webhook-routine-e2e.ts
+          bun scripts/plan-continuation-e2e.ts
           bun scripts/desktop-feed-e2e.ts
           bash -n scripts/install-server.sh scripts/hosting/openbot-hosted-update
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -53,6 +55,8 @@ jobs:
           path: |
             .openbot-build/unlimited-capacity-e2e/report.json
             .openbot-build/unlimited-memory-storage-e2e/report.json
+            .openbot-build/agent-webhook-routine-e2e/report.json
+            .openbot-build/plan-continuation-e2e/report.json
             .openbot-build/desktop-feed-e2e.json
           if-no-files-found: ignore
 
