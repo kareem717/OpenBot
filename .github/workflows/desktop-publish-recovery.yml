@@ -1,0 +1,104 @@
+name: Publish verified desktop recovery
+
+on:
+  push:
+    branches: [codex/remove-capacity-limits]
+    paths: [.github/workflows/desktop-publish-recovery.yml]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: desktop-fork
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  publish:
+    if: github.repository == 'kareem717/OpenBot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 1bf2791298eac76775f0a37f38458df4675d5201
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun
+        with:
+          install: ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: desktop-linux-x64
+          path: .openbot-build/release-0.60.1/linux
+          run-id: 41741202987
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: desktop-macos-arm64
+          path: .openbot-build/release-0.60.1/macos
+          run-id: 41744795728
+          github-token: ${{ github.token }}
+      - name: Check native build results and publish immutable packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repository=kareem717/OpenBot
+          tag=desktop-v0.60.1
+          source_commit=76cf7e68c27538b7e82cd87ac79fb634ac4a1d8f
+          assets=.openbot-build/release-0.60.1
+          publication=.openbot-build/publication-0.60.1
+          mkdir -p "$publication"
+          test "$(gh api "repos/$repository/commits/$tag" --jq .sha)" = "$source_commit"
+          test "$(gh api "repos/$repository/actions/jobs/126282862491" --jq .conclusion)" = success
+          test "$(gh api "repos/$repository/actions/jobs/126283205913" --jq .conclusion)" = success
+          test "$(gh api "repos/$repository/actions/jobs/126294972448" --jq .conclusion)" = success
+          bun scripts/prepare-desktop-update-manifest.ts "$assets/linux/latest-linux.yml" "$assets/macos/latest-mac.yml"
+          bun scripts/check-desktop-feed-promotion.ts "$assets/linux/latest-linux.yml"
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          root=Path('.openbot-build/release-0.60.1');files=sorted(p for p in root.glob('*/*') if p.is_file());assert len(files)==6
+          assert len({p.name for p in files})==len(files)
+          with Path('.openbot-build/publication-0.60.1/SHA256SUMS-desktop.txt').open('w') as output:
+           for p in files:
+            digest_hash=hashlib.sha256()
+            with p.open('rb') as f:
+             for chunk in iter(lambda:f.read(8*1024*1024),b''):digest_hash.update(chunk)
+            digest=digest_hash.hexdigest()
+            output.write(digest+'  '+p.name+'\n')
+          PY
+          cat > "$publication/release-notes.txt" <<'NOTES'
+          Desktop fork 0.60.1 removes the total connector, installed-skill, and saved-memory limits. It also includes the optional dedicated Tailscale egress setup for hosted OpenBot.
+
+          Source: tag `desktop-v0.60.1`, commit `76cf7e68c27538b7e82cd87ac79fb634ac4a1d8f`.
+
+          Verified Linux package and real-service capacity checks:
+          https://github.com/kareem717/OpenBot/actions/runs/41741202987
+
+          Verified macOS ARM64 package from the same tag:
+          https://github.com/kareem717/OpenBot/actions/runs/41744795728
+          The original Mac job could not acquire a runner. Release manifest tooling was corrected after the tagged application build (commit `1bf2791298eac76775f0a37f38458df4675d5201`); the packaged application source remains the tagged commit. The recovery job checks the exact source commit and runs the same package verification on a standard macOS 26 Apple silicon runner.
+
+          The macOS client is for manual installation. It has no Developer ID signature or notarization and is not offered as an automatic update. Linux updates use the separate `desktop-latest` feed. The repository's default branch is a different application.
+          NOTES
+          if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
+            mkdir -p "$publication/existing"
+            gh release download "$tag" --repo "$repository" --pattern SHA256SUMS-desktop.txt --dir "$publication/existing"
+            cmp "$publication/SHA256SUMS-desktop.txt" "$publication/existing/SHA256SUMS-desktop.txt"
+          else
+            gh release create "$tag" "$assets"/linux/* "$assets"/macos/* "$publication/SHA256SUMS-desktop.txt" \
+              --repo "$repository" --verify-tag --latest=false --title "Desktop 0.60.1" --notes-file "$publication/release-notes.txt"
+          fi
+          if ! gh release view desktop-latest --repo "$repository" >/dev/null 2>&1; then
+            gh release create desktop-latest --repo "$repository" --target "$source_commit" \
+              --latest=false --title "Desktop update feed" --notes "Moving Linux feed for the desktop branch. Payloads are in immutable desktop-v releases."
+          fi
+          bun scripts/check-desktop-feed-promotion.ts "$assets/linux/latest-linux.yml"
+          gh release upload desktop-latest "$assets/linux/latest-linux.yml" --repo "$repository" --clobber
+          gh release edit desktop-latest --repo "$repository" --latest=false
