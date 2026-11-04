@@ -34,6 +34,16 @@ declare global {
 }
 const executable = process.argv[2];
 assert.ok(executable, "Pass the executable of the desktop package to verify.");
+// A Linux runner has neither a desktop browser nor a session keyring. Keep both in this fixture;
+// the account and MCP stores still use the packaged app's real encryption and OAuth paths.
+if (process.platform === "linux" && process.env.OPENBOT_CARD_E2E_PRIVATE_DBUS !== "1") {
+  const session = spawn("dbus-run-session", ["--", process.execPath, import.meta.filename, ...process.argv.slice(2)], {
+    stdio: "inherit",
+    env: { ...process.env, OPENBOT_CARD_E2E_PRIVATE_DBUS: "1" },
+  });
+  const [status] = await once(session, "exit");
+  process.exit(typeof status === "number" ? status : 1);
+}
 const out = resolve(import.meta.dirname, "../.openbot-build/side-thread-action-cards-e2e");
 await mkdir(out, { recursive: true });
 const root = await mkdtemp(join(tmpdir(), "openbot-action-cards-"));
@@ -60,15 +70,22 @@ const report: {
   failures: string[];
   pageErrors: string[];
   oauthRequests: number;
+  discoveryRequests: number;
+  registrations: number;
+  tokenRequests: number;
 } = {
   passed: false,
   checks: [],
   failures: [],
   pageErrors: [],
   oauthRequests: 0,
+  discoveryRequests: 0,
+  registrations: 0,
+  tokenRequests: 0,
 };
 let origin = "";
 let child: ChildProcess | undefined;
+let keyring: ChildProcess | undefined;
 let browser: Browser | undefined;
 
 async function body(request: IncomingMessage): Promise<string> {
@@ -90,8 +107,10 @@ const server = createServer((request, response) => {
     if (url.pathname === "/v2/remote/hosts/" || url.pathname === "/v2/remote/sessions/")
       return json(response, 200, { hosts: [], sessions: [] });
     if (url.pathname === "/health/live") return json(response, 200, { ok: true });
-    if (url.pathname.startsWith("/.well-known/oauth-protected-resource"))
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+      report.discoveryRequests += 1;
       return json(response, 200, { resource: `${origin}/mcp`, authorization_servers: [origin] });
+    }
     if (
       url.pathname === "/.well-known/oauth-authorization-server" ||
       url.pathname === "/.well-known/openid-configuration"
@@ -107,6 +126,7 @@ const server = createServer((request, response) => {
         code_challenge_methods_supported: ["S256"],
       });
     if (url.pathname === "/register") {
+      report.registrations += 1;
       const input: { redirect_uris: string[] } = JSON.parse(await body(request));
       return json(response, 201, {
         client_id: "local-fixture-client",
@@ -128,8 +148,10 @@ const server = createServer((request, response) => {
       response.writeHead(302, { location: target.toString() }).end();
       return;
     }
-    if (url.pathname === "/token")
+    if (url.pathname === "/token") {
+      report.tokenRequests += 1;
       return json(response, 200, { access_token: "local-fixture-access", token_type: "Bearer", expires_in: 3600 });
+    }
     if (url.pathname !== "/mcp") return json(response, 404, { error: "No fixture route." });
     if (request.headers.authorization !== "Bearer local-fixture-access")
       return json(
@@ -282,28 +304,105 @@ function check(name: string) {
   report.checks.push(name);
   process.stdout.write(`PASS ${name}\n`);
 }
-async function stopChild() {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  const exit = once(child, "exit");
-  child.kill("SIGTERM");
+async function stopChild(process: ChildProcess | undefined) {
+  if (!process || process.exitCode !== null || process.signalCode !== null) return;
+  const exit = once(process, "exit");
+  process.kill("SIGTERM");
   const ended = await Promise.race([exit.then(() => true), delay(10_000).then(() => false)]);
   if (!ended) {
-    child.kill("SIGKILL");
+    process.kill("SIGKILL");
     await exit;
   }
 }
+
+async function linuxDesktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+  if (process.platform !== "linux") return process.env;
+  assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS, "Start the Linux fixture in its private D-Bus session.");
+  const environment = {
+    ...process.env,
+    XDG_DATA_HOME: join(root, "desktop-data"),
+    XDG_CONFIG_HOME: join(root, "desktop-config"),
+    XDG_CACHE_HOME: join(root, "desktop-cache"),
+    XDG_RUNTIME_DIR: join(root, "desktop-runtime"),
+  };
+  const control = join(environment.XDG_RUNTIME_DIR, "keyring");
+  const applications = join(environment.XDG_DATA_HOME, "applications");
+  const bin = join(root, "bin");
+  for (const directory of [applications, environment.XDG_CONFIG_HOME, environment.XDG_CACHE_HOME, control, bin])
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+  keyring = spawn(
+    "gnome-keyring-daemon",
+    ["--foreground", "--unlock", "--components=secrets", `--control-directory=${control}`],
+    {
+      env: environment,
+      stdio: ["pipe", "ignore", "ignore"],
+    },
+  );
+  // This password protects only disposable mock OAuth records in this fixture's temporary data dir.
+  keyring.stdin?.end("openbot-local-fixture\n");
+  await until(
+    "the private Secret Service starts",
+    () => {
+      const probe = spawn(
+        "dbus-send",
+        [
+          "--session",
+          "--print-reply",
+          "--dest=org.freedesktop.DBus",
+          "/org/freedesktop/DBus",
+          "org.freedesktop.DBus.GetNameOwner",
+          "string:org.freedesktop.secrets",
+        ],
+        { env: environment, stdio: "ignore" },
+      );
+      return once(probe, "exit").then(([status]) => status === 0);
+    },
+    Boolean,
+  );
+
+  const openerSource = join(root, "local-browser.cjs");
+  await writeFile(
+    openerSource,
+    `
+const target = new URL(process.argv[2]);
+if (target.origin !== ${JSON.stringify(origin)} || target.pathname !== '/authorize') process.exit(1);
+(async () => {
+  const response = await fetch(target, { redirect: 'manual' });
+  if (response.status !== 302) throw new Error('The local authorization did not redirect.');
+  const callback = new URL(response.headers.get('location'));
+  if (callback.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(callback.hostname)) throw new Error('The callback is not local.');
+  const completed = await fetch(callback, { redirect: 'error' });
+  if (!completed.ok) throw new Error('The local callback failed.');
+  await completed.arrayBuffer();
+})().catch(() => { process.exitCode = 1; });
+`,
+  );
+  const opener = join(bin, "xdg-open");
+  await writeFile(opener, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(openerSource)} "$@"\n`, { mode: 0o755 });
+  await writeFile(
+    join(applications, "openbot-local-fixture.desktop"),
+    `[Desktop Entry]\nType=Application\nName=OpenBot local OAuth fixture\nExec=${opener} %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\nNoDisplay=true\n`,
+  );
+  await writeFile(
+    join(environment.XDG_CONFIG_HOME, "mimeapps.list"),
+    "[Default Applications]\nx-scheme-handler/http=openbot-local-fixture.desktop\nx-scheme-handler/https=openbot-local-fixture.desktop\n",
+  );
+  return { ...environment, PATH: `${bin}:${process.env.PATH ?? ""}`, BROWSER: opener };
+}
+
 try {
+  const desktopEnvironment = await linuxDesktopEnvironment();
   child = spawn(
     resolve(executable),
     [
       `--user-data-dir=${userData}`,
       "--remote-debugging-port=0",
       "--remote-debugging-address=127.0.0.1",
-      ...(process.platform === "linux" ? ["--password-store=basic"] : []),
+      ...(process.platform === "linux" ? ["--password-store=gnome-libsecret"] : []),
     ],
     {
       stdio: "ignore",
-      env: { ...process.env, OPENBOT_AUTH_API_URL: origin, OPENBOT_CODEX_PATH: fakeCodex },
+      env: { ...desktopEnvironment, OPENBOT_AUTH_API_URL: origin, OPENBOT_CODEX_PATH: fakeCodex },
     },
   );
   const port = await until(
@@ -423,10 +522,16 @@ try {
   report.passed = true;
 } catch (error) {
   report.failures.push(error instanceof Error ? error.message : "The action-card check failed.");
+  const page = browser
+    ?.contexts()
+    .flatMap((context) => context.pages())
+    .find((candidate) => candidate.url().includes("index.html"));
+  await page?.screenshot({ path: join(out, "failure.png") }).catch(() => undefined);
   process.exitCode = 1;
 } finally {
   await browser?.close().catch(() => undefined);
-  await stopChild();
+  await stopChild(child);
+  await stopChild(keyring);
   server.closeAllConnections();
   await new Promise<void>((done) => server.close(() => done()));
   await writeFile(join(out, "report.json"), `${JSON.stringify(report, null, 2)}\n`);

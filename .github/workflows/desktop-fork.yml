@@ -73,7 +73,7 @@ jobs:
       - name: Install virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes xvfb
+          sudo apt-get install --no-install-recommends --yes xvfb dbus gnome-keyring
       - name: Build server package
         env:
           GITHUB_TOKEN: ${{ github.token }}
