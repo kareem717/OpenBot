@@ -6,6 +6,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.5] - 2026-11-04
+
+### Fixed
+
+- Stop showing the development notice for MCP tool search as a provider error. Keep tool search enabled and report actual provider failures.
+
 ## [0.60.4] - 2026-11-04
 
 ### Fixed
