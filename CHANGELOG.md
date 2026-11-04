@@ -6,6 +6,13 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.6] - 2026-11-04
+
+### Fixed
+
+- Keep the Vault available while Server settings refreshes a connected host. Previously, opening the Vault during that refresh could incorrectly ask you to update the host.
+- Find saved database credentials and connection strings when agents search for them. Explain how to use their private files before asking for a credential that is already saved.
+
 ## [0.60.5] - 2026-11-04
 
 ### Fixed
