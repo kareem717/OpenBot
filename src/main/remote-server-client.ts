@@ -42,6 +42,7 @@ import { decodeRemoteDesktopCapabilities } from "./remote-device-decoding";
 import type { ResponseDecoder } from "./remote-host-decoding";
 import {
   assumedCompatibility,
+  checkingCompatibility,
   LOCAL_TEAM_PROTOCOL,
   negotiatedCompatibility,
   webRtcCompatibility,
@@ -389,7 +390,13 @@ export class RemoteServerClient {
   ): Effect.fn.Return<void, RemoteWorkflowError> {
     if (!this.#transport) return;
     yield* this.ensureCompatibility(server, true).pipe(
-      Effect.tapError(({ cause }) => Effect.sync(() => this.#connections.reportError(server.id, cause))),
+      Effect.tapError(({ cause }) =>
+        Effect.sync(() => {
+          // A failed refresh cannot keep the old capability list active.
+          this.#connections.setCompatibility(server.id, checkingCompatibility(this.#appVersion));
+          this.#connections.reportError(server.id, cause);
+        }),
+      ),
     );
   }).bind(this);
 

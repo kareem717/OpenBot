@@ -1706,8 +1706,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const server = yield* remoteDecode(() => this.#store.require(serverId));
       if (server.transport === "webrtc-v2" && transport) {
         yield* this.#syncWebRtcHosts();
-        this.#connections.clearCompatibility(serverId);
-        yield* this.#client.ensureCompatibility(server, true);
+        // The forced read replaces the confirmed capabilities when it finishes. Clearing them
+        // first makes a concurrent Vault request report this supported host as too old.
+        yield* this.#client.refreshWebRtcCompatibility(server);
         this.#connections.clearIssue(serverId);
         this.#emitChanged();
         return yield* remoteDecode(() => requiredServerSummary(this.list(), serverId));

@@ -9,12 +9,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { decodeHostVaultState } from "@openbot/contracts/ipc";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
+import { VAULT_V2_ROUTES } from "@openbot/contracts/team-protocol/vault-v2";
+import { translateFor } from "@openbot/i18n";
 import { plugin } from "bun";
 import { Effect } from "effect";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { RemoteWorkflowError } from "../src/main/remote-service-effects";
 
+type IpcListener = (event: { senderFrame: { url: string } }, payload: unknown) => unknown;
+const ipcHandlers = new Map<string, IpcListener>();
 plugin({
   name: "remote-retry-electron-boundary",
   setup(build) {
@@ -37,7 +42,11 @@ plugin({
         clipboard: {},
         desktopCapturer: {},
         dialog: {},
-        ipcMain: { handle: () => undefined, removeHandler: () => undefined, on: () => undefined },
+        ipcMain: {
+          handle: (name: string, listener: IpcListener) => ipcHandlers.set(name, listener),
+          removeHandler: (name: string) => ipcHandlers.delete(name),
+          on: () => undefined,
+        },
         nativeImage: {},
         net: {},
         powerMonitor: { on: () => undefined },
@@ -54,18 +63,48 @@ plugin({
 const { RemoteServerManager } = await import("../src/main/remote-server-manager");
 const { TeamWebRtcClientTransport } = await import("../src/main/team-webrtc-client-transport");
 const { TeamWebRtcBridge } = await import("../src/main/team-webrtc-bridge");
+const { vaultIpcHandlers } = await import("../src/main/ipc/vault-handlers");
+const { VaultService } = await import("../src/main/vault-service");
+const { VaultStore } = await import("../src/main/vault-store");
 const root = await mkdtemp(join(tmpdir(), "openbot-remote-retry-"));
 const out = resolve(import.meta.dirname, "../.openbot-build/remote-server-retry-e2e");
 const hostId = randomUUID();
-let hostCapabilities = ["events-v1", "mcp-servers-v1", "agent-tasks-v1"];
+let hostCapabilities = ["events-v1", "mcp-servers-v1", "agent-tasks-v1", "vault-v1", "vault-v2"];
 let malformed = false;
 let reads = 0;
-const host = createServer((request, response) => {
+let vaultReads = 0;
+let heldRead: {
+  entered: ReturnType<typeof Promise.withResolvers<void>>;
+  release: ReturnType<typeof Promise.withResolvers<void>>;
+} | null = null;
+const cipher = { encrypt: (value: string) => Buffer.from(value), decrypt: (value: Buffer) => value.toString() };
+const vault = new VaultService({ store: new VaultStore(join(root, "vault.json"), cipher), canPersist: () => true });
+await runCauseEffect(vault.load());
+await runCauseEffect(
+  vault.save({
+    kind: "apiKey",
+    id: null,
+    name: "FIXTURE_API_KEY",
+    notes: "Synthetic fixture",
+    key: "fixture-private-key-value",
+  }),
+);
+const host = createServer(async (request, response) => {
+  if (request.url === VAULT_V2_ROUTES.list) {
+    vaultReads += 1;
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(vault.state()));
+    return;
+  }
   if (request.url !== "/v1/compatibility") {
     response.writeHead(404).end();
     return;
   }
   reads += 1;
+  if (heldRead) {
+    const pending = heldRead;
+    pending.entered.resolve();
+    await pending.release.promise;
+  }
   response.writeHead(200, { "content-type": "application/json" }).end(
     JSON.stringify(
       malformed
@@ -108,7 +147,19 @@ class ConnectedTransport extends TeamWebRtcClientTransport {
 }
 const transport = new ConnectedTransport({
   bridge: new TeamWebRtcBridge(),
-  listHosts: unused,
+  listHosts: () =>
+    Effect.succeed([
+      {
+        hostId,
+        name: "Retry fixture",
+        logoKey: null,
+        devicePublicKey: null,
+        keyHandovers: [],
+        authEpoch: 1,
+        membershipId: "fixture-member",
+        role: "owner" as const,
+      },
+    ]),
   startSession: unused,
   issueTicket: unused,
   endSession: unused,
@@ -188,6 +239,19 @@ const pass = (name: string) => {
   report.checks.push(name);
   process.stdout.write(`PASS ${name}\n`);
 };
+vaultIpcHandlers({
+  vault,
+  getMainWindow: () => null,
+  translate: translateFor("en"),
+  remoteServers: manager,
+}).vault.hostList("fixture:vault-list");
+const vaultList = async () => {
+  const call = ipcHandlers.get("fixture:vault-list");
+  assert.ok(call);
+  return decodeHostVaultState(
+    await call({ senderFrame: { url: "openbot-app://app/index.html" } }, { serverId: hostId, payload: null }),
+  );
+};
 try {
   await runCauseEffect(manager.initialize());
   await runCauseEffect(manager.awaitHostDirectory());
@@ -211,6 +275,41 @@ try {
   assert.ok(manager.supportsCapability(hostId, "routine-recovery-v1"));
   assert.ok((summary().connectionSequence ?? 0) > sequence);
   pass("Another same-session retry refreshes newly advertised features and advances the UI reload key");
+  const originalItems = (await vaultList()).items;
+  const hold = { entered: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+  heldRead = hold;
+  const refresh = runCauseEffect(manager.refreshIdentity(hostId));
+  try {
+    await hold.entered.promise;
+    const listed = await vaultList();
+    assert.deepEqual(listed.items, originalItems);
+    assert.ok(!JSON.stringify(listed).includes("fixture-private-key-value"));
+    assert.ok(manager.supportsCapability(hostId, "vault-v2"));
+    pass("Vault IPC lists the same secret-free items while Server settings refreshes host identity");
+  } finally {
+    heldRead = null;
+    hold.release.resolve();
+    await refresh;
+  }
+  malformed = true;
+  await assert.rejects(runCauseEffect(manager.refreshIdentity(hostId)));
+  assert.equal(summary().issue?.code, "protocol_error");
+  assert.equal(manager.supportsCapability(hostId, "vault-v2"), false);
+  pass("A malformed identity refresh still invalidates capabilities and reports the protocol error");
+  malformed = false;
+  await runCauseEffect(manager.refreshIdentity(hostId));
+  assert.deepEqual((await vaultList()).items, originalItems);
+  pass("A valid identity refresh restores Vault access after a malformed reply");
+  const beforeUnsupported = vaultReads;
+  hostCapabilities = hostCapabilities.filter((capability) => !capability.startsWith("vault-"));
+  await runCauseEffect(manager.refreshIdentity(hostId));
+  await assert.rejects(vaultList(), /cannot open its Vault/);
+  assert.equal(vaultReads, beforeUnsupported, "A host that withdraws Vault support receives no Vault request.");
+  pass("A completed identity refresh still removes Vault support when the host withdraws it");
+  hostCapabilities = [...hostCapabilities, "vault-v1", "vault-v2"];
+  await runCauseEffect(manager.refreshIdentity(hostId));
+  assert.deepEqual((await vaultList()).items, originalItems);
+  pass("Vault access returns when the same host advertises it again, with saved items intact");
   malformed = true;
   await assert.rejects(runCauseEffect(manager.retryConnection(hostId)));
   assert.equal(summary().issue?.code, "protocol_error");
@@ -228,6 +327,7 @@ try {
   report.error = error instanceof Error ? error.message : "The retry regression failed.";
   process.exitCode = 1;
 } finally {
+  heldRead?.release.resolve();
   await runCauseEffect(manager.stop());
   host.closeAllConnections();
   await new Promise<void>((done) => host.close(() => done()));
