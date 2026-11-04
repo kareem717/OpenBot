@@ -21,7 +21,8 @@ versioned download address, for example
 The publisher uploads the immutable packages first. It advances the moving manifest only after
 both native builds pass and the package hashes match. A failed or interrupted download therefore
 keeps referring to the same immutable package. A feed promotion rejects an older version or changed
-contents for a version already published. Both kinds of desktop release use `--latest=false`.
+contents for a version already published. Both kinds of desktop release use `--prerelease --latest=false`. Their numeric app versions
+remain normal update versions because the desktop reads the explicit generic feed.
 
 ## Build and check
 
@@ -105,3 +106,8 @@ only after both native package checks pass and their source commit matches.
 Record both run links in the release notes, verify all hashes, and use the same
 immutable-payload and monotonic-feed checks as the normal publisher. The normal
 workflow also uses macOS 26 for later releases.
+
+The initial `desktop-latest` tag is bootstrapped with the maintainer's GitHub access.
+A workflow token can upload a release for an existing tag but can lack permission
+to create this first tag from a branch that changes workflow files. Later releases
+reuse that feed tag and replace only its Linux manifest.

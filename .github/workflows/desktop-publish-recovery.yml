@@ -93,12 +93,12 @@ jobs:
             cmp "$publication/SHA256SUMS-desktop.txt" "$publication/existing/SHA256SUMS-desktop.txt"
           else
             gh release create "$tag" "$assets"/linux/* "$assets"/macos/* "$publication/SHA256SUMS-desktop.txt" \
-              --repo "$repository" --verify-tag --latest=false --title "Desktop 0.60.1" --notes-file "$publication/release-notes.txt"
+              --repo "$repository" --verify-tag --prerelease --latest=false --title "Desktop 0.60.1" --notes-file "$publication/release-notes.txt"
           fi
           if ! gh release view desktop-latest --repo "$repository" >/dev/null 2>&1; then
             gh release create desktop-latest --repo "$repository" --target "$source_commit" \
-              --latest=false --title "Desktop update feed" --notes "Moving Linux feed for the desktop branch. Payloads are in immutable desktop-v releases."
+              --prerelease --latest=false --title "Desktop update feed" --notes "Moving Linux feed for the desktop branch. Payloads are in immutable desktop-v releases."
           fi
           bun scripts/check-desktop-feed-promotion.ts "$assets/linux/latest-linux.yml"
           gh release upload desktop-latest "$assets/linux/latest-linux.yml" --repo "$repository" --clobber
-          gh release edit desktop-latest --repo "$repository" --latest=false
+          gh release edit desktop-latest --repo "$repository" --prerelease --latest=false

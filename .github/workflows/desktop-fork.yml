@@ -174,12 +174,12 @@ jobs:
           The macOS client is not notarized and is not offered as an automatic update.
           NOTES
             gh release create "$tag" release-assets/linux/* release-assets/macos/* SHA256SUMS-desktop.txt \
-              --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false --title "Desktop $tag" --notes-file release-notes.txt
+              --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false --title "Desktop $tag" --notes-file release-notes.txt
           fi
           if ! gh release view desktop-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create desktop-latest --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --latest=false --title "Desktop update feed" --notes "Moving Linux feed for the desktop branch. Payloads are in immutable desktop-v releases."
+              --prerelease --latest=false --title "Desktop update feed" --notes "Moving Linux feed for the desktop branch. Payloads are in immutable desktop-v releases."
           fi
           bun scripts/check-desktop-feed-promotion.ts release-assets/linux/latest-linux.yml
           gh release upload desktop-latest release-assets/linux/latest-linux.yml --repo "$GITHUB_REPOSITORY" --clobber
-          gh release edit desktop-latest --repo "$GITHUB_REPOSITORY" --latest=false
+          gh release edit desktop-latest --repo "$GITHUB_REPOSITORY" --prerelease --latest=false
