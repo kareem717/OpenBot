@@ -22,6 +22,12 @@ const workspace = join(root, "workspace");
 const executable = join(root, "codex");
 const protocolLog = join(root, "codex.jsonl");
 const previousExecutable = process.env.OPENBOT_CODEX_PATH;
+const featureNotice =
+  "Under-development features enabled: code_mode_tool_search. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set suppress_unstable_features_warning = true in /fixture/.codex/config.toml.";
+const mixedFeatureNotice = "Under-development features enabled: code_mode_tool_search, unknown_fixture_feature.";
+const otherWarning = "Fixture provider needs a configuration correction.";
+const diagnosticEvents: string[] = [];
+let genuineErrors = 0;
 process.env.OPENBOT_CODEX_PATH = executable;
 
 const { AgentService } = await import("../src/backend/agent-service");
@@ -58,6 +64,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  case 'turn/start': {
   const id='turn-'+randomUUID();send({id:request.id,result:{turn:{id,status:'inProgress',items:[]}}});
   send({method:'turn/started',params:{threadId:params.threadId,turn:{id}}});
+  send({method:'warning',params:{threadId:params.threadId,message:${JSON.stringify(featureNotice)}}});
+  send({method:'warning',params:{threadId:params.threadId,message:${JSON.stringify(mixedFeatureNotice)}}});
+  send({method:'warning',params:{threadId:params.threadId,message:${JSON.stringify(otherWarning)}}});
+  send({method:'error',params:{threadId:params.threadId,error:{message:${JSON.stringify(featureNotice)}}}});
   send({method:'item/completed',params:{threadId:params.threadId,turnId:id,item:{id:'answer-'+id,type:'agentMessage',text:'Fixture answer '+id,phase:'final_answer'}}});
   send({method:'turn/completed',params:{threadId:params.threadId,turn:{id,status:'completed'}}});return;
  }
@@ -96,6 +106,12 @@ function openService() {
     preferredProvider: "codex",
     offProviders: AGENT_PROVIDERS.filter((provider) => provider !== "codex"),
     timezone: () => "UTC",
+  });
+  service.on("event", (event) => {
+    if (event.type === "error" && event.code === "agent_warning") diagnosticEvents.push(event.message);
+  });
+  service.on("failure", (failure) => {
+    if (failure.code === "agent_error" && failure.severity === "error") genuineErrors += 1;
   });
   return { database, store, mailbox, service };
 }
@@ -177,6 +193,7 @@ const report: {
   releasedManifestShapeVerified: boolean;
   publicIdsRetained: boolean;
   stableSecondRestart: boolean;
+  warningBoundariesVerified: boolean;
   error?: string;
 } = {
   passed: false,
@@ -185,6 +202,7 @@ const report: {
   releasedManifestShapeVerified: false,
   publicIdsRetained: false,
   stableSecondRestart: false,
+  warningBoundariesVerified: false,
 };
 let closed = false;
 try {
@@ -292,6 +310,7 @@ try {
     assert.ok(start?.params && isDynamicRecord(start.params.config));
     const config = start.params.config;
     assert.equal(config["features.code_mode_tool_search"], true);
+    assert.equal(config.suppress_unstable_features_warning, true);
     assert.ok(isDynamicRecord(config.mcp_servers));
     assert.equal(
       Object.values(config.mcp_servers).filter((server) => isDynamicRecord(server) && server.enabled === true).length,
@@ -353,6 +372,17 @@ try {
     0,
   );
   report.stableSecondRestart = true;
+  const turns = entries().filter((entry) => entry.method === "turn/start").length;
+  assert.ok(turns > 0);
+  assert.equal(
+    diagnosticEvents.filter((message) => message === featureNotice).length,
+    0,
+    "The development notice is informational.",
+  );
+  assert.equal(genuineErrors, turns, "A true error with the same text still reports a failure.");
+  for (const message of [mixedFeatureNotice, otherWarning])
+    assert.equal(diagnosticEvents.filter((text) => text === message).length, turns, "Other warnings stay visible.");
+  report.warningBoundariesVerified = true;
   report.passed = true;
 } catch (error) {
   report.error = error instanceof Error ? (error.stack ?? error.message) : String(error);

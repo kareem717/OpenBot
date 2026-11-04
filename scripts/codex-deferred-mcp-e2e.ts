@@ -342,9 +342,11 @@ interface Case {
   executable?: string;
   /** True starts the thread with the fix, then resumes it in a new app-server. */
   resume?: boolean;
+  suppressUnstableWarning?: boolean;
 }
 
 interface Outcome {
+  unstableWarnings: number;
   nativeDiscoveryGuidance: boolean;
   initialToolBytes: number;
   initialInstructionBytes: number;
@@ -363,9 +365,13 @@ interface Outcome {
 /** One app-server for the case's `CODEX_HOME`, initialized, and a way to run a turn to its end. */
 async function open(home: string, executable = cli.executable) {
   const client = new CodexAppServerClient(executable, 30_000, { CODEX_HOME: home, FAKE_KEY: "e2e" });
+  const unstableWarnings: string[] = [];
   let turnDone = () => {};
   client.on("notification", (notification) => {
     if (notification.method === "turn/completed") turnDone();
+    const message = getString(notification.params, "message");
+    if (notification.method === "warning" && message?.startsWith("Under-development features enabled:"))
+      unstableWarnings.push(message);
   });
   client.start();
   try {
@@ -397,7 +403,7 @@ async function open(home: string, executable = cli.executable) {
     );
     await Promise.race([done, deadline(`the turn in ${home}`)]);
   };
-  return { client, turn };
+  return { client, turn, unstableWarnings };
 }
 
 async function run(test: Case): Promise<Outcome> {
@@ -419,6 +425,7 @@ async function run(test: Case): Promise<Outcome> {
     ].join(NL),
   );
   let session = await open(home, test.executable);
+  let priorWarnings = 0;
   try {
     const usable = await runCauseEffect(usableMcpServers(test.rows));
     const keyed = (own: CodexOwnTransports) => codexMcpServers(usable, own).servers;
@@ -438,6 +445,8 @@ async function run(test: Case): Promise<Outcome> {
       config: {
         mcp_servers: codexThreadMcpServers(own.disabled, servers),
         ...CODEX_FEATURES_CONFIG,
+        suppress_unstable_features_warning:
+          test.suppressUnstableWarning ?? CODEX_FEATURES_CONFIG.suppress_unstable_features_warning,
         mcp_optional_startup_grace_ms: 10000,
         "features.code_mode.direct_only_tool_namespaces": directOnly,
       },
@@ -452,6 +461,7 @@ async function run(test: Case): Promise<Outcome> {
     if (test.resume) {
       model.begin(mode, test.eager === true);
       await session.turn(threadId);
+      priorWarnings += session.unstableWarnings.length;
       await runCauseEffect(session.client.stop());
       session = await open(home, test.executable);
       await runCauseEffect(
@@ -464,6 +474,7 @@ async function run(test: Case): Promise<Outcome> {
     await session.turn(threadId);
     const offers = model.offers.slice(firstOffer);
     return {
+      unstableWarnings: priorWarnings + session.unstableWarnings.length,
       nativeDiscoveryGuidance: session.client.deferredMcpTools(threadId),
       initialToolBytes: offers[0]?.toolBytes ?? 0,
       initialInstructionBytes: offers[0]?.instructionBytes ?? 0,
@@ -515,6 +526,15 @@ try {
   const rows = Array.from({ length: SERVER_COUNT }, (_, i) => row(`calendar_${String(i).padStart(3, "0")}`));
   let eagerBytes = 0;
   await step(
+    "unsuppressed code-mode tool search emits a development notice without failing tools",
+    { name: "unsuppressed-notice", rows, suppressUnstableWarning: false },
+    (outcome) => {
+      assert.ok(outcome.unstableWarnings > 0);
+      assert.equal(outcome.resultReturned, true);
+      assert.equal(outcome.searchAvailable, true);
+    },
+  );
+  await step(
     "forced-direct 64-server baseline eagerly sends every MCP schema",
     { name: "eager", rows, eager: true },
     (outcome) => {
@@ -532,6 +552,7 @@ try {
         `${mode} model discovers and calls servers 0, 32 and 63${resume ? " after resume" : ""}`,
         { name: `${mode}-${resume ? "resume" : "new"}`, rows, mode, resume },
         (outcome) => {
+          assert.equal(outcome.unstableWarnings, 0, "OpenBot's tool-search setup needs no user warning.");
           assert.equal(outcome.keys.length, SERVER_COUNT, "Every enabled server reaches Codex.");
           assert.equal(outcome.offered.length, 0, "No external schema is forced into the initial request.");
           assert.equal(outcome.schemaMarker, false);

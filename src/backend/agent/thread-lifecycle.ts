@@ -135,10 +135,12 @@ const CODEX_TOOLS_CONFIG = { update_plan: { enabled: true } } as const;
  * resume it. OpenBot has no control for a goal, so it turns the feature off.
  * Native code-mode tool search keeps external MCP schemas deferred. The minimum Codex runtime
  * supports this feature; older runtimes would leave those tools undiscoverable in code mode.
+ * OpenBot owns this feature choice, so its development notice needs no action from the user.
  */
 export const CODEX_FEATURES_CONFIG = {
   "features.goals": false,
   "features.code_mode_tool_search": true,
+  suppress_unstable_features_warning: true,
 } as const;
 
 /**
@@ -834,6 +836,7 @@ export class ThreadLifecycle {
         mcp_optional_startup_grace_ms: number;
         "features.goals": false;
         "features.code_mode_tool_search": true;
+        suppress_unstable_features_warning: true;
         "features.code_mode.direct_only_tool_namespaces": string[];
         [variable: `shell_environment_policy.set.${string}`]: string;
       } & ReturnType<typeof codexSandboxConfig>;
