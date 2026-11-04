@@ -84,12 +84,45 @@ try {
   assert.equal((await Effect.runPromise(service.check())).phase, "error");
   await writeFile(manifestPath, original.replace(sha512, `${"A".repeat(86)}==`));
   await assert.rejects(prepareDesktopUpdateManifest(manifestPath));
+  const macFiles = [
+    { name: "OpenBot-0.60.1-arm64.zip", bytes: Buffer.from("A Mac ZIP download.\n") },
+    { name: "OpenBot-0.60.1-arm64.dmg", bytes: Buffer.from("A Mac DMG download.\n") },
+  ];
+  const macEntries = [];
+  for (const file of macFiles) {
+    await writeFile(join(directory, file.name), file.bytes);
+    macEntries.push({
+      url: file.name,
+      sha512: createHash("sha512").update(file.bytes).digest("base64"),
+      size: file.bytes.byteLength,
+    });
+  }
+  const macManifestPath = join(directory, "latest-mac.yml");
+  const macZip = macEntries[0];
+  assert(macZip);
+  await writeFile(
+    macManifestPath,
+    stringify({ version: "0.60.1", files: macEntries, path: macZip.url, sha512: macZip.sha512 }),
+  );
+  await prepareDesktopUpdateManifest(macManifestPath);
+  const preparedMac = z
+    .object({ path: z.string(), files: z.array(z.object({ url: z.string(), sha512: z.string() })) })
+    .parse(parse(await readFile(macManifestPath, "utf8")));
+  assert.equal(preparedMac.path, desktopReleaseAssetUrl("0.60.1", macZip.url));
+  assert.deepEqual(
+    preparedMac.files,
+    macEntries.map((entry) => ({ url: desktopReleaseAssetUrl("0.60.1", entry.url), sha512: entry.sha512 })),
+  );
+  await writeFile(join(directory, "OpenBot-0.60.1-arm64.dmg"), "A changed DMG download.");
+  await assert.rejects(prepareDesktopUpdateManifest(macManifestPath));
   await mkdir(resolve(".openbot-build"), { recursive: true });
   await writeFile(
     resolve(".openbot-build/desktop-feed-e2e.json"),
     JSON.stringify(
       {
         passed: true,
+        macZipAndDmgManifestVerified: true,
+        corruptMacDmgRejected: true,
         immutableArtifactDownloadVerified: true,
         sha512Preserved: true,
         upstreamRelativeManifestRejected: true,

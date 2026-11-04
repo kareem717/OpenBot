@@ -41,7 +41,7 @@ export async function prepareDesktopUpdateManifest(path: string): Promise<void> 
     if (
       !name.startsWith(`OpenBot-${manifest.version}-`) ||
       (file.url !== name && file.url !== url) ||
-      !/\.(?:AppImage|zip|exe)$/u.test(name)
+      !/\.(?:AppImage|zip|exe|dmg)$/u.test(name)
     )
       throw new Error("The update manifest names an unexpected artifact.");
     const artifact = join(resolve(path, ".."), name);

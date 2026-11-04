@@ -89,3 +89,19 @@ the capacity changes and the isolated feed addresses. Resolve conflicts in sourc
 workflow, and complete the upgrade audit before publishing the next numeric desktop version.
 Do not point this branch at the repository-wide latest release, move the other application's
 default branch, or publish desktop packages under its version tags.
+
+## Recover a queued Mac build
+
+The `desktop-macos-recovery.yml` workflow builds the exact `desktop-v0.60.1` source
+on a standard macOS 26 ARM64 runner. It checks the source commit before building.
+The packaged app then passes the same archive, fuse, runtime, and launch checks.
+After that build, the workflow applies the branch's corrected manifest tooling:
+macOS manifests contain both ZIP and DMG entries, each with a verified digest.
+This changes release metadata tooling only. The tagged application source stays
+the source of the package. Failed runs retain diagnostic packages separately.
+
+The original Linux package and the recovered Mac package can form one release
+only after both native package checks pass and their source commit matches.
+Record both run links in the release notes, verify all hashes, and use the same
+immutable-payload and monotonic-feed checks as the normal publisher. The normal
+workflow also uses macOS 26 for later releases.

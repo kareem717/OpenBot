@@ -34,6 +34,14 @@ jobs:
       - name: Verify archive integrity, fuses, runtimes, and launch
         run: |
           bun run verify:package
+      - name: Apply verified metadata tooling after the tagged app build
+        run: |
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:scripts/prepare-desktop-update-manifest.ts" > scripts/prepare-desktop-update-manifest.ts
+          git show "$GITHUB_SHA:scripts/desktop-feed-e2e.ts" > scripts/desktop-feed-e2e.ts
+          bun scripts/desktop-feed-e2e.ts
+      - name: Verify release manifests and artifact digests
+        run: |
           bun scripts/prepare-desktop-update-manifest.ts dist/latest-mac.yml
           bun run verify:update-artifacts macos
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -45,4 +53,15 @@ jobs:
             dist/*.zip.blockmap
             dist/latest-mac.yml
           if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: desktop-macos-diagnostics
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.zip.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: ignore
           retention-days: 14
