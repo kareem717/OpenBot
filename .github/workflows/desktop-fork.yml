@@ -75,6 +75,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes xvfb
       - name: Build server package
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun run dist:linux
       - name: Permit the packaged Electron sandbox
         shell: bash
@@ -94,6 +96,14 @@ jobs:
           xvfb-run -a bun run verify:package:linux dist/linux-unpacked --require-update-metadata
           bun scripts/prepare-desktop-update-manifest.ts dist/latest-linux.yml
           bun run verify:update-artifacts linux
+      - name: Check side-thread sign-in cards through the packaged app
+        run: xvfb-run -a bun scripts/side-thread-action-cards-e2e.ts dist/linux-unpacked/openbot
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: desktop-side-thread-card-checks
+          path: .openbot-build/side-thread-action-cards-e2e/
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-linux-x64
@@ -116,6 +126,8 @@ jobs:
       - name: Require Apple silicon runner
         run: test "$(uname -m)" = arm64
       - name: Build local-install client
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun run dist:mac --publish never
       - name: Verify archive integrity, fuses, runtimes, and launch
         run: |
