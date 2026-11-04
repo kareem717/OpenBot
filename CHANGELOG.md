@@ -6,6 +6,13 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.4] - 2026-11-04
+
+### Fixed
+
+- Keep accepted steering messages in side-thread and branch history, including after a restart. Recover missing accepted inputs from earlier versions without sending them again.
+- Use the same live task controls in main chats, side threads, and branches. Keep the task list open as steps update.
+
 ## [0.60.3] - 2026-11-04
 
 ### Changed
