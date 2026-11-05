@@ -6,6 +6,19 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.8] - 2026-11-05
+
+### Added
+
+- Added a local connection for external browser tools such as agent-browser to use an existing OpenBot tab and sign-in.
+
+### Fixed
+
+- Fixed saved authenticator codes that required manual entry when a sign-in field had no autocomplete marker.
+- Fixed browser tab-list and status calls that could wait indefinitely while a person controlled a tab.
+- Fixed turns that stopped after a short statement of the next action, including a progress message with no final answer.
+- Let agents use credentials supplied in files or APIs without asking for the same credentials again.
+
 ## [0.60.7] - 2026-11-04
 
 ### Fixed
