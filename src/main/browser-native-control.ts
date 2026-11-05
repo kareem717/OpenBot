@@ -305,7 +305,7 @@ export class NativeBrowserControl implements BrowserNativeControl {
               );
             case "type":
               registerSecretValue(input.text);
-              return yield* this.#call("type_text", { ...target, text: input.text, delay_ms: 0 }, inputAccess);
+              return yield* this.#call("type_text", { ...target, text: input.text }, inputAccess);
             case "press": {
               const keys = yield* browserSync(() => nativeKey(input.key));
               return yield* this.#call("press_key", { ...target, ...keys }, inputAccess);
