@@ -6,6 +6,16 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.10] - 2026-11-05
+
+### Fixed
+
+- Native browser control supports Linux screenshot-only captures and text input. Window ownership, capture IDs,
+  frame validation and permission checks stay in place.
+- An external CDP connection selects its requested existing tab before browser input.
+- Tasks can use native controls for their own browser tabs under the parent agent’s Computer Use permission.
+- Self-hosted servers start a managed window manager on the private browser display for native input.
+
 ## [0.60.9] - 2026-11-05
 
 ### Added
