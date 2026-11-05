@@ -6,6 +6,17 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.12] - 2026-11-05
+
+### Added
+
+- Agents can switch an existing browser tab between agent-browser with CDP and native OS input. The tab keeps its page and sign-in.
+
+### Fixed
+
+- Native input supports task-owned tabs under the parent agent's Computer Use permission.
+- Self-hosted servers manage the private browser display for native input, including startup before a window is open.
+
 ## [0.60.11] - 2026-11-05
 
 ### Fixed
