@@ -120,10 +120,18 @@ default branch, or publish desktop packages under its version tags.
 
 ## Recover a queued Mac build
 
-The `desktop-macos-recovery.yml` workflow builds the exact `desktop-v0.60.1` source
-on a standard macOS 26 ARM64 runner. It checks the source commit before building.
-The packaged app then passes the same archive, fuse, runtime, and launch checks.
-After that build, the workflow applies the branch's corrected manifest tooling:
+For `desktop-v0.60.12`, the recovery workflow uses a standard macOS 15 ARM64 runner.
+It checks out the exact release tag and requires source commit
+`01d437758958c87fabec92bfc5162c4f4e219a3a` before building. It keeps the package, launch,
+runtime, archive and manifest checks. The artifact includes `recovery-source.json`.
+The workflow uploads artifacts only. If recovery supplies the Mac package, record both the
+Linux/source workflow and the recovery workflow in the release evidence before publication.
+Use the tagged metadata tools; do not copy tools from a later branch into this build.
+
+The initial recovery built the exact `desktop-v0.60.1` source
+on a standard macOS 26 ARM64 runner. It checked the source commit before building.
+The packaged app then passed the same archive, fuse, runtime, and launch checks.
+After that build, the workflow applied the branch's corrected manifest tooling:
 macOS manifests contain both ZIP and DMG entries, each with a verified digest.
 This changes release metadata tooling only. The tagged application source stays
 the source of the package. Failed runs retain diagnostic packages separately.

@@ -14,34 +14,34 @@ concurrency:
 
 jobs:
   macos:
-    name: Verify desktop-v0.60.1 on macOS 26 ARM64
+    name: Verify desktop-v0.60.12 on macOS 15 ARM64
     if: github.repository == 'kareem717/OpenBot'
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: desktop-v0.60.1
+          ref: desktop-v0.60.12
           persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Require Apple silicon runner and exact release source
         run: |
           test "$(uname -m)" = arm64
-          test "$(git rev-parse HEAD)" = 76cf7e68c27538b7e82cd87ac79fb634ac4a1d8f
-          test "$(bun -p 'require("./package.json").version')" = 0.60.1
+          test "$(git rev-parse HEAD)" = 01d437758958c87fabec92bfc5162c4f4e219a3a
+          test "$(bun -p 'require("./package.json").version')" = 0.60.12
       - name: Build local-install client
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun run dist:mac --publish never
       - name: Verify archive integrity, fuses, runtimes, and launch
         run: |
           bun run verify:package
-      - name: Apply verified metadata tooling after the tagged app build
+      - name: Record exact application source
         run: |
-          git fetch --depth=1 origin "$GITHUB_SHA"
-          git show "$GITHUB_SHA:scripts/prepare-desktop-update-manifest.ts" > scripts/prepare-desktop-update-manifest.ts
-          git show "$GITHUB_SHA:scripts/desktop-feed-e2e.ts" > scripts/desktop-feed-e2e.ts
-          bun scripts/desktop-feed-e2e.ts
+          printf '{"tag":"desktop-v0.60.12","sourceSha":"%s","version":"0.60.12","architecture":"%s"}\n' "$(git rev-parse HEAD)" "$(uname -m)" > dist/recovery-source.json
       - name: Verify release manifests and artifact digests
         run: |
+          bun scripts/desktop-feed-e2e.ts
           bun scripts/prepare-desktop-update-manifest.ts dist/latest-mac.yml
           bun run verify:update-artifacts macos
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -52,6 +52,7 @@ jobs:
             dist/*.zip
             dist/*.zip.blockmap
             dist/latest-mac.yml
+            dist/recovery-source.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -63,5 +64,6 @@ jobs:
             dist/*.zip
             dist/*.zip.blockmap
             dist/latest-mac.yml
+            dist/recovery-source.json
           if-no-files-found: ignore
           retention-days: 14
