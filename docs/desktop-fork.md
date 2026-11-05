@@ -99,11 +99,16 @@ After an upstream merge or rebase, keep these checks in `desktop-fork.yml`:
   session, limit target access, redact secrets, and revoke external access for user control.
 - `scripts/browser-smoke.ts --scenario=secret-handoff`: saved authenticator fills work without an
   autocomplete marker when the numeric field has an explicit OTP identity.
+- `scripts/browser-native-control-e2e.ts`: use real OS input in the same tab between CDP sessions;
+  keep the document and sign-in, exclude CDP during native control, and preserve permission gates.
 
 Resolve conflicts in the owning source modules and keep these behavior checks. Preserve the
 credential-source instructions in `agent/developer-instructions.ts` and `agent/tool-guidance.ts`:
 user-supplied file or API credentials can be read and entered by a local script without printing
 their values. A successful rebase alone does not verify that these behaviors remain.
+Keep the native control port, private driver display selection, and CDP lease exclusion together.
+On a server, the browser and general Computer Use can use different displays; the native browser
+driver must use Electron's display and must not be published as a general provider MCP server.
 
 Fetch the required `nightly-labs/openbot` release and merge it into the desktop branch. Preserve
 the capacity changes and the isolated feed addresses. Resolve conflicts in source, run the branch

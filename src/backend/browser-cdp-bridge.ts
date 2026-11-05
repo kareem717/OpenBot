@@ -9,6 +9,11 @@ import * as webSockets from "ws";
 import { z } from "zod";
 import type { SendCommand } from "./browser-cdp-values";
 import { type BrowserOperationError, browserCall, browserFailure, browserSync } from "./browser-effects";
+import {
+  type BrowserNativeInput,
+  type BrowserNativeInputResult,
+  browserNativeInputSchema,
+} from "./browser-native-control";
 import { isAllowedMainUrl } from "./browser-policy";
 import { runCauseEffect } from "./effect-boundary";
 
@@ -20,6 +25,7 @@ const commandSchema = z.strictObject({
 });
 const PAGE_SESSION = "openbot-page";
 const sourceSchema = z.strictObject({ values: z.array(z.string().min(1).max(16_384)).min(1).max(32) });
+const nativeInputSchema = z.strictObject({ snapshotId: z.string().min(1).max(128), input: browserNativeInputSchema });
 const SOURCE_CAPTURE_METHODS = new Set([
   "Page.captureScreenshot",
   "Page.printToPDF",
@@ -60,6 +66,12 @@ const BLOCKED_METHODS = new Set([
 ]);
 
 interface BrowserCdpBridgeOptions {
+  /** Native mode keeps local secret registration but accepts no CDP socket. */
+  nativeOnly?: boolean;
+  nativeInput?: (
+    snapshotId: string,
+    input: BrowserNativeInput,
+  ) => Effect.Effect<BrowserNativeInputResult, BrowserOperationError>;
   contents: WebContents;
   targetId: string;
   checkAccess(): void;
@@ -86,6 +98,7 @@ export class BrowserCdpBridge {
   #port = 0;
   #revoked = false;
   #pending = 0;
+  #sourceRegistered = false;
 
   constructor(options: BrowserCdpBridgeOptions) {
     this.#options = options;
@@ -93,6 +106,10 @@ export class BrowserCdpBridge {
 
   get endpoint(): string {
     return `ws://127.0.0.1:${this.#port}/devtools/browser/${this.#token}`;
+  }
+
+  get nativeInputUrl(): string {
+    return `http://127.0.0.1:${this.#port}/devtools/browser/${this.#token}/native`;
   }
 
   get revoked(): boolean {
@@ -109,6 +126,7 @@ export class BrowserCdpBridge {
       try {
         this.#checkAccess();
         if (
+          this.#options.nativeOnly ||
           request.url !== `/devtools/browser/${this.#token}` ||
           request.headers.origin !== undefined ||
           request.headers.host !== `127.0.0.1:${this.#port}` ||
@@ -200,9 +218,10 @@ export class BrowserCdpBridge {
     request: IncomingMessage,
     response: ServerResponse,
   ) {
+    const isNativeInput = request.url === `/devtools/browser/${this.#token}/native` && this.#options.nativeInput;
     if (
       request.method !== "POST" ||
-      request.url !== `/devtools/browser/${this.#token}/secrets` ||
+      (!isNativeInput && request.url !== `/devtools/browser/${this.#token}/secrets`) ||
       request.headers.origin !== undefined ||
       request.headers.host !== `127.0.0.1:${this.#port}`
     ) {
@@ -221,9 +240,21 @@ export class BrowserCdpBridge {
       }
       return Buffer.concat(chunks).toString("utf8");
     });
+    if (isNativeInput) {
+      const call = yield* browserSync(() => nativeInputSchema.parse(JSON.parse(body)));
+      if (call.input.kind === "type" && !this.#sourceRegistered)
+        return yield* browserFailure(new Error("Register local source text before native input."));
+      if (call.input.kind === "type") registerSecretValue(call.input.text, { allowShort: true });
+      const result = yield* isNativeInput(call.snapshotId, call.input);
+      response
+        .writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+        .end(JSON.stringify({ dispatched: true, verification: result.verification }));
+      return;
+    }
     const source = yield* browserSync(() => sourceSchema.parse(JSON.parse(body)));
     registerSecretValues(source.values, { allowShort: true });
     yield* this.#options.protectSourceSecrets();
+    this.#sourceRegistered = true;
     yield* this.#options.send("Page.stopScreencast").pipe(Effect.ignore);
     response
       .writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })

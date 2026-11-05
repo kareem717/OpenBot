@@ -8,6 +8,7 @@ import {
   BROWSER_FILL_FIELDS_MAX_TEXT_BYTES,
   BROWSER_FILL_FIELDS_MAX_TIMEOUT_MS,
 } from "./browser-fill-fields";
+import { browserNativeInputSchema } from "./browser-native-control";
 
 export const OPENBOT_BROWSER_NAMESPACE = "openbot_browser";
 
@@ -210,6 +211,24 @@ const BROWSER_TOOL_DEFINITIONS = [
     description:
       "Disconnect an external CDP tool from this tab and revoke its endpoint. The tab and its sign-in stay open.",
     shape: { tabId },
+  }),
+  browserTool({
+    name: "set_control_mode",
+    description:
+      "Switch this same tab between cdp and native OS control without a reload. Native mode disconnects CDP and presents only this tab in a separate window. It requires Computer Use on and ready, and is unavailable in task threads. Use native_snapshot and native_input in native mode. Switching back permits a new connect_cdp call. This does not guarantee acceptance by a site's bot checks.",
+    shape: { tabId, mode: z.enum(["cdp", "native"]) },
+  }),
+  browserTool({
+    name: "native_snapshot",
+    description:
+      "Capture only the native browser window. Returns an image and snapshotId. Coordinates for native_input are image pixels. Available only after set_control_mode native. No CDP or page script is used. Images are blocked while a page holds supplied credentials.",
+    shape: { tabId },
+  }),
+  browserTool({
+    name: "native_input",
+    description:
+      "Use OS input in this tab's native window with the snapshotId from native_snapshot. Read a new snapshot after navigation or window changes. For supplied passwords or codes, a local script must register values at secretRegistrationUrl, then POST {snapshotId,input} to nativeInputUrl, without printing values or putting them in provider tool arguments. Returns only input delivery status; verify the resulting page.",
+    shape: { tabId, snapshotId: identifier, input: browserNativeInputSchema },
   }),
   browserTool({
     name: "status",

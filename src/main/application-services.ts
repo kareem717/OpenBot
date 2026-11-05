@@ -166,6 +166,7 @@ import { managedBitwardenCli } from "./bitwarden-cli-installer";
 import { BitwardenConnectorService } from "./bitwarden-connector-service";
 import { BitwardenConnectorStore } from "./bitwarden-connector-store";
 import { BrowserDockOverlay } from "./browser-dock-overlay";
+import { NativeBrowserControl } from "./browser-native-control";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { BrowserViewClient } from "./browser-view-client";
 import { BusyMessageModePreferenceStore } from "./busy-message-mode-preference-store";
@@ -248,6 +249,7 @@ import {
   createComputerUseHighlightWindow,
   createComputerUsePermissionHelpWindow,
   createDynamicIslandWindow,
+  createNativeBrowserWindow,
   loadBrowserDockRenderer,
   loadComputerUseHighlightRenderer,
   loadComputerUsePermissionHelpRenderer,
@@ -1650,6 +1652,48 @@ export async function createApplicationServices({
   // After the provider runtimes, which hold the `cua-driver mcp` children that talk to this
   // daemon: stopping it first would leave them reading a socket nothing answers.
   teardown.push(TEARDOWN_ORDER.cuaDriver, "the Computer Use driver", () => runCauseEffect(cuaDriver.stop()));
+  const nativeDriverState = join(app.getPath("userData"), "native-browser-driver");
+  const ownsNativeDriver = process.platform === "linux";
+  const nativeDriverEnvironment: Readonly<Record<string, string>> = ownsNativeDriver
+    ? {
+        XDG_STATE_HOME: join(nativeDriverState, "state"),
+        XDG_CONFIG_HOME: join(nativeDriverState, "config"),
+        CUA_LOG: "off",
+      }
+    : {};
+  // macOS shares the primary driver's desktop action mutex. Linux uses a different display.
+  const nativeDriver = ownsNativeDriver
+    ? new CuaDriverRuntime({
+        executable: await Effect.runPromise(resolveCuaDriverExecutable()),
+        resolveExecutable: resolveCuaDriverExecutable,
+        endpoint: await runCauseEffect(
+          resolveCuaDriverEndpoint({
+            platform: process.platform,
+            userDataPath: nativeDriverState,
+            temporaryDirectory: tmpdir(),
+            runtimeDirectory: process.env.XDG_RUNTIME_DIR ?? null,
+          }),
+        ),
+        supported: isSupportedCuaDriverTarget(process.platform, process.arch),
+        hostBundleId: app.isPackaged ? PACKAGED_BUNDLE_IDENTIFIER : DEVELOPMENT_BUNDLE_IDENTIFIER,
+        platform: process.platform,
+        // An empty override keeps the actual Electron display. The normal driver uses the agent display.
+        displayEnvironment: {},
+        stateEnvironment: nativeDriverEnvironment,
+        quitting,
+      })
+    : cuaDriver;
+  const nativeBrowser = new NativeBrowserControl({
+    driver: nativeDriver,
+    ownsDriver: ownsNativeDriver,
+    primaryReady: () => cuaDriver.mcpServerForProviders() !== null,
+    createWindow: createNativeBrowserWindow,
+    environment: nativeDriverEnvironment,
+    platform: process.platform,
+    windowTitle: language.translate("browser.native.window"),
+  });
+  browser.setNativeControl(nativeBrowser);
+  teardown.push(TEARDOWN_ORDER.browser, "native browser control", () => runCauseEffect(nativeBrowser.destroy()));
   /*
    * The rim OpenBot draws over the window an agent works in.
    *

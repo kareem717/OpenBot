@@ -1772,6 +1772,15 @@ the sensitive document. The destination site receives the value and controls its
 This protection does not isolate credentials from the operating system or agents with unrestricted
 machine access. Values pasted into ordinary chat are not covered by secure handoff.
 
+Native browser control uses a local OS driver and a window that contains only the selected tab.
+The driver runs on the computer that hosts the browser. It does not add a cloud service or send
+screen data to a new destination. Requested browser snapshots use the agent's existing provider
+connection. A local script can register credentials from supplied files or APIs, then enter them
+through the local native-input endpoint. Registration masks exact values in OpenBot logs and blocks
+captures of the protected page and its connected popup or opener until navigation. The private
+native connection does not expose recording or history tools to agents. Native mode still requires Computer
+Use permission; it does not isolate values from the operating system or unrestricted local agents.
+
 ## Error and warning reports
 
 Production desktop, browser app, and mobile clients report safe failure categories to the same

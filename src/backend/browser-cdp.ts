@@ -12,7 +12,7 @@ import type {
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import { redactText } from "@openbot/logging";
-import { Deferred, Effect, Exit, Fiber, Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope, Semaphore } from "effect";
 import type { NativeImage, WebContents } from "electron";
 import {
   BROWSER_CARD_FIELDS,
@@ -80,6 +80,7 @@ import {
   fillFieldsFailure,
   fillPreparedFields,
 } from "./browser-fill-fields";
+import { BrowserNativeCapture } from "./browser-native-capture";
 import { describeBrowserTarget, stopLoadingAndWait, waitForLoading } from "./browser-navigation";
 import { createFramePacer } from "./browser-screencast-pacing";
 import type { VaultCardSecret } from "./vault-items";
@@ -288,6 +289,12 @@ const DIALOG_FOR_PERSON_ERROR = "Only a person can answer this dialog in the tab
 
 export class BrowserCdpEngine {
   readonly #contents: WebContents;
+  readonly #nativeCapture: BrowserNativeCapture;
+  readonly #modeLock = Semaphore.makeUnsafe(1);
+  readonly #screencasts = new Set<() => Effect.Effect<void>>();
+  #nativeControl = false;
+  #switchingNative = false;
+  #leasesIdle = Deferred.makeUnsafe<void>();
   /**
    * The button a live view holds down. Chromium ends a drag at a move that names no button, so a
    * move between a press and a release names this one.
@@ -681,9 +688,23 @@ export class BrowserCdpEngine {
   readonly #uploadDocumentIds = new Set<string>();
   readonly #targetSessions = new Map<string, { sessionId: string; url: string }>();
 
-  constructor(contents: WebContents, cardScrub = new CardValueScrub()) {
+  constructor(
+    contents: WebContents,
+    cardScrub = new CardValueScrub(),
+    nativeViewport?: () => { width: number; height: number },
+  ) {
     this.#contents = contents;
     this.#cardScrub = cardScrub;
+    this.#nativeCapture = new BrowserNativeCapture(
+      contents,
+      () => nativeViewport?.(),
+      () => {
+        if (!this.#nativeControl || this.#switchingNative)
+          throw new Error("Native browser capture is unavailable while the control mode changes.");
+        if (this.#disposed || this.#closing || contents.isDestroyed()) throw new Error("Browser tab was closed.");
+        if (contents.debugger.isAttached()) throw new Error("Close DevTools before using native browser control.");
+      },
+    );
     contents.once("close", () => {
       // Native teardown can start before isDestroyed() becomes true. Detaching a debugger
       // during that interval can crash Electron; Chromium will dispose it with the page.
@@ -725,8 +746,71 @@ export class BrowserCdpEngine {
         }
       }
     });
-    contents.debugger.on("detach", () => this.#clearDebuggerSessions());
+    contents.debugger.on("detach", () => {
+      this.#ownsDebugger = false;
+      this.#clearDebuggerSessions();
+    });
   }
+
+  get nativeControl(): boolean {
+    return this.#nativeControl;
+  }
+
+  /** Change control without replacing the page or applying CDP viewport emulation. */
+  readonly setNativeControl = Effect.fn("BrowserCdp.setNativeControl")(function* (
+    this: BrowserCdpEngine,
+    enabled: boolean,
+  ): Effect.fn.Return<void, BrowserOperationError> {
+    yield* this.#modeLock.withPermit(
+      Effect.gen({ self: this }, function* () {
+        if (this.#disposed || this.#closing || this.#contents.isDestroyed())
+          return yield* browserFailure(new Error("Browser tab was closed."));
+        if (!enabled && !this.#nativeControl) return;
+        if (this.#contents.debugger.isAttached() && !this.#ownsDebugger)
+          return yield* browserFailure(new Error("Close DevTools before changing browser control mode."));
+        if (enabled === this.#nativeControl) return;
+        if (enabled && this.#externalCdpLeases > 0)
+          return yield* browserFailure(new Error("Disconnect external CDP before using native browser control."));
+        if (enabled && (this.#dialog || this.#dialogWatches.size > 0))
+          return yield* browserFailure(new Error("Finish the current browser action before using native control."));
+        this.#switchingNative = true;
+        yield* Effect.gen({ self: this }, function* () {
+          yield* this.#nativeCapture.stopAll();
+          for (const stop of [...this.#screencasts]) yield* stop();
+          if (this.#activeLeases > 0) {
+            // Existing native CDP promises do not accept cancellation. Detach only our debugger,
+            // then wait for each lease's finalizer before admitting a native capture.
+            yield* browserSync(() => this.cancelPendingCommands());
+            yield* Deferred.await(this.#leasesIdle);
+          }
+          if (enabled && this.#ownsDebugger && this.#contents.debugger.isAttached()) {
+            // Public leases are already blocked. Clear only the view and focus overrides before
+            // detaching; the saved environment is applied again by the next CDP lease.
+            yield* browserCall(() => this.#contents.debugger.sendCommand("Emulation.clearDeviceMetricsOverride"));
+            yield* browserCall(() =>
+              this.#contents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: false }),
+            );
+          }
+          yield* browserSync(() => {
+            if (this.#disposed || this.#closing || this.#contents.isDestroyed())
+              throw new Error("Browser tab was closed.");
+            if (this.#contents.debugger.isAttached() && !this.#ownsDebugger)
+              throw new Error("Close DevTools before changing browser control mode.");
+            if (enabled) this.#detachOwnedDebugger();
+            this.#targets.clear();
+            this.#lastSnapshot = null;
+            this.#nativeControl = enabled;
+          });
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              this.#switchingNative = false;
+            }),
+          ),
+        );
+      }),
+    );
+  });
 
   readonly snapshot = Effect.fn("BrowserCdp.snapshot")(function* (
     this: BrowserCdpEngine,
@@ -2038,6 +2122,10 @@ export class BrowserCdpEngine {
     target?: BrowserTarget,
     deadline?: number,
   ): Effect.fn.Return<NativeImage, BrowserOperationError> {
+    if (this.#nativeControl) {
+      if (target) return yield* browserFailure(new Error("Native browser capture does not resolve element targets."));
+      return yield* this.#nativeCapture.screenshot();
+    }
     return yield* this.#leaseEffect((send) =>
       Effect.gen({ self: this }, function* () {
         const clip = target ? yield* this.#elementClipEffect(send, target, deadline) : undefined;
@@ -2080,6 +2168,7 @@ export class BrowserCdpEngine {
     onFrame: (frame: BrowserScreencastFrame) => void,
     onEnded?: (error: unknown) => void,
   ): Effect.fn.Return<() => Effect.Effect<void>, BrowserOperationError> {
+    if (this.#nativeControl) return yield* this.#nativeCapture.startScreencast(this.#scope, options, onFrame, onEnded);
     let live = false;
     let stopRequested = false;
     const stopped = Deferred.makeUnsafe<void>();
@@ -2106,6 +2195,7 @@ export class BrowserCdpEngine {
       onFrame({ ...frame, sequence });
     });
     const listener = (_event: unknown, method: string, params?: DynamicRecord | unknown, sessionId?: string): void => {
+      if (this.#nativeControl || this.#switchingNative) return;
       if (method !== "Page.screencastFrame" || !isDynamicRecord(params)) return;
       const metadata = recordValue(params.metadata);
       const data = stringValue(params.data);
@@ -2195,7 +2285,14 @@ export class BrowserCdpEngine {
       this.#scope,
       { startImmediately: true },
     );
+    const end = () =>
+      Effect.gen(function* () {
+        stop();
+        yield* Fiber.interrupt(running);
+      });
+    this.#screencasts.add(end);
     running.addObserver(() => {
+      this.#screencasts.delete(end);
       if (!live) Deferred.doneUnsafe(ready, Effect.fail(browserFailure(new Error("Browser tab was closed."))));
     });
 
@@ -2207,11 +2304,7 @@ export class BrowserCdpEngine {
         }),
       ),
     );
-    return () =>
-      Effect.gen(function* () {
-        stop();
-        yield* Fiber.await(running);
-      });
+    return end;
   });
 
   readonly dispatchViewportInput = Effect.fn("BrowserCdp.dispatchViewportInput")(function* (
@@ -2465,6 +2558,7 @@ export class BrowserCdpEngine {
 
   readonly destroy = Effect.fn("BrowserCdp.destroy")(function* (this: BrowserCdpEngine) {
     this.#disposed = true;
+    yield* this.#nativeCapture.stopAll();
     yield* Scope.close(this.#scope, Exit.void);
     this.#retainDebugger = false;
     this.#detachOwnedDebugger();
@@ -3276,13 +3370,18 @@ export class BrowserCdpEngine {
   ): Effect.fn.Return<T, BrowserOperationError> {
     if (this.#disposed || this.#closing || this.#contents.isDestroyed())
       return yield* browserFailure(new Error("Browser tab was closed."));
+    if (this.#nativeControl || this.#switchingNative)
+      return yield* browserFailure(new Error("CDP is disconnected while native browser control is active."));
     if (!this.#contents.debugger.isAttached()) {
       yield* browserSync(() => this.#contents.debugger.attach("1.3"));
       this.#ownsDebugger = true;
     }
+    if (this.#activeLeases === 0) this.#leasesIdle = Deferred.makeUnsafe<void>();
     this.#activeLeases += 1;
     const send: SendCommand = (method, params = {}, sessionId) =>
       Effect.gen({ self: this }, function* () {
+        if (this.#nativeControl || this.#switchingNative)
+          return yield* browserFailure(new Error("CDP is disconnected while native browser control is active."));
         const result = yield* browserCall(() => this.#contents.debugger.sendCommand(method, params, sessionId));
         if (!isDynamicRecord(result))
           return yield* browserFailure(new Error(`CDP ${method} returned an invalid result.`));
@@ -3309,6 +3408,7 @@ export class BrowserCdpEngine {
       Effect.ensuring(
         Effect.sync(() => {
           this.#activeLeases -= 1;
+          if (this.#activeLeases === 0) Deferred.doneUnsafe(this.#leasesIdle, Effect.void);
           this.#releaseIdleDebugger();
         }),
       ),

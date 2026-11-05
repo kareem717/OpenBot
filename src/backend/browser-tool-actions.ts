@@ -7,6 +7,8 @@ import type { DynamicToolResult } from "./protocol";
 import type { VaultCardSecret } from "./vault-items";
 
 export interface BrowserDynamicToolHooks {
+  /** Checked again for every native action, including local-source input. */
+  nativeControlAllowed?: () => boolean;
   onUploadTargetResolved?: (inputId: string, documentId: string) => void;
   onUploadAssigned?: (inputId: string, documentId: string) => void;
   onUploadOperationStarted?: (completion: Fiber.Fiber<void, BrowserOperationError>) => void;

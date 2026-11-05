@@ -318,6 +318,9 @@ export const messages = defineMessages("error.backend", {
   "error.backend.browserViewProtected": "Browser view is protected during authentication.",
   "error.backend.browserPreviewPageChanged": "The browser page changed during the preview. Try again.",
   "error.backend.browserInputProtected": "Browser input is protected during authentication.",
+  "error.backend.browserNativeUnavailable": "Native browser control requires Computer Use on and ready.",
+  "error.backend.browserNativeChanged": "The native browser window or snapshot changed. Read the window again.",
+  "error.backend.browserNativeFailed": "Native browser input or capture failed. Read the window before another action.",
   "error.backend.browserTypingFocusMoved":
     "The page moved focus away from the target before typing. Nothing was typed. Take a fresh snapshot.",
   "error.backend.browserTypingSubmitSkipped":

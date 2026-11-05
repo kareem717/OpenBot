@@ -8,6 +8,23 @@ provider CLI spawns its own short-lived `cua-driver mcp --socket` proxy against 
 screen capture, accessibility reads, and input posting happen inside the daemon, so the proxy's own
 identity does not matter.
 
+Native control of an embedded browser uses a scoped connection owned by
+`browser-native-control.ts`. On macOS it shares the existing daemon's desktop action lock. On
+Linux it uses a private daemon on Electron's display, which can differ from the general agent
+display on a server. The private daemon is not added to provider MCP settings; neither mode changes
+provider session fingerprints. Main sends only window-scoped capture and input operations for its own
+browser window. The provider cannot supply a process or window ID, driver tool name, recording
+command, or history command. The existing Computer Use ready state and per-agent permission still
+gate each operation. The private daemon reuses the packaged driver and the host's existing OS
+permissions; switching modes does not request a new grant.
+
+The scoped connection discards proxy stderr; the private Linux daemon also discards diagnostics.
+Text is registered for exact redaction before input. The native session never starts trajectory
+recording, and the pinned driver limits other sessions' recordings to their owners. Its optional Computer
+History stores fixed action metadata, not text arguments or screen content; native browser control
+does not change the user's general history preference. Native input reports whether the driver
+could verify delivery. An `unverifiable` result requires a state read before the agent reports success.
+
 The daemon is spawned directly, and never through `open(1)` or `NSWorkspace`. macOS finds the
 responsible process by walking up the launch chain, so a direct spawn puts OpenBot at the top of it
 and the user grants Screen Recording and Accessibility to OpenBot rather than to somebody else's

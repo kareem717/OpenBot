@@ -273,6 +273,10 @@ export interface CuaDriverRuntimeOptions {
   /** Advisory only. The driver logs it; it is not a trust signal, so nothing may treat it as one. */
   hostBundleId: string;
   platform: NodeJS.Platform;
+  /** A private window controller can stay on Electron's display instead of the agent display. */
+  displayEnvironment?: Readonly<Record<string, string>>;
+  /** Private daemon state. These values do not change the parent application's environment. */
+  stateEnvironment?: Readonly<Record<string, string>>;
   spawnProcess?: SpawnDriverProcess;
   onDiagnostic?: (message: string) => void;
   /** Injected by the test, which has no driver to ask. */
@@ -562,7 +566,8 @@ export class CuaDriverRuntime {
         cwd: dirname(executable),
         env: {
           ...process.env,
-          ...agentDisplayEnvironment(this.#options.platform),
+          ...(this.#options.displayEnvironment ?? agentDisplayEnvironment(this.#options.platform)),
+          ...this.#options.stateEnvironment,
           [EMBEDDED_ENV]: "1",
           [PARENT_LIVENESS_ENV]: "1",
           ...CUA_DRIVER_VENDOR_CALLS_OFF,

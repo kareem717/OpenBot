@@ -14,7 +14,13 @@ export function browserControlAction(call: BrowserToolCall): BrowserControlActio
     case "snapshot":
       return "snapshot";
     case "screenshot":
+    case "native_snapshot":
       return "screenshot";
+    case "native_input":
+      if (call.args.input.kind === "press") return "key";
+      if (call.args.input.kind === "type") return "type";
+      if (call.args.input.kind === "scroll") return "scroll";
+      return "click";
     case "close_tab":
       return "close-tab";
     case "handle_dialog":

@@ -51,6 +51,7 @@ export const messages = defineMessages("browser", {
   },
   "browser.pip.open": "Open browser Picture in Picture",
   "browser.pip.window": "Browser Picture in Picture",
+  "browser.native.window": "Browser native control",
   "browser.pip.controls": "Browser window controls",
   "browser.pip.reattach": "Reattach browser to right sidebar",
   "browser.pip.reattachTitle": "Reattach browser",

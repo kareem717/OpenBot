@@ -60,12 +60,16 @@ jobs:
       - name: Install browser test display
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes xvfb
+          sudo apt-get install --no-install-recommends --yes xvfb dbus-x11 openbox libgtk-3-0t64 libxtst6
       - name: Check browser credentials, CDP access, and user control
         run: |
           xvfb-run -a bun run test:browser-cdp
           xvfb-run -a bun scripts/browser-smoke.ts --scenario=secret-handoff
           xvfb-run -a bun scripts/browser-user-control-e2e.ts
+      - name: Check native browser mode with real OS input
+        run: |
+          bun scripts/install-cua-driver.ts linux x64
+          OPENBOT_NATIVE_ISOLATED_DISPLAY=1 xvfb-run -a dbus-run-session -- bun scripts/browser-native-control-e2e.ts
       - name: Install and verify the pinned Codex runtime
         run: bun scripts/install-codex-runtime.ts linux x64
       - name: Check native MCP discovery and steering
@@ -98,6 +102,9 @@ jobs:
             .openbot-build/browser-cdp-bridge/smoke.json
             .openbot-build/browser-secret/smoke.json
             .openbot-build/browser-user-control-e2e/report.json
+            .openbot-build/browser-native-control-e2e/report.json
+            .openbot-build/browser-native-control-e2e/native-window.png
+            .openbot-build/browser-native-control-e2e/recording/
           if-no-files-found: ignore
 
   linux:

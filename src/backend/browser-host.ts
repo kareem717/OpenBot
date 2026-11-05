@@ -75,6 +75,7 @@ import {
   toPublicTab,
 } from "./browser-host-tab";
 import { sessionBrowserUserAgent } from "./browser-identity";
+import type { BrowserNativeControl, BrowserNativeInput } from "./browser-native-control";
 import { describeBrowserTarget, navigateAndWait } from "./browser-navigation";
 import {
   browserLoadOptions,
@@ -393,6 +394,8 @@ export class BrowserHost {
   #pictureInPictureOverlayView: WebContentsView | null = null;
   #mainPageListener: ((page: BrowserMainPage | null) => void) | null = null;
   #target: BrowserViewTarget = "main";
+  #nativeControl: BrowserNativeControl | null = null;
+  #nativeTab: { tabId: string; allowed: () => boolean } | null = null;
   readonly #mountedViews = new Map<WebContentsView, BrowserWindow>();
   readonly #takeoverTabIds = new Set<string>();
   /** The tabs that a person controls, with who took each one, so a closed session releases its own. */
@@ -556,6 +559,7 @@ export class BrowserHost {
   /** A reload loses what the page holds, so a tab that a person or a task still has open stays loaded. */
   #tabInUse(tab: BrowserHostTab): boolean {
     return (
+      this.#nativeTab?.tabId === tab.id ||
       this.#activeTabId === tab.id ||
       // A preview capture is not a use. An unload that starts during one waits behind it on the queue.
       tab.pendingOperations > (tab.previewCapture ? 1 : 0) ||
@@ -1002,6 +1006,7 @@ export class BrowserHost {
     const closedIndex = tabIds.indexOf(tabId);
     const browserHadFocus = tab.focusedAtPageClose === true || this.#tabHasFocus();
     tab.externalCdp?.revoke();
+    yield* this.#leaveNative(tab);
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
     // A popup that a private page opened without an opener is not its child, but it holds the same sign-in.
@@ -1070,6 +1075,7 @@ export class BrowserHost {
     tab.engine.invalidateReferences();
     this.#takeoverTabIds.add(tabId);
     this.#revokeConnectedCdp(tab);
+    yield* this.#leaveNative(tab);
     this.#syncAttachedView();
     tab.diagnostics.clearDiagnostics();
     this.#emitChanged();
@@ -1103,6 +1109,7 @@ export class BrowserHost {
     tab.engine.invalidateReferences();
     this.#userControlTabIds.set(tabId, holder);
     this.#revokeConnectedCdp(tab);
+    yield* this.#leaveNative(tab);
     tab.diagnostics.clearDiagnostics();
     this.#emitChanged();
     yield* this.#enqueue(tabId, () => this.#recorder.discard(tabId, "tab-closed"), true).pipe(
@@ -1225,6 +1232,7 @@ export class BrowserHost {
       );
     const protection = { origin: url.origin, submitted: false, replaced: false, running: false };
     this.#revokeConnectedCdp(tab);
+    yield* this.#leaveNative(tab);
     tab.secret = protection;
     this.#invalidateViews(tab);
     this.#syncAttachedView();
@@ -1804,6 +1812,38 @@ export class BrowserHost {
       }),
     list_tabs: (_call, params) => browserSync(() => textResult(this.#toolTabs(params))),
     connect_cdp: ({ args }, params) => this.#connectCdp(args.tabId, params),
+    set_control_mode: ({ args }, params, hooks) => this.#setControlMode(args.tabId, args.mode, params, hooks),
+    native_snapshot: ({ args }, params) =>
+      this.#enqueue(args.tabId, (tab) =>
+        Effect.gen({ self: this }, function* () {
+          const native = yield* browserSync(() => this.#requireNativeAccess(params, tab.id));
+          yield* browserSync(() => this.#requireNoSecretDocument(tab, "Native snapshot"));
+          const snapshot = yield* native.snapshot(tab.id, () => this.#requireNativeAccess(params, tab.id));
+          yield* browserSync(() => {
+            this.#requireNativeAccess(params, tab.id);
+            this.#requireNoSecretDocument(tab, "Native snapshot");
+          });
+          return {
+            success: true,
+            contentItems: [
+              {
+                type: "inputText",
+                text: JSON.stringify({
+                  tabId: tab.id,
+                  snapshotId: snapshot.snapshotId,
+                  width: snapshot.width,
+                  height: snapshot.height,
+                }),
+              },
+              { type: "inputImage", imageUrl: snapshot.image },
+            ],
+          };
+        }),
+      ),
+    native_input: ({ args }, params) =>
+      this.#nativeInput(params, args.tabId, args.snapshotId, args.input).pipe(
+        Effect.map((result) => textResult({ dispatched: true, verification: result.verification })),
+      ),
     disconnect_cdp: ({ args }, params) =>
       Effect.gen({ self: this }, function* () {
         yield* browserSync(() => this.#requireToolTab(params, args.tabId));
@@ -2107,6 +2147,16 @@ export class BrowserHost {
   ): Effect.fn.Return<DynamicToolResult, BrowserOperationError> {
     const outcome = yield* Effect.gen({ self: this }, function* () {
       const call = yield* browserSync(() => parseBrowserToolCall(params.tool, params.arguments));
+      yield* browserSync(() => {
+        if (
+          "tabId" in call.args &&
+          call.args.tabId === this.#nativeTab?.tabId &&
+          !["set_control_mode", "native_snapshot", "native_input", "close_tab", "disconnect_cdp"].includes(call.tool)
+        )
+          throw new Error(
+            "This tab uses native control. Use native_snapshot and native_input, or set_control_mode cdp.",
+          );
+      });
       yield* browserSync(() => this.#controls.begin(params, call));
       return { result: yield* runBrowserTool(this.#toolHandlers, call.tool, call, params, hooks) };
     })
@@ -2151,7 +2201,14 @@ export class BrowserHost {
       .filter((tab) => this.#canUseToolTab(params, tab))
       .map((tab) => {
         const engine = this.#tabs.get(tab.id)?.engine;
-        return engine ? { ...tab, title: engine.scrubText(tab.title), url: engine.scrubText(tab.url) } : tab;
+        return engine
+          ? {
+              ...tab,
+              title: engine.scrubText(tab.title),
+              url: engine.scrubText(tab.url),
+              controlMode: engine.nativeControl ? "native" : "cdp",
+            }
+          : tab;
       });
     const activeTabId = tabs.some((tab) => tab.id === this.#activeTabId)
       ? this.#activeTabId
@@ -2488,6 +2545,7 @@ export class BrowserHost {
         for (const target of this.#persistentSessions()) target.flushStorageData();
         for (const tab of this.#tabs.values()) {
           tab.closing = true;
+          yield* this.#leaveNative(tab);
           tab.engine.releaseDialogs();
           this.#unmountView(tab.view);
           drains.push(
@@ -2661,7 +2719,14 @@ export class BrowserHost {
       pendingOperations: 0,
       focusOnVisible: false,
       environment,
-      engine: new BrowserCdpEngine(view.webContents),
+      engine: new BrowserCdpEngine(view.webContents, undefined, () => {
+        const bounds = view.getBounds();
+        const zoom = view.webContents.getZoomFactor();
+        return {
+          width: Math.max(1, Math.round(bounds.width / zoom)),
+          height: Math.max(1, Math.round(bounds.height / zoom)),
+        };
+      }),
       diagnostics,
       recording: false,
       captureGeneration: 0,
@@ -3151,6 +3216,7 @@ export class BrowserHost {
     this: BrowserHost,
     tab: BrowserHostTab,
   ): Effect.fn.Return<void, BrowserOperationError> {
+    if (tab.engine.nativeControl) return;
     yield* Effect.gen({ self: this }, function* () {
       const background = yield* browserCall(() =>
         tab.contents.executeJavaScript(
@@ -3192,6 +3258,7 @@ export class BrowserHost {
       !this.#visible ||
       !this.#bounds ||
       !tab ||
+      this.#nativeTab?.tabId === tab.id ||
       tab.closing ||
       tab.contents.isDestroyed() ||
       (tab.secret?.submitted && !this.#takeoverTabIds.has(tab.id)) ||
@@ -3327,10 +3394,109 @@ export class BrowserHost {
     return yield* enqueueTabOperation(tab, operation, allowProtected);
   });
 
+  /** Main supplies the OS adapter. It has no renderer or Team API endpoint. */
+  setNativeControl(control: BrowserNativeControl): void {
+    if (this.#nativeTab) throw new Error("Cannot replace active native browser control.");
+    this.#nativeControl = control;
+  }
+
+  #requireNativeAccess(params: DynamicToolCallParams, tabId: string): BrowserNativeControl {
+    this.#requireToolTab(params, tabId);
+    const lease = this.#nativeTab;
+    const control = this.#nativeControl;
+    if (!lease || lease.tabId !== tabId || !control) throw new Error("This tab is not in native control mode.");
+    const tab = this.#tabs.get(tabId);
+    if (!tab?.engine.nativeControl || tab.contents.debugger.isAttached())
+      throw new Error("Close DevTools before using native browser control.");
+    if (!lease.allowed() || !control.ready())
+      throw new Error("Native browser control requires Computer Use on and ready in the agent's own chat.");
+    return control;
+  }
+
+  readonly #leaveNative = Effect.fn("BrowserHost.leaveNative")(function* (this: BrowserHost, tab: BrowserHostTab) {
+    if (this.#nativeTab?.tabId !== tab.id) return;
+    tab.externalCdp?.revoke();
+    this.#invalidateViews(tab);
+    yield* Effect.gen({ self: this }, function* () {
+      if (this.#nativeControl) yield* this.#nativeControl.close(tab.id);
+      if (!tab.closing && !tab.contents.isDestroyed()) yield* tab.engine.setNativeControl(false);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          this.#nativeTab = null;
+          this.#syncAttachedView();
+        }),
+      ),
+    );
+  });
+
+  readonly #setControlMode = Effect.fn("BrowserHost.setControlMode")(function* (
+    this: BrowserHost,
+    tabId: string,
+    mode: "native" | "cdp",
+    params: DynamicToolCallParams,
+    hooks: BrowserDynamicToolHooks,
+  ) {
+    yield* browserSync(() => this.#requireToolTab(params, tabId));
+    yield* this.#enqueue(tabId, (tab) =>
+      Effect.gen({ self: this }, function* () {
+        if (mode === "cdp") {
+          yield* this.#leaveNative(tab);
+          return;
+        }
+        const control = this.#nativeControl;
+        const allowed = hooks.nativeControlAllowed;
+        if (!control?.ready() || !allowed?.())
+          return yield* browserFailure(
+            new Error("Native browser control requires Computer Use on and ready in the agent's own chat."),
+          );
+        if (this.#nativeTab) {
+          if (this.#nativeTab.tabId !== tabId)
+            return yield* browserFailure(
+              new Error("Another tab holds native browser control. Return it to cdp mode first."),
+            );
+          return;
+        }
+        yield* browserSync(() => this.#requireNoSecretDocument(tab, "Native mode"));
+        this.#revokeConnectedCdp(tab);
+        this.#invalidateViews(tab);
+        yield* this.#recorder.discard(tabId, "requested");
+        this.#nativeTab = { tabId, allowed };
+        yield* Effect.gen({ self: this }, function* () {
+          yield* tab.engine.setNativeControl(true);
+          this.#unmountView(tab.view);
+          yield* control.open(tabId, tab.view);
+          this.#syncAttachedView();
+        }).pipe(Effect.onError(() => this.#leaveNative(tab).pipe(Effect.ignore)));
+      }),
+    );
+    if (mode === "cdp") return textResult({ tabId, mode });
+    return yield* this.#connectCdp(tabId, params, true).pipe(
+      Effect.onError(() => this.#enqueue(tabId, (tab) => this.#leaveNative(tab)).pipe(Effect.ignore)),
+    );
+  });
+
+  readonly #nativeInput = Effect.fn("BrowserHost.nativeInput")(function* (
+    this: BrowserHost,
+    params: DynamicToolCallParams,
+    tabId: string,
+    snapshotId: string,
+    input: BrowserNativeInput,
+  ) {
+    return yield* this.#enqueue(tabId, (tab) =>
+      Effect.gen({ self: this }, function* () {
+        const native = yield* browserSync(() => this.#requireNativeAccess(params, tab.id));
+        tab.engine.invalidateReferences();
+        return yield* native.input(tab.id, snapshotId, input, () => this.#requireNativeAccess(params, tab.id));
+      }),
+    );
+  });
+
   readonly #connectCdp = Effect.fn("BrowserHost.connectCdp")(function* (
     this: BrowserHost,
     tabId: string,
     params: DynamicToolCallParams,
+    nativeOnly = false,
   ) {
     yield* browserSync(() => this.#requireToolTab(params, tabId));
     return yield* this.#enqueue(tabId, (tab) =>
@@ -3338,6 +3504,8 @@ export class BrowserHost {
         const sourceSecretTabs = new Set<BrowserHostTab>();
         const checkAccess = () => {
           this.#requireToolTab(params, tabId);
+          if (nativeOnly) this.#requireNativeAccess(params, tabId);
+          else if (tab.engine.nativeControl) throw new Error("Switch this tab to cdp control before connecting.");
           if (
             [...this.#connectedTabs(tab)].some(
               (connected) =>
@@ -3351,24 +3519,33 @@ export class BrowserHost {
             throw new Error("External CDP access is protected during authentication.");
         };
         yield* browserSync(checkAccess);
-        if (tab.externalCdp && !tab.externalCdp.revoked)
-          return textResult({
+        const connectionResult = (bridge: BrowserCdpBridge) =>
+          textResult({
             tabId,
-            endpoint: tab.externalCdp.endpoint,
-            secretRegistrationUrl: tab.externalCdp.secretRegistrationUrl,
+            mode: nativeOnly ? "native" : "cdp",
+            ...(nativeOnly ? { nativeInputUrl: bridge.nativeInputUrl } : { endpoint: bridge.endpoint }),
+            secretRegistrationUrl: bridge.secretRegistrationUrl,
           });
-        const lease = yield* tab.engine.retainExternalCdp();
+        if (tab.externalCdp && !tab.externalCdp.revoked) return connectionResult(tab.externalCdp);
+        const lease = nativeOnly ? null : yield* tab.engine.retainExternalCdp();
         const markScripted = () => {
           for (const frame of tab.contents.mainFrame.framesInSubtree) {
             if (frame.origin !== "null") this.#agentScriptedOrigins.add(frame.origin);
           }
         };
         const bridge = new BrowserCdpBridge({
+          nativeOnly,
+          ...(nativeOnly
+            ? {
+                nativeInput: (snapshotId: string, input: BrowserNativeInput) =>
+                  this.#nativeInput(params, tabId, snapshotId, input),
+              }
+            : {}),
           contents: tab.contents,
           targetId: tab.id,
           checkAccess,
           captureAllowed: () => ![...this.#connectedTabs(tab)].some((connected) => connected.sourceSecretDocument),
-          release: lease.release,
+          release: () => lease?.release(),
           protectSourceSecrets: () =>
             this.#enqueue(tabId, (current) =>
               Effect.gen({ self: this }, function* () {
@@ -3388,6 +3565,7 @@ export class BrowserHost {
               Effect.gen({ self: this }, function* () {
                 yield* browserSync(checkAccess);
                 if (bridge.revoked) return yield* browserFailure(new Error("The tab CDP connection ended."));
+                if (!lease) return yield* browserFailure(new Error("CDP is disconnected in native mode."));
                 const refreshCookies = browserCall(() => current.contents.session.cookies.get({})).pipe(
                   Effect.tap((cookies) =>
                     Effect.sync(() =>
@@ -3412,10 +3590,10 @@ export class BrowserHost {
             ),
         });
         yield* Scope.addFinalizer(tab.scope, bridge.close());
-        const endpoint = yield* bridge.start();
-        markScripted();
+        yield* bridge.start();
+        if (!nativeOnly) markScripted();
         tab.externalCdp = bridge;
-        return textResult({ tabId, endpoint, secretRegistrationUrl: bridge.secretRegistrationUrl });
+        return connectionResult(bridge);
       }),
     );
   });

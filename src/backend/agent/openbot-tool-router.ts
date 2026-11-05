@@ -460,6 +460,9 @@ export class OpenBotToolRouter {
                   const linkVault = yield* this.#attention.linkCardVault(client, toolRequest, params);
                   if (linkVault && !("secret" in linkVault)) return linkVault;
                   return yield* this.#browser.handleDynamicTool(params, {
+                    nativeControlAllowed: () =>
+                      !this.#conversation.isTaskThread(params.threadId) &&
+                      agentComputerUseEnabled(this.#requireAgent(agentId)),
                     onUserControl: userControl,
                     cardVault: linkVault ?? this.#attention.cardVault(client, toolRequest, params),
                   });

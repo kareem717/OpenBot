@@ -404,6 +404,38 @@ rejects non-web navigation URLs and persistent initialization scripts.
 `list_tabs` and `status` return owner-filtered metadata while a person controls a tab. They do not
 wait for control release. Page reads and mutations retain their existing wait behavior.
 
+### Native browser control
+
+`set_control_mode` selects `native` or `cdp` for the same tab. Native mode revokes the external
+CDP endpoint, stops recordings and existing streams, and detaches OpenBot's debugger. The engine
+refuses new CDP leases until the mode changes back. It keeps the WebContents, cookies, storage,
+and document. `browser-native-capture.ts` supplies previews through Electron frame subscriptions
+without CDP or viewport emulation.
+
+Main owns a separate window that holds only the selected remote page. It has no OpenBot preload
+or toolbar. The host removes that view from its normal mount; another agent's active tab cannot
+replace it. Only one tab holds native control. `native_snapshot` captures that window and returns
+an opaque snapshot ID. `native_input` accepts image coordinates and a small set of editing keys,
+never a process ID, window ID, shell command, or arbitrary key chord. The adapter verifies the
+owned window and current snapshot before it sends foreground OS input. Delivery is not proof
+that the page accepted an action; the agent must read the result.
+
+The calling agent must have Computer Use enabled and ready in its own chat. Task threads cannot
+use native control. The host checks these conditions, ownership, and user takeover for each action,
+including local HTTP input. User control, secure fill, tab close, and shutdown release the native
+window. Returning to `cdp` does not reload the page; `connect_cdp` provides a new endpoint.
+
+Supplied credentials use the local `secretRegistrationUrl` before entry, as with external CDP.
+The native connection also returns `nativeInputUrl`. A local script can POST `{snapshotId,input}`
+there without placing a password or code in provider tool arguments. Local text requires prior
+registration. Registered values protect logs and page captures; images remain blocked until
+navigation. A protected document cannot open a new external endpoint. Do not switch modes in
+the middle of a protected credential entry; finish the submission first.
+
+Native mode uses OS input, but it does not guarantee that a site accepts the browser. Network
+address, browser identity, account state, and site policy can still cause a challenge or refusal.
+Agent-browser's connection to an existing tab still uses CDP.
+
 ### Secure input cards
 
 `openbot_browser.submit_secret` uses the existing attention/takeover lifecycle with optional public

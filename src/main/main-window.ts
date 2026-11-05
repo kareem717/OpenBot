@@ -877,6 +877,34 @@ export function showMainWindow(window: BrowserWindow): void {
   presentMainWindow(window, process.platform, () => app.show());
 }
 
+/** The browser host lends its existing page view to this window. No application renderer loads here. */
+export function createNativeBrowserWindow(title: string): BrowserWindow {
+  const area = screen.getPrimaryDisplay().workArea;
+  const window = new BrowserWindow({
+    title,
+    width: Math.min(1100, area.width),
+    height: Math.min(800, area.height),
+    frame: false,
+    show: false,
+    resizable: false,
+    maximizable: false,
+    minWidth: 400,
+    minHeight: 300,
+    fullscreenable: false,
+    backgroundColor: MAIN_WINDOW_DARK_BACKGROUND,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  window.setMenu(null);
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  return window;
+}
+
 export function loadDynamicIslandRenderer(window: BrowserWindow, display: Display, variant: AppVariant): Promise<void> {
   const displayMode = display.internal ? "notch" : "island";
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
