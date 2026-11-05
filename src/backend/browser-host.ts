@@ -3519,6 +3519,7 @@ export class BrowserHost {
             throw new Error("External CDP access is protected during authentication.");
         };
         yield* browserSync(checkAccess);
+        if (!nativeOnly) yield* this.activate(tabId);
         const connectionResult = (bridge: BrowserCdpBridge) =>
           textResult({
             tabId,

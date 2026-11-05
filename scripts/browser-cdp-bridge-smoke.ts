@@ -71,6 +71,7 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
     assert.equal(forbidden.success, false);
     checks.push("another agent cannot obtain the endpoint");
     const connection = payload(await call("connect_cdp"));
+    assert.equal(browser.activeTabId, tab.id, "External CDP selects the requested existing tab.");
     endpoint = z.string().parse(connection.endpoint);
     const registrationUrl = z.string().parse(connection.secretRegistrationUrl);
     // Each fixture has its own session; write the marker through the selected CDP endpoint below.
