@@ -3035,7 +3035,7 @@ export class BrowserHost {
         );
         contents.navigationHistory.clear();
       }
-      if (tab.externalCdp?.allowsScripts && !tab.externalCdp.revoked) {
+      if (tab.externalCdp?.hasRunScript && !tab.externalCdp.revoked) {
         const origin = urlOrigin(url);
         if (origin) this.#agentScriptedOrigins.add(origin);
       }
@@ -3584,13 +3584,19 @@ export class BrowserHost {
                   ),
                 );
                 yield* refreshCookies;
-                markScripted();
+                if (bridge.hasRunScript) markScripted();
                 const result = yield* boundEngineOperation(
                   current,
                   lease.send(method, arguments_, sessionId),
                   30_000,
                   "External CDP command timed out.",
                   keepQueueBlocked,
+                ).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      if (bridge.hasRunScript) markScripted();
+                    }),
+                  ),
                 );
                 yield* refreshCookies;
                 return result;
@@ -3599,7 +3605,6 @@ export class BrowserHost {
         });
         yield* Scope.addFinalizer(tab.scope, bridge.close());
         yield* bridge.start();
-        if (!nativeOnly) markScripted();
         tab.externalCdp = bridge;
         return connectionResult(bridge);
       }),

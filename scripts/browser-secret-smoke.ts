@@ -1,19 +1,24 @@
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { BrowserJsonValue } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
 import { webContents } from "electron";
-import { WebSocket } from "ws";
+import { type RawData, WebSocket } from "ws";
 import { z } from "zod";
 import type { BrowserHost } from "../src/backend/browser-host";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import type { DynamicToolCallParams } from "../src/backend/protocol";
 import { bitwardenLoginFixture, runBitwardenBrowserSmoke } from "./bitwarden-browser-smoke";
 import { waitForPresentedFrame } from "./browser-smoke-frames";
+import { withoutElectronRuntimeFlags } from "./electron-spawn-env";
 
 /** HTTPS is served inside this isolated session. No credentials or network service are used. */
 export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin: string): Promise<void> {
   const checks: string[] = [];
+  const cliCommands: Array<{ version: string; methods: string[]; helperHashes: string[] }> = [];
   const seed = await runCauseEffect(browser.open(localOrigin, "secret-thread", "secret-agent"));
   const seedContents = webContents.getAllWebContents().find((contents) => contents.getURL() === seed.url);
   if (!seedContents) throw new Error("Missing authentication fixture session.");
@@ -24,10 +29,33 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
       ![
         "authentication.openbot.test",
         "native-authentication.openbot.test",
+        "inspected-authentication.openbot.test",
         "scripted-authentication.openbot.test",
+        "called-authentication.openbot.test",
+        "mutated-authentication.openbot.test",
+        "modified-authentication.openbot.test",
+        "cli027-authentication.openbot.test",
+        "cli041-authentication.openbot.test",
       ].includes(url.hostname)
     )
       return new Response("Not found", { status: 404 });
+    if (url.pathname === "/cli-login")
+      return new Response(
+        `<!doctype html><title>CLI authentication fixture</title>
+        <label>Email<input id="email" type="email"></label>
+        <button id="password-choice" onclick="document.querySelector('#login').hidden = false">Use password</button>
+        <form id="login" hidden method="post" action="/cli-code" onsubmit="if(document.querySelector('#cli-password').value!=='fixture-cli-password')event.preventDefault()">
+        <label>Password<input id="cli-password" type="password" autocomplete="current-password"></label>
+        <button id="cli-submit">Sign in</button></form>`,
+        { headers: { "Content-Type": "text/html" } },
+      );
+    if (url.pathname === "/cli-code")
+      return new Response(
+        `<!doctype html><title>Authenticator fixture</title>
+        <form method="post" action="/complete" onsubmit="if(document.querySelector('#cli-code').value!=='739182')event.preventDefault()"><label>Authenticator code<input id="cli-code" inputmode="numeric" autocomplete="one-time-code"></label>
+        <button id="cli-verify">Verify</button></form>`,
+        { headers: { "Content-Type": "text/html" } },
+      );
     if (url.pathname === "/bitwarden-password") return bitwardenLoginFixture("password");
     if (url.pathname === "/bitwarden-authenticator") {
       const field = url.searchParams.get("field");
@@ -82,8 +110,9 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
       snapshot: () => Effect.die(new Error("This fixture must not capture the OS.")),
       input: () => Effect.die(new Error("This fixture must not send OS input.")),
     });
-    for (const native of [true, false]) {
-      const host = native ? "native-authentication.openbot.test" : "scripted-authentication.openbot.test";
+    for (const mode of ["native", "inspected", "scripted", "called", "mutated", "modified"] as const) {
+      const native = mode === "native";
+      const host = `${mode}-authentication.openbot.test`;
       const tab = await runCauseEffect(browser.open(localOrigin, "secret-thread", "secret-agent"));
       try {
         const connection = await runCauseEffect(
@@ -94,7 +123,7 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
               threadId: "secret-thread",
               ownerAgentId: "secret-agent",
               turnId: "secret-turn",
-              callId: `origin-${native}`,
+              callId: `origin-${mode}`,
               arguments: { tabId: tab.id, ...(native ? { mode: "native" } : {}) },
             },
             { nativeControlAllowed: () => true },
@@ -104,6 +133,74 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
         const contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
         if (!contents) throw new Error("Missing origin fixture page.");
         await contents.loadURL(`https://${host}/login`);
+        await waitForPresentedFrame(contents);
+        let closed: Promise<unknown[]> | undefined;
+        if (!native) {
+          const item = connection.contentItems.find((entry) => entry.type === "inputText");
+          if (item?.type !== "inputText") throw new Error("Missing inspection endpoint.");
+          const endpoint = z.object({ endpoint: z.string() }).parse(JSON.parse(item.text)).endpoint;
+          const socket = new WebSocket(endpoint);
+          await once(socket, "open");
+          closed = once(socket, "close");
+          let sequence = 0;
+          const responseSchema = z.object({
+            id: z.number().optional(),
+            result: z.json().optional(),
+            error: z.json().optional(),
+          });
+          const send = async (method: string, params: Record<string, BrowserJsonValue> = {}) => {
+            const id = ++sequence;
+            const answer = new Promise<z.infer<typeof responseSchema>>((resolve) => {
+              const receive = (data: RawData) => {
+                const response = responseSchema.parse(JSON.parse(data.toString()));
+                if (response.id !== id) return;
+                socket.off("message", receive);
+                resolve(response);
+              };
+              socket.on("message", receive);
+            });
+            socket.send(JSON.stringify({ id, method, params }));
+            const response = await answer;
+            if (response.error) throw new Error(`Inspection fixture command failed: ${method}`);
+            return response.result;
+          };
+          for (const method of [
+            "Page.enable",
+            "Runtime.enable",
+            "Network.enable",
+            "DOM.enable",
+            "Accessibility.enable",
+          ])
+            await send(method);
+          const tree = await send("Accessibility.getFullAXTree");
+          if (!JSON.stringify(tree).includes("Password")) throw new Error("CDP did not read the real login page.");
+          if (mode === "scripted")
+            await send("Runtime.evaluate", {
+              expression: "document.querySelector('#password').addEventListener('input', () => {}); true",
+            });
+          if (mode === "modified")
+            await send("Runtime.evaluate", {
+              expression:
+                "(function(){ var els = document.querySelectorAll('[data-__ab-ci]'); for (var i = 0; i < els.length; i++) els[i].removeAttribute('data-__ab-ci'); return els.length; })(); document.querySelector('#password').addEventListener('input', () => {});",
+            });
+          if (mode === "mutated" || mode === "called") {
+            const document = z.object({ root: z.object({ nodeId: z.number() }) }).parse(await send("DOM.getDocument"));
+            const field = z
+              .object({ nodeId: z.number() })
+              .parse(await send("DOM.querySelector", { nodeId: document.root.nodeId, selector: "#password" }));
+            if (mode === "mutated")
+              await send("DOM.setAttributeValue", { nodeId: field.nodeId, name: "oninput", value: "void 0" });
+            else {
+              const node = z
+                .object({ object: z.object({ objectId: z.string() }) })
+                .parse(await send("DOM.resolveNode", { nodeId: field.nodeId }));
+              await send("Runtime.callFunctionOn", {
+                objectId: node.object.objectId,
+                functionDeclaration: "function() { this.addEventListener('input', () => {}); }",
+              });
+            }
+          }
+        }
         const prepared = await runCauseEffect(
           browser.prepareSecret({
             namespace: "openbot_browser",
@@ -111,7 +208,7 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
             threadId: "secret-thread",
             ownerAgentId: "secret-agent",
             turnId: "secret-turn",
-            callId: `origin-secret-${native}`,
+            callId: `origin-secret-${mode}`,
             arguments: {
               tabId: tab.id,
               method: "password",
@@ -121,13 +218,130 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
             },
           }),
         );
+        if (closed) await closed;
+        const scripted = mode === "scripted" || mode === "called" || mode === "mutated" || mode === "modified";
+        if (prepared.agentScriptedOrigin !== scripted)
+          throw new Error(`The host classified ${mode} access incorrectly for vault fill.`);
+        if (mode === "inspected") {
+          if (
+            !prepared.vaultFillable ||
+            (await runCauseEffect(prepared.submit("fixture-inspected-password", true))) !== "submitted"
+          )
+            throw new Error("Read-only CDP inspection prevented a saved-password submission.");
+          if (!(await runCauseEffect(browser.snapshot(tab.id))).url.endsWith("/complete"))
+            throw new Error("Read-only inspected login did not complete.");
+        }
         prepared.cancel();
-        if (prepared.agentScriptedOrigin !== !native)
-          throw new Error("The host confused native navigation with script access.");
-        checks.push(
-          native ? "native navigation retains vault eligibility" : "CDP navigation blocks automatic vault fill",
-        );
+        checks.push(`${mode}: ${scripted ? "script access blocks" : "inspection retains"} automatic vault fill`);
       } finally {
+        await runCauseEffect(browser.close(tab.id));
+      }
+    }
+    for (const version of ["0.27.0", "0.41.2"]) {
+      const host = version === "0.27.0" ? "cli027-authentication.openbot.test" : "cli041-authentication.openbot.test";
+      const tab = await runCauseEffect(browser.open(`https://${host}/cli-login`, "secret-thread", "secret-agent"));
+      const contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
+      if (!contents) throw new Error("Missing CLI authentication page.");
+      const methods = new Set<string>();
+      const helperHashes = new Set<string>();
+      const originalSend = contents.debugger.sendCommand;
+      const cliSession = `openbot-vault-${randomUUID()}`;
+      const connection = await runCauseEffect(
+        browser.handleDynamicTool({
+          namespace: "openbot_browser",
+          tool: "connect_cdp",
+          threadId: "secret-thread",
+          ownerAgentId: "secret-agent",
+          turnId: "secret-turn",
+          callId: `cli-${version}`,
+          arguments: { tabId: tab.id },
+        }),
+      );
+      const item = connection.contentItems.find((entry) => entry.type === "inputText");
+      if (!connection.success || item?.type !== "inputText") throw new Error("Missing CLI authentication endpoint.");
+      const endpoint = z.object({ endpoint: z.string() }).parse(JSON.parse(item.text)).endpoint;
+      const cli = async (...args: string[]) => {
+        const child = spawn("bunx", [`agent-browser@${version}`, "--session", cliSession, "--cdp", endpoint, ...args], {
+          env: withoutElectronRuntimeFlags(process.env),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let output = "";
+        child.stdout.on("data", (data) => {
+          output += data.toString();
+        });
+        child.stderr.on("data", (data) => {
+          output += data.toString();
+        });
+        const [code] = await once(child, "close");
+        if (code !== 0) throw new Error(`Fixture agent-browser ${version} ${args[0]} failed: ${output}`);
+        return output;
+      };
+      let cliOpen = true;
+      try {
+        await waitForPresentedFrame(contents);
+        contents.debugger.sendCommand = (method, params, sessionId) => {
+          methods.add(method);
+          const source =
+            method === "Runtime.evaluate"
+              ? params?.expression
+              : method === "Runtime.callFunctionOn"
+                ? params?.functionDeclaration
+                : undefined;
+          if (typeof source === "string") helperHashes.add(createHash("sha256").update(source).digest("hex"));
+          return originalSend.call(contents.debugger, method, params, sessionId);
+        };
+        const snapshot = await cli("snapshot", "-i");
+        const email = /textbox "Email" \[ref=(e\d+)\]/u.exec(snapshot)?.[1];
+        const password = /button "Use password" \[ref=(e\d+)\]/u.exec(snapshot)?.[1];
+        if (!email || !password) throw new Error(`agent-browser ${version} did not find the login methods.`);
+        if (version === "0.27.0") {
+          await cli("fill", `@${email}`, "fixture@example.test");
+          await cli("click", `@${password}`);
+          if ((await contents.executeJavaScript("document.querySelector('#email').value")) !== "fixture@example.test")
+            throw new Error("The real CLI did not fill the fixture username.");
+        } else await contents.executeJavaScript("document.querySelector('#login').hidden = false");
+        await cli("close");
+        cliOpen = false;
+        contents.debugger.sendCommand = originalSend;
+        for (const [method, selector, submitTarget, value, path] of [
+          ["password", "#cli-password", "#cli-submit", "fixture-cli-password", "/cli-code"],
+          ["authenticator", "#cli-code", "#cli-verify", "739182", "/complete"],
+        ] as const) {
+          await waitForPresentedFrame(contents);
+          const handoff = await runCauseEffect(
+            browser.prepareSecret({
+              namespace: "openbot_browser",
+              tool: "submit_secret",
+              threadId: "secret-thread",
+              ownerAgentId: "secret-agent",
+              turnId: "secret-turn",
+              callId: `cli-secret-${version}-${method}`,
+              arguments: {
+                tabId: tab.id,
+                method,
+                digits: 6,
+                targets: [{ kind: "css", selector }],
+                submission: "click",
+                submitTarget: { kind: "css", selector: submitTarget },
+              },
+            }),
+          );
+          if (handoff.agentScriptedOrigin || !handoff.vaultFillable)
+            throw new Error(`agent-browser ${version} disabled the ${method} vault fill.`);
+          if ((await runCauseEffect(handoff.submit(value, true))) !== "submitted")
+            throw new Error(`agent-browser ${version} ${method} submission failed.`);
+          const result = await runCauseEffect(browser.snapshot(tab.id));
+          if (new URL(result.url).pathname !== path || JSON.stringify(result).includes(value))
+            throw new Error("CLI authentication failed or exposed its value.");
+        }
+        checks.push(`agent-browser ${version}: real snapshot before saved password and authenticator fill`);
+      } finally {
+        contents.debugger.sendCommand = originalSend;
+        if (cliOpen) await cli("close").catch(() => {});
+        cliCommands.push({ version, methods: [...methods].sort(), helperHashes: [...helperHashes].sort() });
+        const directory = join(process.cwd(), ".openbot-build", "browser-secret");
+        await mkdir(directory, { recursive: true });
+        await writeFile(join(directory, "cli-commands.json"), JSON.stringify(cliCommands, null, 2));
         await runCauseEffect(browser.close(tab.id));
       }
     }
@@ -331,6 +545,9 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
         browser.open("https://authentication.openbot.test/login", "secret-thread", "secret-agent"),
       );
       try {
+        const contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
+        if (!contents) throw new Error("Missing vault form fixture.");
+        await waitForPresentedFrame(contents);
         const handoff = await runCauseEffect(
           browser.prepareSecret({
             namespace: "openbot_browser",
@@ -343,7 +560,10 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
               tabId: tab.id,
               method: "password",
               targets: [{ kind: "css", selector }],
-              submission: "enter",
+              submission: selector === "#override-password" ? "click" : "enter",
+              ...(selector === "#override-password"
+                ? { submitTarget: { kind: "css", selector: "#override-submit" } }
+                : {}),
             },
           }),
         );
@@ -456,7 +676,7 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
     }
     const directory = join(process.cwd(), ".openbot-build", "browser-secret");
     await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "smoke.json"), JSON.stringify({ passed: true, checks }, null, 2));
+    await writeFile(join(directory, "smoke.json"), JSON.stringify({ passed: true, checks, cliCommands }, null, 2));
     process.stdout.write("BrowserHost: secure password, OTP and authenticator handoff passed.\n");
   } finally {
     protocol.unhandle("https");
