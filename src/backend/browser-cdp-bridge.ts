@@ -63,6 +63,7 @@ interface BrowserCdpBridgeOptions {
   contents: WebContents;
   targetId: string;
   checkAccess(): void;
+  captureAllowed(): boolean;
   send: SendCommand;
   protectSourceSecrets(): Effect.Effect<void, BrowserOperationError>;
   release(): void;
@@ -85,7 +86,6 @@ export class BrowserCdpBridge {
   #port = 0;
   #revoked = false;
   #pending = 0;
-  #sourceSecrets = false;
 
   constructor(options: BrowserCdpBridgeOptions) {
     this.#options = options;
@@ -156,7 +156,6 @@ export class BrowserCdpBridge {
     this.#options.contents.debugger.on("message", this.#onMessage);
     this.#options.contents.debugger.on("detach", this.revoke);
     this.#options.contents.once("destroyed", this.revoke);
-    this.#options.contents.on("did-navigate", this.#newDocument);
     return this.endpoint;
   });
 
@@ -167,7 +166,6 @@ export class BrowserCdpBridge {
     this.#options.contents.debugger.off("message", this.#onMessage);
     this.#options.contents.debugger.off("detach", this.revoke);
     this.#options.contents.off("destroyed", this.revoke);
-    this.#options.contents.off("did-navigate", this.#newDocument);
     for (const client of this.#sockets.clients) client.terminate();
     this.#socket = undefined;
     this.#frameSessions.clear();
@@ -225,7 +223,6 @@ export class BrowserCdpBridge {
     });
     const source = yield* browserSync(() => sourceSchema.parse(JSON.parse(body)));
     registerSecretValues(source.values, { allowShort: true });
-    this.#sourceSecrets = true;
     yield* this.#options.protectSourceSecrets();
     yield* this.#options.send("Page.stopScreencast").pipe(Effect.ignore);
     response
@@ -249,7 +246,7 @@ export class BrowserCdpBridge {
       Effect.gen({ self: this }, function* () {
         yield* browserSync(() => this.#checkAccess());
         const { method, params, sessionId } = command;
-        if (this.#sourceSecrets && SOURCE_CAPTURE_METHODS.has(method))
+        if (!this.#options.captureAllowed() && SOURCE_CAPTURE_METHODS.has(method))
           return yield* browserFailure(new Error("Images are protected while the page holds supplied credentials."));
         if (method === "Page.navigate" && (!isString(params.url) || !isAllowedMainUrl(params.url)))
           return yield* browserFailure(new Error("This navigation URL is unavailable for an OpenBot tab."));
@@ -308,13 +305,9 @@ export class BrowserCdpBridge {
     );
   });
 
-  readonly #newDocument = (): void => {
-    this.#sourceSecrets = false;
-  };
-
   readonly #onMessage = (_event: Electron.Event, method: string, params: DynamicRecord, sessionId?: string): void => {
     if (["Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Log.entryAdded"].includes(method)) return;
-    if (this.#sourceSecrets && method === "Page.screencastFrame") return;
+    if (!this.#options.captureAllowed() && method === "Page.screencastFrame") return;
     // Child sessions can only be created by the iframe-only auto-attach above.
     if (
       method === "Target.attachedToTarget" &&
@@ -351,14 +344,14 @@ export class BrowserCdpBridge {
 }
 
 /** Preserve protocol objects and long snapshot strings while redacting registered secret values. */
-function scrubCdp(value: unknown, key?: string): BrowserJsonValue {
+function scrubCdp(value: unknown, redactNumbers = false): BrowserJsonValue {
   if (isString(value)) return redactText(value);
   if (typeof value === "number") {
     const scrubbed = redactText(String(value));
-    return key !== "value" || scrubbed === String(value) ? value : scrubbed;
+    return !redactNumbers || scrubbed === String(value) ? value : scrubbed;
   }
   if (value === null || typeof value === "boolean") return value;
-  if (Array.isArray(value)) return value.map((entry) => scrubCdp(entry));
+  if (Array.isArray(value)) return value.map((entry) => scrubCdp(entry, redactNumbers));
   if (!isDynamicRecord(value)) return null;
   return Object.fromEntries(
     Object.entries(value)
@@ -369,7 +362,7 @@ function scrubCdp(value: unknown, key?: string): BrowserJsonValue {
           ? "[redacted]"
           : key.toLowerCase() === "headers" && isDynamicRecord(entry)
             ? Object.fromEntries(Object.keys(entry).map((name) => [name, "[redacted]"]))
-            : scrubCdp(entry, key),
+            : scrubCdp(entry, redactNumbers || key === "value"),
       ]),
   );
 }

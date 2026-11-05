@@ -395,6 +395,8 @@ connected page; it must not print the secret or include its literal value in a p
 Before entry, that script sends `{ "values": ["..."] }` to the returned `secretRegistrationUrl`
 and waits for `{ "registered": true }`. This loopback-only operation registers exact-value
 redaction, stops recording and live views, and protects images until the document navigates. It
+also protects every connected popup and opener. Those contexts keep protection while another
+connected protected document can retain the value; new popups are refused during that interval. It
 returns no credential value. Cookie values are registered before and after native commands;
 network cookie fields, request bodies, and headers are redacted in protocol messages. The bridge
 rejects non-web navigation URLs and persistent initialization scripts.

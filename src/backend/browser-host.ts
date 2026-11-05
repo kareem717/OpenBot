@@ -1418,7 +1418,7 @@ export class BrowserHost {
 
   /** A filled card shows on the page, so no image of the tab leaves the host until it navigates. */
   #requireNoFilledCard(tab: BrowserHostTab, action: string): void {
-    if (tab.filledCard || tab.sourceSecretDocument)
+    if (tab.filledCard || [...this.#connectedTabs(tab)].some((connected) => connected.sourceSecretDocument))
       throw new Error(`${action} is unavailable while the page shows a filled card. Use snapshots until it navigates.`);
   }
 
@@ -2955,7 +2955,9 @@ export class BrowserHost {
     contents.on("did-navigate", (_event, url) => {
       tab.documents += 1;
       if (tab.sourceSecretDocument) {
-        tab.sourceSecretDocument = false;
+        tab.sourceSecretDocument = [...this.#connectedTabs(tab)].some(
+          (connected) => connected !== tab && connected.sourceSecretDocument,
+        );
         contents.navigationHistory.clear();
       }
       if (tab.externalCdp && !tab.externalCdp.revoked) {
@@ -3004,17 +3006,18 @@ export class BrowserHost {
     contents.setWindowOpenHandler(({ url, referrer, postBody, disposition }) => {
       if (this.#destroying || this.#tabs.get(tab.id) !== tab) return { action: "deny" };
       const unsupported = !["foreground-tab", "background-tab", "new-window"].includes(disposition);
-      const failure = tab.secret
-        ? sourceText("error.backend.popupSecureInput")
-        : unsupported
-          ? sourceText("error.backend.popupUnsupportedType")
-          : !isAllowedMainUrl(url)
-            ? sourceText("error.backend.popupUnsupportedAddress")
-            : !this.#hasTabCapacity(tab.ownerThreadId, tab.ownerAgentId)
-              ? sourceText("error.backend.popupTabLimit")
-              : this.#memoryLow()
-                ? sourceText("error.backend.browserLowMemory")
-                : undefined;
+      const failure =
+        tab.secret || [...this.#connectedTabs(tab)].some((connected) => connected.sourceSecretDocument)
+          ? sourceText("error.backend.popupSecureInput")
+          : unsupported
+            ? sourceText("error.backend.popupUnsupportedType")
+            : !isAllowedMainUrl(url)
+              ? sourceText("error.backend.popupUnsupportedAddress")
+              : !this.#hasTabCapacity(tab.ownerThreadId, tab.ownerAgentId)
+                ? sourceText("error.backend.popupTabLimit")
+                : this.#memoryLow()
+                  ? sourceText("error.backend.browserLowMemory")
+                  : undefined;
       if (failure) {
         tab.popupFailure = { id: randomUUID(), message: failure };
         this.#emitChanged();
@@ -3332,7 +3335,7 @@ export class BrowserHost {
     yield* browserSync(() => this.#requireToolTab(params, tabId));
     return yield* this.#enqueue(tabId, (tab) =>
       Effect.gen({ self: this }, function* () {
-        let ownsSourceSecrets = false;
+        const sourceSecretTabs = new Set<BrowserHostTab>();
         const checkAccess = () => {
           this.#requireToolTab(params, tabId);
           if (
@@ -3340,7 +3343,7 @@ export class BrowserHost {
               (connected) =>
                 connected.secretDocument ||
                 connected.filledCard ||
-                (connected.sourceSecretDocument && !(connected === tab && ownsSourceSecrets)),
+                (connected.sourceSecretDocument && !sourceSecretTabs.has(connected)),
             )
           )
             throw new Error("External CDP access is protected while a page holds credentials.");
@@ -3364,16 +3367,20 @@ export class BrowserHost {
           contents: tab.contents,
           targetId: tab.id,
           checkAccess,
+          captureAllowed: () => ![...this.#connectedTabs(tab)].some((connected) => connected.sourceSecretDocument),
           release: lease.release,
           protectSourceSecrets: () =>
             this.#enqueue(tabId, (current) =>
               Effect.gen({ self: this }, function* () {
                 yield* browserSync(checkAccess);
-                ownsSourceSecrets = true;
-                current.sourceSecretDocument = true;
-                this.#invalidateViews(current);
-                current.diagnostics.clearDiagnostics();
-                yield* this.#recorder.discard(tabId, "requested");
+                for (const connected of this.#connectedTabs(current)) {
+                  sourceSecretTabs.add(connected);
+                  connected.sourceSecretDocument = true;
+                  if (connected !== current) connected.externalCdp?.revoke();
+                  this.#invalidateViews(connected);
+                  connected.diagnostics.clearDiagnostics();
+                  yield* this.#recorder.discard(connected.id, "requested");
+                }
               }),
             ),
           send: (method, arguments_, sessionId) =>

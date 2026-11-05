@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { webContents } from "electron";
 import * as webSockets from "ws";
 import { z } from "zod";
 import type { BrowserHost } from "../src/backend/browser-host";
@@ -138,12 +139,13 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
       "Runtime.evaluate",
       {
         expression:
-          "({password:'fixture-unregistered-password',associatedCookies:[{cookie:{value:'fixture-unregistered-cookie'}}]})",
+          "({password:'fixture-unregistered-password',associatedCookies:[{cookie:{value:'fixture-unregistered-cookie'}}],nested:[123456,{otp:123456}]})",
         returnByValue: true,
       },
       pageSession,
     );
     assert.ok(!JSON.stringify(structural).includes("fixture-unregistered"));
+    assert.ok(!JSON.stringify(structural).includes("123456"));
     checks.push("local source registration protects images and payload secrets without changing protocol ids");
     socket.close();
     await once(socket, "close");
@@ -184,6 +186,45 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
     assert.equal((await call("connect_cdp")).success, false);
     browser.releaseUserControl(tab.id);
     checks.push("user control immediately revokes external access");
+    const parent = await runCauseEffect(
+      browser.open(`${origin}/cdp-fixture?group=parent`, "group-thread", "group-agent"),
+    );
+    try {
+      const parentContents = webContents.getAllWebContents().find((entry) => entry.getURL() === parent.url);
+      assert.ok(parentContents);
+      await parentContents.executeJavaScript(`window.open('${origin}/cdp-fixture?group=child'); true`, true);
+      const child = browser.listTabs().find((entry) => entry.openerTabId === parent.id);
+      assert.ok(child);
+      const childContents = webContents.getAllWebContents().find((entry) => entry.getURL() === child.url);
+      if (childContents?.isLoadingMainFrame()) await once(childContents, "did-finish-load");
+      const groupConnection = payload(
+        await runCauseEffect(
+          browser.handleDynamicTool({
+            ...params,
+            threadId: "group-thread",
+            ownerAgentId: "group-agent",
+            arguments: { tabId: child.id },
+          }),
+        ),
+      );
+      const groupRegister = await fetch(z.string().parse(groupConnection.secretRegistrationUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values: ["fixture-popup-secret-563728"] }),
+      });
+      assert.equal(groupRegister.status, 200);
+      await assert.rejects(() => runCauseEffect(browser.screenshot(parent.id)));
+      await runCauseEffect(browser.loadUrl(parent.id, `${origin}/cdp-fixture?group=parent-reloaded`));
+      await runCauseEffect(browser.close(child.id));
+      await assert.rejects(() => runCauseEffect(browser.screenshot(parent.id)));
+      await runCauseEffect(browser.loadUrl(parent.id, `${origin}/cdp-fixture?group=parent-clean`));
+      await runCauseEffect(browser.screenshot(parent.id));
+      checks.push(
+        "source registration protects the opener after navigation and popup closure until its remaining document is replaced",
+      );
+    } finally {
+      await runCauseEffect(browser.close(parent.id));
+    }
     const directory = join(process.cwd(), ".openbot-build", "browser-cdp-bridge");
     await mkdir(directory, { recursive: true });
     await writeFile(join(directory, "smoke.json"), JSON.stringify({ passed: true, checks }, null, 2));
