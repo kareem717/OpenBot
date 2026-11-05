@@ -376,6 +376,34 @@ version (`apps/auth-api/src/server/mobile-features-config.ts`).
 
 ## Secure browser authentication
 
+### External browser tools
+
+`openbot_browser.connect_cdp` gives an external tool such as `agent-browser` a local WebSocket
+endpoint for one existing tab. The connection keeps that tab's document, cookies, storage, and
+owner. `disconnect_cdp` revokes the endpoint and keeps the tab open. The endpoint uses a random
+capability path on `127.0.0.1`; it rejects browser-origin requests and exposes no application renderer,
+other agent's tab, browser-wide cookie commands, or target creation. The tab's scope closes the
+listener and sockets. No application debugging port is enabled.
+
+The host checks ownership and user control before each queued command. User control, takeover,
+secure input, and card fill revoke external access before entry. A document that received a secret
+cannot open an endpoint until it navigates. A connected origin counts as scripted for later saved
+vault fills. Replies redact registered secret values and sensitive fields. External tools have page-script
+access, so the agent uses this connection only when the user requests the tool. For credentials
+supplied in files or APIs, a local script can read the source and send the value directly to the
+connected page; it must not print the secret or include its literal value in a provider tool call.
+Before entry, that script sends `{ "values": ["..."] }` to the returned `secretRegistrationUrl`
+and waits for `{ "registered": true }`. This loopback-only operation registers exact-value
+redaction, stops recording and live views, and protects images until the document navigates. It
+returns no credential value. Cookie values are registered before and after native commands;
+network cookie fields, request bodies, and headers are redacted in protocol messages. The bridge
+rejects non-web navigation URLs and persistent initialization scripts.
+
+`list_tabs` and `status` return owner-filtered metadata while a person controls a tab. They do not
+wait for control release. Page reads and mutations retain their existing wait behavior.
+
+### Secure input cards
+
 `openbot_browser.submit_secret` uses the existing attention/takeover lifecycle with optional public
 secret-request metadata. The attention registry creates a fresh request ID and owns the pending
 response. The secret travels through a dedicated typed IPC endpoint or the optional

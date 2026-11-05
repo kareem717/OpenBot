@@ -57,6 +57,15 @@ jobs:
           bun scripts/steer-history-e2e.ts
           bun scripts/desktop-feed-e2e.ts
           bash -n scripts/install-server.sh scripts/hosting/openbot-hosted-update
+      - name: Install browser test display
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes xvfb
+      - name: Check browser credentials, CDP access, and user control
+        run: |
+          xvfb-run -a bun run test:browser-cdp
+          xvfb-run -a bun scripts/browser-smoke.ts --scenario=secret-handoff
+          xvfb-run -a bun scripts/browser-user-control-e2e.ts
       - name: Install and verify the pinned Codex runtime
         run: bun scripts/install-codex-runtime.ts linux x64
       - name: Check native MCP discovery and steering
@@ -86,6 +95,9 @@ jobs:
             .openbot-build/browser-takeover-steer-e2e/report.json
             .openbot-build/steer-history-e2e/report.json
             .openbot-build/desktop-feed-e2e.json
+            .openbot-build/browser-cdp-bridge/smoke.json
+            .openbot-build/browser-secret/smoke.json
+            .openbot-build/browser-user-control-e2e/report.json
           if-no-files-found: ignore
 
   linux:

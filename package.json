@@ -204,6 +204,7 @@
     "test:api": "bun run --cwd apps/auth-api test",
     "test:backend": "vitest run src/backend",
     "test:browser": "bun scripts/browser-smoke.ts",
+    "test:browser-cdp": "bun scripts/browser-smoke.ts --scenario=cdp-bridge",
     "test:browser-agent-session": "bun scripts/browser-agent-session-e2e.ts",
     "test:browser-steps": "bun scripts/browser-steps-e2e.ts",
     "test:browser-dialogs": "bun scripts/browser-dialogs-e2e.ts",

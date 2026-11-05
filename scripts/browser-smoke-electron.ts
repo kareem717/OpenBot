@@ -22,6 +22,7 @@ import { attachmentCall } from "../src/backend/attachment-effects";
 import { BrowserHost } from "../src/backend/browser-host";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { type DynamicToolResult, getString } from "../src/backend/protocol";
+import { runCdpBridgeScenario } from "./browser-cdp-bridge-smoke";
 import { runSecretHandoffScenario } from "./browser-secret-smoke";
 import { waitForPresentedFrame } from "./browser-smoke-frames";
 import { parseBrowserToolText } from "./browser-snapshot-text";
@@ -49,6 +50,13 @@ interface PersistenceSnapshot {
 
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (url.pathname === "/cdp-fixture") {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(
+      `<h1>Existing OpenBot session</h1><button id="increment" onclick="document.querySelector('#count').textContent=String(Number(document.querySelector('#count').textContent)+1)">Increment</button><output id="count">0</output><input id="credential" type="password" aria-label="Password">`,
+    );
+    return;
+  }
   if (url.pathname === "/focus-navigation") {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(`<input aria-label="Search" autofocus><a href="/focus-navigation?next">Next page</a>`);
@@ -454,6 +462,7 @@ const SCENARIOS = [
   "wait-deadlines",
   "live-view",
   "secret-handoff",
+  "cdp-bridge",
   "popups",
   "redirect-navigation",
 ];
@@ -539,6 +548,8 @@ async function main(): Promise<void> {
           await runPopupScenario(browser, origin);
         } else if (scenario === "secret-handoff") {
           await runSecretHandoffScenario(browser, origin);
+        } else if (scenario === "cdp-bridge") {
+          await runCdpBridgeScenario(browser, origin);
         } else if (scenario === "tool-boundary") {
           await runToolBoundaryScenario(browser, origin);
         } else if (scenario === "redirect-navigation") {

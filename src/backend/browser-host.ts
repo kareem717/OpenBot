@@ -32,7 +32,7 @@ import {
   type BrowserViewViewport,
 } from "@openbot/contracts/team-protocol/browser-view-v1";
 import { sourceText } from "@openbot/i18n/source";
-import { createOpenBotLogger, redactText, toLogValue } from "@openbot/logging";
+import { createOpenBotLogger, redactText, registerSecretValues, toLogValue } from "@openbot/logging";
 import { Deferred, Effect, Exit, Fiber, Option, Result, Scope, Semaphore } from "effect";
 import {
   app,
@@ -60,6 +60,7 @@ import {
   type BrowserViewportInput,
   type SnapshotReadResult,
 } from "./browser-cdp";
+import { BrowserCdpBridge } from "./browser-cdp-bridge";
 import { BrowserControlSessions } from "./browser-control-sessions";
 import { browserViewCursor } from "./browser-cursor";
 import { BrowserDiagnostics } from "./browser-diagnostics";
@@ -202,7 +203,7 @@ const VIEW_FRAME_QUALITY = 60;
 const VIEW_FRAME_MAX_WIDTH = 1_280;
 const VIEW_FRAME_MAX_HEIGHT = 800;
 /** The agent browser tools that read or change the agent's tab set, and not one tab. */
-const TAB_SET_TOOLS: ReadonlySet<string> = new Set(["open", "list_tabs", "status"]);
+const TAB_SET_TOOLS: ReadonlySet<string> = new Set(["open"]);
 /** How long after a live view's right-click the page's menu still belongs to that view. */
 const VIEW_CONTEXT_MENU_MS = 1_500;
 /**
@@ -563,6 +564,8 @@ export class BrowserHost {
       tab.secret !== undefined ||
       tab.secretDocument === true ||
       tab.filledCard === true ||
+      tab.sourceSecretDocument === true ||
+      (tab.externalCdp !== undefined && !tab.externalCdp.revoked) ||
       this.#takeoverTabIds.has(tab.id) ||
       this.#userControlTabIds.has(tab.id) ||
       tab.contents.isCurrentlyAudible()
@@ -998,6 +1001,7 @@ export class BrowserHost {
     const tabIds = [...this.#tabs.keys()];
     const closedIndex = tabIds.indexOf(tabId);
     const browserHadFocus = tab.focusedAtPageClose === true || this.#tabHasFocus();
+    tab.externalCdp?.revoke();
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
     // A popup that a private page opened without an opener is not its child, but it holds the same sign-in.
@@ -1065,6 +1069,7 @@ export class BrowserHost {
     if (!tab) return yield* browserFailure(new Error(sourceText("error.backend.browserTabNotFound")));
     tab.engine.invalidateReferences();
     this.#takeoverTabIds.add(tabId);
+    this.#revokeConnectedCdp(tab);
     this.#syncAttachedView();
     tab.diagnostics.clearDiagnostics();
     this.#emitChanged();
@@ -1097,6 +1102,7 @@ export class BrowserHost {
     if (this.#userControlTabIds.has(tabId)) return;
     tab.engine.invalidateReferences();
     this.#userControlTabIds.set(tabId, holder);
+    this.#revokeConnectedCdp(tab);
     tab.diagnostics.clearDiagnostics();
     this.#emitChanged();
     yield* this.#enqueue(tabId, () => this.#recorder.discard(tabId, "tab-closed"), true).pipe(
@@ -1134,7 +1140,7 @@ export class BrowserHost {
 
   /**
    * The tab of this agent tool call while a person controls it, or null. A call for the agent's tab
-   * set, such as `list_tabs`, waits while the person controls any tab that the agent can use.
+   * set can wait before opening a tab. Tab-list and status reads return metadata without waiting.
    */
   userControlTabFor(params: DynamicToolCallParams): string | null {
     if (TAB_SET_TOOLS.has(params.tool))
@@ -1218,6 +1224,7 @@ export class BrowserHost {
         ),
       );
     const protection = { origin: url.origin, submitted: false, replaced: false, running: false };
+    this.#revokeConnectedCdp(tab);
     tab.secret = protection;
     this.#invalidateViews(tab);
     this.#syncAttachedView();
@@ -1395,15 +1402,23 @@ export class BrowserHost {
   }
 
   #requireNoSecretDocument(tab: BrowserHostTab, action: string): void {
-    if ([...this.#connectedTabs(tab)].some((connected) => connected.secretDocument || connected.filledCard))
+    if (
+      [...this.#connectedTabs(tab)].some(
+        (connected) => connected.secretDocument || connected.filledCard || connected.sourceSecretDocument,
+      )
+    )
       throw new Error(
         `${action} is unavailable while a page that received a secret is open. Use snapshots and actions until it navigates.`,
       );
   }
 
+  #revokeConnectedCdp(tab: BrowserHostTab): void {
+    for (const connected of this.#connectedTabs(tab)) connected.externalCdp?.revoke();
+  }
+
   /** A filled card shows on the page, so no image of the tab leaves the host until it navigates. */
   #requireNoFilledCard(tab: BrowserHostTab, action: string): void {
-    if (tab.filledCard)
+    if (tab.filledCard || tab.sourceSecretDocument)
       throw new Error(`${action} is unavailable while the page shows a filled card. Use snapshots until it navigates.`);
   }
 
@@ -1709,7 +1724,13 @@ export class BrowserHost {
           ...(viewport ? { viewport } : {}),
         },
         (frame) => {
-          if (!tab.secret?.submitted && !tab.filledCard && tab.captureGeneration === generation) onFrame(frame);
+          if (
+            !tab.secret?.submitted &&
+            !tab.filledCard &&
+            !tab.sourceSecretDocument &&
+            tab.captureGeneration === generation
+          )
+            onFrame(frame);
         },
         (error) => {
           tab.viewInvalidations.delete(invalidate);
@@ -1782,6 +1803,14 @@ export class BrowserHost {
         return textResult({ tab });
       }),
     list_tabs: (_call, params) => browserSync(() => textResult(this.#toolTabs(params))),
+    connect_cdp: ({ args }, params) => this.#connectCdp(args.tabId, params),
+    disconnect_cdp: ({ args }, params) =>
+      Effect.gen({ self: this }, function* () {
+        yield* browserSync(() => this.#requireToolTab(params, args.tabId));
+        const tab = yield* this.#requireTab(args.tabId);
+        if (tab.externalCdp) yield* tab.externalCdp.close();
+        return textResult({ tabId: args.tabId, disconnected: true });
+      }),
     status: (_call, params) =>
       Effect.gen({ self: this }, function* () {
         const control = {
@@ -1807,7 +1836,8 @@ export class BrowserHost {
               undefined,
               (read) =>
                 Effect.gen(function* () {
-                  const recommended = mode === "auto" && read.recommendImage && !tab.filledCard;
+                  const recommended =
+                    mode === "auto" && read.recommendImage && !tab.filledCard && !tab.sourceSecretDocument;
                   // A screenshot or snapshot image just before this one shows the same page.
                   const imageCurrent = hasCurrentImage(tab);
                   if (mode !== "always" && (!recommended || imageCurrent)) {
@@ -2142,6 +2172,7 @@ export class BrowserHost {
   ) {
     const tab = yield* this.#requireTab(args.tabId);
     if (tab.secret) return yield* browserFailure(new Error(sourceText("error.backend.authActive")));
+    this.#revokeConnectedCdp(tab);
     let result: BrowserCardFillResult = { filled: [], unconfirmed: [] };
     const outcome: { approval: { page: string; frames: string[] } | null } = { approval: null };
     const snapshot = yield* this.#runAction(
@@ -2923,6 +2954,14 @@ export class BrowserHost {
     });
     contents.on("did-navigate", (_event, url) => {
       tab.documents += 1;
+      if (tab.sourceSecretDocument) {
+        tab.sourceSecretDocument = false;
+        contents.navigationHistory.clear();
+      }
+      if (tab.externalCdp && !tab.externalCdp.revoked) {
+        const origin = urlOrigin(url);
+        if (origin) this.#agentScriptedOrigins.add(origin);
+      }
       if (tab.secretDocument) {
         tab.secretDocument = false;
         contents.navigationHistory.clear();
@@ -3283,6 +3322,95 @@ export class BrowserHost {
   ) {
     const tab = yield* this.#requireTab(tabId);
     return yield* enqueueTabOperation(tab, operation, allowProtected);
+  });
+
+  readonly #connectCdp = Effect.fn("BrowserHost.connectCdp")(function* (
+    this: BrowserHost,
+    tabId: string,
+    params: DynamicToolCallParams,
+  ) {
+    yield* browserSync(() => this.#requireToolTab(params, tabId));
+    return yield* this.#enqueue(tabId, (tab) =>
+      Effect.gen({ self: this }, function* () {
+        let ownsSourceSecrets = false;
+        const checkAccess = () => {
+          this.#requireToolTab(params, tabId);
+          if (
+            [...this.#connectedTabs(tab)].some(
+              (connected) =>
+                connected.secretDocument ||
+                connected.filledCard ||
+                (connected.sourceSecretDocument && !(connected === tab && ownsSourceSecrets)),
+            )
+          )
+            throw new Error("External CDP access is protected while a page holds credentials.");
+          if ([...this.#connectedTabs(tab)].some((connected) => connected.secret))
+            throw new Error("External CDP access is protected during authentication.");
+        };
+        yield* browserSync(checkAccess);
+        if (tab.externalCdp && !tab.externalCdp.revoked)
+          return textResult({
+            tabId,
+            endpoint: tab.externalCdp.endpoint,
+            secretRegistrationUrl: tab.externalCdp.secretRegistrationUrl,
+          });
+        const lease = yield* tab.engine.retainExternalCdp();
+        const markScripted = () => {
+          for (const frame of tab.contents.mainFrame.framesInSubtree) {
+            if (frame.origin !== "null") this.#agentScriptedOrigins.add(frame.origin);
+          }
+        };
+        const bridge = new BrowserCdpBridge({
+          contents: tab.contents,
+          targetId: tab.id,
+          checkAccess,
+          release: lease.release,
+          protectSourceSecrets: () =>
+            this.#enqueue(tabId, (current) =>
+              Effect.gen({ self: this }, function* () {
+                yield* browserSync(checkAccess);
+                ownsSourceSecrets = true;
+                current.sourceSecretDocument = true;
+                this.#invalidateViews(current);
+                current.diagnostics.clearDiagnostics();
+                yield* this.#recorder.discard(tabId, "requested");
+              }),
+            ),
+          send: (method, arguments_, sessionId) =>
+            this.#enqueue(tabId, (current, keepQueueBlocked) =>
+              Effect.gen({ self: this }, function* () {
+                yield* browserSync(checkAccess);
+                if (bridge.revoked) return yield* browserFailure(new Error("The tab CDP connection ended."));
+                const refreshCookies = browserCall(() => current.contents.session.cookies.get({})).pipe(
+                  Effect.tap((cookies) =>
+                    Effect.sync(() =>
+                      registerSecretValues(
+                        cookies.flatMap((cookie) => [cookie.value, `${cookie.name}=${cookie.value}`]),
+                      ),
+                    ),
+                  ),
+                );
+                yield* refreshCookies;
+                markScripted();
+                const result = yield* boundEngineOperation(
+                  current,
+                  lease.send(method, arguments_, sessionId),
+                  30_000,
+                  "External CDP command timed out.",
+                  keepQueueBlocked,
+                );
+                yield* refreshCookies;
+                return result;
+              }),
+            ),
+        });
+        yield* Scope.addFinalizer(tab.scope, bridge.close());
+        const endpoint = yield* bridge.start();
+        markScripted();
+        tab.externalCdp = bridge;
+        return textResult({ tabId, endpoint, secretRegistrationUrl: bridge.secretRegistrationUrl });
+      }),
+    );
   });
 
   readonly #runAction = Effect.fn("BrowserHost.runAction")(function* <A>(

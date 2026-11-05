@@ -74,6 +74,7 @@ type StepStatus = "pending" | "inProgress" | "completed";
 interface FakeTurn {
   steps: [string, StepStatus][];
   answer?: string;
+  answerPhase?: "commentary" | "final_answer";
   delayMs?: number;
   calls?: { tool: string; namespace?: "openbot" | "openbot_browser"; arguments: TeamProtocolV2Json }[];
 }
@@ -107,7 +108,7 @@ const finish = (turn) => {
   timers.delete(turn.turnId);
   const plan = (turn.script.steps || []).map(([step, status]) => ({ step, status }));
   if (plan.length > 0) write({ method: "turn/plan/updated", params: { threadId: turn.threadId, turnId: turn.turnId, plan } });
-  const item = { type: "agentMessage", id: "message-" + turn.turnId, text: turn.script.answer || "Done.", phase: "final_answer" };
+  const item = { type: "agentMessage", id: "message-" + turn.turnId, text: turn.script.answer || "Done.", phase: turn.script.answerPhase || "final_answer" };
   write({ method: "item/completed", params: { threadId: turn.threadId, turnId: turn.turnId, item } });
   write({ method: "turn/completed", params: { threadId: turn.threadId, turn: { id: turn.turnId, status: "completed" } } });
 };
@@ -652,6 +653,85 @@ try {
       "Two next-step continuation turns run.",
     );
     return { turns: turnsSince(mark).length };
+  });
+
+  await check("short work promises and work status messages continue without a plan", async () => {
+    const agent = await createAgent("InvoiceRetriever");
+    const answers = [
+      "I’m retrieving the PostHog Venn draft and its review link now.",
+      "I’ll retrieve the invoice and its review link.",
+      "I will fetch the invoice.",
+      "I am checking the invoice details.",
+    ];
+    for (const answer of answers) {
+      const mark = loggedTurns().length;
+      const id = await send(
+        agent.id,
+        `Get the invoice. ${plan(
+          { steps: [], answer },
+          { steps: [], answer: "The invoice is ready: https://example.test/invoice/fixture." },
+        )}`,
+      );
+      assert.equal(await settled(id), "completed");
+      assert.deepEqual(
+        turnsSince(mark).map((turn) => turn.note),
+        [false, true],
+        `One continuation runs after: ${answer}`,
+      );
+    }
+    return { answers: answers.length };
+  });
+
+  await check("work promises do not bypass human dependencies or quoted reports", async () => {
+    const agent = await createAgent("InvoiceDependencies");
+    const answers = [
+      "I’ll retrieve the invoice after you sign in.",
+      "I’m waiting for your approval.",
+      "I cannot continue until you approve. I’ll retrieve the invoice.",
+      "> I’m retrieving the invoice now.",
+      'The earlier message said "I’ll retrieve the invoice."',
+      "```text\nI’m retrieving the invoice now.\n```",
+      "The invoice is ready: https://example.test/invoice/fixture.",
+      "The invoice is ready. I’ll keep this in mind.",
+      `${"The invoice details match the saved record. ".repeat(12)}I’ll retrieve the invoice.`,
+    ];
+    for (const answer of answers) {
+      const mark = loggedTurns().length;
+      const id = await send(agent.id, `Check the invoice. ${plan({ steps: [], answer })}`);
+      assert.equal(await settled(id), "completed");
+      assert.equal(turnsSince(mark).length, 1, `No continuation runs after: ${answer}`);
+    }
+    return { answers: answers.length };
+  });
+
+  await check("a completed commentary-only work status continues without becoming a final answer", async () => {
+    const agent = await createAgent("CommentaryRetriever");
+    const announcement = "I’m retrieving the PostHog Venn draft and its review link now.";
+    const answer = "The invoice is ready: https://example.test/invoice/fixture.";
+    const mark = loggedTurns().length;
+    const id = await send(
+      agent.id,
+      `Get the invoice. ${plan({ steps: [], answer: announcement, answerPhase: "commentary" }, { steps: [], answer })}`,
+    );
+    assert.equal(await settled(id), "completed");
+    assert.deepEqual(
+      turnsSince(mark).map((turn) => turn.note),
+      [false, true],
+    );
+    const messages = chatMessages(agent.id);
+    assert(messages.some((message) => message.text === announcement && message.itemType === "commentary"));
+    assert(!messages.some((message) => message.text === announcement && message.itemType === "final_answer"));
+    assert(messages.some((message) => message.text === answer && message.itemType === "final_answer"));
+    for (const dependency of ["I’m waiting for your approval.", "Which invoice should I retrieve?"]) {
+      const before = loggedTurns().length;
+      const request = await send(
+        agent.id,
+        `Check the invoice. ${plan({ steps: [], answer: dependency, answerPhase: "commentary" })}`,
+      );
+      assert.equal(await settled(request), "completed");
+      assert.equal(turnsSince(before).length, 1, "A commentary dependency must not continue.");
+    }
+    return { turns: 2, dependencies: 2 };
   });
 
   await check("a long report that ends on a next step does not continue", async () => {

@@ -14,11 +14,20 @@ const PASSWORD = "fixture-bitwarden-password";
 const CODE = "739182";
 
 /** The page submits only if the browser received the expected fixture value. */
-export function bitwardenLoginFixture(kind: "password" | "authenticator"): Response {
+export function bitwardenLoginFixture(
+  kind: "password" | "authenticator",
+  field: "marked" | "totp" | "numeric" = "marked",
+): Response {
   const expected = kind === "password" ? PASSWORD : CODE;
+  const attributes =
+    field === "totp"
+      ? 'type="tel" name="totpPin" autocomplete="off"'
+      : field === "numeric"
+        ? 'type="text" inputmode="numeric" aria-label="Authenticator code"'
+        : `type="${kind === "password" ? "password" : "text"}" autocomplete="${kind === "password" ? "current-password" : "one-time-code"}"`;
   return new Response(
     `<!doctype html><form method="post" action="/complete" onsubmit="if(document.querySelector('input').value!==${JSON.stringify(expected).replaceAll('"', "&quot;")}){event.preventDefault()}">
-    <label>Secret<input id="vault-secret" type="${kind === "password" ? "password" : "text"}" autocomplete="${kind === "password" ? "current-password" : "one-time-code"}"></label>
+    <label>Secret<input id="vault-secret" ${attributes}></label>
     <button id="vault-submit">Sign in</button></form>`,
     { headers: { "Content-Type": "text/html" } },
   );
@@ -67,8 +76,15 @@ export async function runBitwardenBrowserSmoke(browser: BrowserHost): Promise<vo
     if (!login || JSON.stringify(logins).includes(PASSWORD) || JSON.stringify(logins).includes(CODE))
       throw new Error("Invalid vault metadata.");
     checks.push("metadata contains no credential values");
-    for (const method of ["password", "authenticator"] as const) {
-      const tab = await runCauseEffect(browser.open(`${ORIGIN}/bitwarden-${method}`, "secret-thread", "secret-agent"));
+    for (const [method, field] of [
+      ["password", "marked"],
+      ["authenticator", "marked"],
+      ["authenticator", "totp"],
+      ["authenticator", "numeric"],
+    ] as const) {
+      const tab = await runCauseEffect(
+        browser.open(`${ORIGIN}/bitwarden-${method}?field=${field}`, "secret-thread", "secret-agent"),
+      );
       try {
         const contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
         if (!contents) throw new Error("Missing Bitwarden fixture page.");
@@ -101,7 +117,7 @@ export async function runBitwardenBrowserSmoke(browser: BrowserHost): Promise<vo
         const snapshot = await runCauseEffect(browser.snapshot(tab.id));
         if (!snapshot.url.endsWith("/complete") || JSON.stringify(snapshot).includes(value))
           throw new Error("Bitwarden sign-in failed or exposed its value.");
-        checks.push(`${method} signs in without exposing the value in the snapshot`);
+        checks.push(`${method} (${field}) signs in without exposing the value in the snapshot`);
       } finally {
         await runCauseEffect(browser.close(tab.id));
       }

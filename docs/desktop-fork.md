@@ -85,6 +85,26 @@ local archive patch.
 
 ## Bring in upstream changes
 
+Keep desktop fixes as source commits on the desktop branch. Do not patch installed archives or
+store fixes only in an agent's workspace instructions. A full package update must contain the same
+source changes as its tag.
+
+After an upstream merge or rebase, keep these checks in `desktop-fork.yml`:
+
+- `scripts/plan-continuation-e2e.ts`: continue a short unfinished next-step answer or commentary,
+  with bounded retries and no continuation while waiting for the user.
+- `scripts/browser-user-control-e2e.ts`: tab-list and status reads return while a person holds a
+  tab; page reads and mutations still wait.
+- `bun run test:browser-cdp`: attach the real `agent-browser` CLI to the existing tab, keep its
+  session, limit target access, redact secrets, and revoke external access for user control.
+- `scripts/browser-smoke.ts --scenario=secret-handoff`: saved authenticator fills work without an
+  autocomplete marker when the numeric field has an explicit OTP identity.
+
+Resolve conflicts in the owning source modules and keep these behavior checks. Preserve the
+credential-source instructions in `agent/developer-instructions.ts` and `agent/tool-guidance.ts`:
+user-supplied file or API credentials can be read and entered by a local script without printing
+their values. A successful rebase alone does not verify that these behaviors remain.
+
 Fetch the required `nightly-labs/openbot` release and merge it into the desktop branch. Preserve
 the capacity changes and the isolated feed addresses. Resolve conflicts in source, run the branch
 workflow, and complete the upgrade audit before publishing the next numeric desktop version.

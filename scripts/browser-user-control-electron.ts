@@ -181,15 +181,30 @@ async function main(): Promise<void> {
     {
       const { tab } = await open();
       await runCauseEffect(host.takeUserControl(tab.id, { kind: "local" }));
-      const listing = routed(params("list_tabs", {}), never);
-      const listingState = settled(listing);
-      await turn();
-      assert.equal(listingState.done, false, "A tab list ran while a tab was held.");
+      const other = await runCauseEffect(host.open(`${origin}/other-owner`, "other-thread", "other-agent"));
+      const metadataSchema = z.object({
+        tabs: z.array(z.object({ id: z.string(), userControl: z.literal(true).optional() })),
+      });
+      for (const tool of ["list_tabs", "status"]) {
+        const listing = success(await routed(params(tool, {}), never));
+        assert.equal(listing.success, true, `${tool} did not return metadata while a tab was held.`);
+        const text = listing.contentItems.find((item) => item.type === "inputText");
+        assert(text?.type === "inputText", "Missing tab metadata.");
+        const metadata = metadataSchema.parse(JSON.parse(text.text));
+        assert.equal(metadata.tabs.find((item) => item.id === tab.id)?.userControl, true);
+        assert(!metadata.tabs.some((item) => item.id === other.id), "Metadata exposed another agent's tab.");
+        assert.equal(listed(tab.id)?.userControl, true, "A metadata read released the user's tab.");
+      }
       host.releaseUserControl(tab.id);
-      userControlEnded(success(await listing));
       const afterRelease = success(await routed(params("list_tabs", {}), never));
       assert.equal(afterRelease.success, true, "A tab list after the release did not run.");
-      recordCases("tab-list-waits-for-held-tab", "tab-list-runs-after-release");
+      await runCauseEffect(host.close(other.id));
+      recordCases(
+        "tab-metadata-returns-held-state",
+        "tab-metadata-keeps-owner-scope",
+        "tab-metadata-keeps-user-control",
+        "tab-list-runs-after-release",
+      );
     }
 
     {

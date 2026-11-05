@@ -31,7 +31,7 @@ const ASKS_TO_CONTINUE = new RegExp(
  * answer that says the agent waits, holds or stops does not match.
  */
 const NAMES_NEXT_STEP =
-  /(?:\blet me now\b|\bnow let me\b|\bi['\u2019]ll now\b|\bi will now\b|\bnow i(?:['\u2019]ll| will)\b|\bnext,?\s+i(?:['\u2019]ll| will)\b)(?!\s+(?:wait|hold|pause|stop)\b)[^.!?\n]{0,100}[.:\u2026]?\s*$/i;
+  /(?:\blet me now\b|\bnow let me\b|\bi['\u2019]ll now\b|\bi will now\b|\bnow i(?:['\u2019]ll| will)\b|\bnext,?\s+i(?:['\u2019]ll| will)\b|\bi(?:['\u2019]ll| will)\s+(?:retrieve|fetch|find|check|read|run|write|create|prepare|update|open|download|inspect|review|search|verify|complete|continue|finish|fix|build|test)\b|\bi(?:['\u2019]m| am)\s+(?:now\s+)?(?:retrieving|fetching|finding|checking|reading|running|writing|creating|preparing|updating|opening|downloading|inspecting|reviewing|searching|verifying|completing|continuing|finishing|fixing|building|testing)\b)(?!\s+(?:wait|hold|pause|stop)\b)[^.!?\n]{0,100}[.:\u2026]?\s*$/i;
 
 /** Prose that says the agent waits for the user, such as "I'll now wait for your approval." */
 const WAITS_FOR_USER =
@@ -84,7 +84,8 @@ export function waitsForUser(answer: string | undefined): boolean {
 function stoppedBeforeNextStep(answer: string | undefined): boolean {
   if (asksToContinue(answer)) return true;
   const text = answer?.trim() ?? "";
-  return text.length > 0 && text.length <= NEXT_STEP_ANSWER_MAX && NAMES_NEXT_STEP.test(text.slice(-160));
+  const prose = userDependencyText(answer).trim();
+  return text.length > 0 && text.length <= NEXT_STEP_ANSWER_MAX && NAMES_NEXT_STEP.test(prose.slice(-160));
 }
 
 interface ContinuationCount {

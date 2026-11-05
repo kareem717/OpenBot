@@ -200,6 +200,18 @@ const BROWSER_TOOL_DEFINITIONS = [
     shape: {},
   }),
   browserTool({
+    name: "connect_cdp",
+    description:
+      "Connect an external tool such as agent-browser to this existing OpenBot tab. Returns a local CDP WebSocket endpoint and secretRegistrationUrl for this tab only; it does not open a browser. Use only when the user asks for an external browser tool. A local script must POST its supplied credential values to secretRegistrationUrl before filling them, without printing them. Disconnect before using OpenBot browser tools again. Secure input or user takeover revokes the connection.",
+    shape: { tabId },
+  }),
+  browserTool({
+    name: "disconnect_cdp",
+    description:
+      "Disconnect an external CDP tool from this tab and revoke its endpoint. The tab and its sign-in stay open.",
+    shape: { tabId },
+  }),
+  browserTool({
     name: "status",
     description: "Get tabs, active control state, environments, recordings, and diagnostic error counts.",
     shape: {},

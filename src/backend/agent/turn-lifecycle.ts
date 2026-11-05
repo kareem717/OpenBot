@@ -1205,6 +1205,17 @@ export class TurnLifecycle {
         this.#quietRoutineTurn(snapshot.threadId, deliveries) &&
         settleQuietRoutineTurn(snapshot, turnId, noUpdateCalled);
       const latestAssistant = latestTurnAnswer(snapshot.messages, turnId);
+      // Some providers end after a progress message without a final answer. That message can name
+      // unfinished work, but it must stay commentary when the continuation checks it.
+      const continuationAnswer =
+        latestAssistant?.text ??
+        snapshot.messages.findLast(
+          (message) =>
+            message.turnId === turnId &&
+            message.author === "assistant" &&
+            message.itemType === "commentary" &&
+            message.text.trim().length > 0,
+        )?.text;
       // A routine run that answered only the no-update marker, also a Test run that shows it in the
       // chat, does not put the marker in the preview.
       const markerAnswer =
@@ -1228,7 +1239,7 @@ export class TurnLifecycle {
         // Sign-in needs the person even when the answer does not end with a question or a wait.
         // An earlier turn's card stays in history and must not block a new request.
         !snapshot.messages.some((message) => message.turnId === turnId && mcpSignInEvent(message) !== null) &&
-        this.#planContinues(agentId, laneTaskId, turnId, deliveries, latestAssistant?.text);
+        this.#planContinues(agentId, laneTaskId, turnId, deliveries, continuationAnswer);
       const continuation = planContinues
         ? this.#planContinuation.consider({
             agentId,
@@ -1239,7 +1250,7 @@ export class TurnLifecycle {
               snapshot.messages.findLast(
                 (message) => message.itemType === CONVERSATION_PLAN_ITEM_TYPE && message.turnId !== turnId,
               )?.plan ?? null,
-            answer: latestAssistant?.text,
+            answer: continuationAnswer,
           })
         : null;
       if (!continuation) this.#planContinuation.cancel(agentId, laneTaskId);

@@ -1941,7 +1941,7 @@ export class AttentionRegistry {
         "field-kind",
         kind === "password"
           ? "the field target is not a password input."
-          : 'the field targets do not have autocomplete="one-time-code".',
+          : "the field targets are not identifiable one-time code inputs.",
       );
     const found = yield* Effect.result(
       Effect.gen(function* () {

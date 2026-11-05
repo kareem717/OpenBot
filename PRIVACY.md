@@ -112,6 +112,14 @@ account service or analytics by these tools.
 
 ## Local scripts
 
+When you request an external browser tool, OpenBot can give it a local connection to one existing
+browser tab. The tool can read and change that page and use its current sign-in. The connection does
+not expose the OpenBot application renderer or other agents' tabs. User control and secure input
+revoke it. A local script can read credentials you supplied in files or an API and enter them in
+that tab without putting their values in conversation messages. OpenBot does not send this
+connection's data to the account service or analytics. An external tool can send data elsewhere
+under its own configuration.
+
 Local scripts is off by default for each agent. When enabled, scripts that run as the same OS user
 on the host can read a local token and use the loopback API. They can send messages, run routines,
 read pending questions and approvals, and submit answers or approval decisions. OpenBot redacts

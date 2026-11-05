@@ -323,7 +323,7 @@ export class BrowserCdpEngine {
     const generation = this.#navigationGeneration;
     // A submitter that overrides the form to GET is part of it, so a page cannot add one while the
     // vault read waits.
-    const fingerprintFields = `[this.localName, this.type, this.id, this.name, this.getAttribute('autocomplete'), this.getAttribute('aria-label'), this.form?.action, this.form?.method, [...(this.form?.elements ?? [])].some((element) => element.hasAttribute('formmethod') && element.getAttribute('formmethod').trim().toLowerCase() !== 'post')]`;
+    const fingerprintFields = `[this.localName, this.type, this.id, this.name, this.getAttribute('autocomplete'), this.getAttribute('aria-label'), this.getAttribute('inputmode'), this.form?.action, this.form?.method, [...(this.form?.elements ?? [])].some((element) => element.hasAttribute('formmethod') && element.getAttribute('formmethod').trim().toLowerCase() !== 'post')]`;
     const fingerprint = `function() { return JSON.stringify(${fingerprintFields}); }`;
     const nodes = yield* this.#leaseEffect((send) =>
       Effect.gen({ self: this }, function* () {
@@ -382,13 +382,21 @@ export class BrowserCdpEngine {
         }
         // The form method does not count: many sign-in forms have no method and send with their own
         // script. The host blocks a navigation that would carry a vault value in its URL.
+        // Some authenticator forms omit autocomplete. Accept an explicit code identifier only with
+        // a numeric input. The fingerprint includes each attribute used to make this decision.
         const fields = { password: inputs.length > 0, oneTimeCode: inputs.length > 0 };
         for (const node of inputs) {
           const kind = yield* this.#callOnNode(
             send,
             node.backendNodeId,
             `function() {
-              return { password: this.type === 'password', oneTimeCode: (this.getAttribute('autocomplete') ?? '').toLowerCase().split(/\\s+/).includes('one-time-code') };
+              const autocomplete = (this.getAttribute('autocomplete') ?? '').toLowerCase().split(/\\s+/).filter(Boolean);
+              const identity = [this.id, this.name, this.getAttribute('aria-label') ?? ''].join(' ')
+                .replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+              const numeric = ['tel', 'number'].includes(this.type) || this.inputMode === 'numeric';
+              const code = /\\b(?:otp|totp|authenticator|one time (?:code|password))\\b/.test(identity);
+              const unspecified = autocomplete.every(value => value === 'off' || value === 'on');
+              return { password: this.type === 'password', oneTimeCode: autocomplete.includes('one-time-code') || (unspecified && this.type !== 'password' && numeric && code) };
             }`,
             [],
           );
@@ -657,6 +665,7 @@ export class BrowserCdpEngine {
    * perfectly healthy.
    */
   #activeLeases = 0;
+  #externalCdpLeases = 0;
   /** Agent actions that run now. A dialog that opens while one runs is the agent's to answer. */
   readonly #dialogWatches = new Set<DialogWatch>();
   /** The open dialog. Tracked only while this engine owns the debugger and has `Page` enabled. */
@@ -1960,7 +1969,13 @@ export class BrowserCdpEngine {
 
   /** The engine sees a dialog only while it stays attached: for each lease, watch, and open dialog. */
   #releaseIdleDebugger(): void {
-    if (this.#activeLeases === 0 && !this.#retainDebugger && !this.#dialog && this.#dialogWatches.size === 0)
+    if (
+      this.#activeLeases === 0 &&
+      this.#externalCdpLeases === 0 &&
+      !this.#retainDebugger &&
+      !this.#dialog &&
+      this.#dialogWatches.size === 0
+    )
       this.#detachOwnedDebugger();
   }
 
@@ -2462,6 +2477,28 @@ export class BrowserCdpEngine {
     this.#lastSnapshot = null;
     this.#highlightSessionId = undefined;
     this.#uploadDocumentIds.clear();
+  });
+
+  /** Keep the tab debugger attached while an external client uses the same engine. */
+  readonly retainExternalCdp = Effect.fn("BrowserCdp.retainExternalCdp")(function* (this: BrowserCdpEngine) {
+    return yield* this.#leaseEffect(
+      () =>
+        Effect.sync(() => {
+          this.#externalCdpLeases += 1;
+          let released = false;
+          return {
+            send: (method: string, params?: DynamicRecord, sessionId?: string) =>
+              this.#leaseEffect((send) => send(method, params, sessionId), false),
+            release: () => {
+              if (released) return;
+              released = true;
+              this.#externalCdpLeases -= 1;
+              this.#releaseIdleDebugger();
+            },
+          };
+        }),
+      false,
+    );
   });
 
   readonly waitFor = Effect.fn("BrowserCdp.waitFor")(function* (

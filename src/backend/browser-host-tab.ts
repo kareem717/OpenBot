@@ -3,6 +3,7 @@ import type { BrowserViewContextMenu } from "@openbot/contracts/team-protocol/br
 import type { Deferred, Effect, Scope } from "effect";
 import { BrowserWindow, type Session, type WebContents, type WebContentsView, webContents } from "electron";
 import type { BrowserCdpEngine } from "./browser-cdp";
+import type { BrowserCdpBridge } from "./browser-cdp-bridge";
 import type { BrowserDiagnostics } from "./browser-diagnostics";
 import type { BrowserOperationError } from "./browser-effects";
 import { type BrowserTabSession, isPersistableBrowserUrl } from "./browser-state";
@@ -40,6 +41,8 @@ export interface BrowserHostTab {
    * stay blocked until a main-frame navigation replaces the document.
    */
   filledCard?: boolean;
+  /** A local CDP client registered supplied credentials for this document. Images stay protected. */
+  sourceSecretDocument?: boolean;
   /**
    * A session of this tab and its popups only, kept in memory: a sign-in page that the host opened
    * for someone else. Such a tab is not saved, and its cookies go when it closes.
@@ -53,6 +56,7 @@ export interface BrowserHostTab {
   popup: boolean;
   popupFailure?: BrowserTab["popupFailure"];
   closing?: boolean;
+  externalCdp?: BrowserCdpBridge;
   ownerThreadId: string | null;
   ownerAgentId: string | null;
   revision: number;

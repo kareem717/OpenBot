@@ -1,4 +1,9 @@
+import { once } from "node:events";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { webContents } from "electron";
+import { WebSocket } from "ws";
+import { z } from "zod";
 import type { BrowserHost } from "../src/backend/browser-host";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import type { DynamicToolCallParams } from "../src/backend/protocol";
@@ -7,6 +12,7 @@ import { waitForPresentedFrame } from "./browser-smoke-frames";
 
 /** HTTPS is served inside this isolated session. No credentials or network service are used. */
 export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin: string): Promise<void> {
+  const checks: string[] = [];
   const seed = await runCauseEffect(browser.open(localOrigin, "secret-thread", "secret-agent"));
   const seedContents = webContents.getAllWebContents().find((contents) => contents.getURL() === seed.url);
   if (!seedContents) throw new Error("Missing authentication fixture session.");
@@ -15,7 +21,24 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
     const url = new URL(request.url);
     if (url.hostname !== "authentication.openbot.test") return new Response("Not found", { status: 404 });
     if (url.pathname === "/bitwarden-password") return bitwardenLoginFixture("password");
-    if (url.pathname === "/bitwarden-authenticator") return bitwardenLoginFixture("authenticator");
+    if (url.pathname === "/bitwarden-authenticator") {
+      const field = url.searchParams.get("field");
+      return bitwardenLoginFixture("authenticator", field === "totp" || field === "numeric" ? field : "marked");
+    }
+    if (url.pathname === "/authenticator-fields")
+      return new Response(
+        `<!doctype html><body>
+        <input id="totpPin" type="tel" autocomplete="off">
+        <input id="otp-text" type="text">
+        <input id="phone" type="tel">
+        <input id="numeric" inputmode="numeric">
+        <input id="card" inputmode="numeric" aria-label="Authenticator code" autocomplete="cc-csc">
+        <input id="otp-password" type="password" inputmode="numeric">
+        <input id="notp" inputmode="numeric">
+        ${Array.from({ length: 6 }, (_, index) => `<input id="otp-${index}" inputmode="numeric" maxlength="1">`).join("")}
+        </body>`,
+        { headers: { "Content-Type": "text/html" } },
+      );
     const html =
       url.pathname === "/complete"
         ? "<h1>Signed in</h1>"
@@ -42,6 +65,47 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
   await runCauseEffect(browser.close(seed.id));
   try {
     await runBitwardenBrowserSmoke(browser);
+    checks.push("saved passwords and authenticator codes submit without exposing values");
+    for (const [selectors, fillable] of [
+      [["#totpPin"], true],
+      [["#otp-text"], false],
+      [["#phone"], false],
+      [["#numeric"], false],
+      [["#card"], false],
+      [["#otp-password"], false],
+      [["#notp"], false],
+      [Array.from({ length: 6 }, (_, index) => `#otp-${index}`), true],
+      [["#otp-0", "#otp-1", "#otp-2", "#otp-3", "#otp-4", "#numeric"], false],
+    ] as const) {
+      const tab = await runCauseEffect(
+        browser.open("https://authentication.openbot.test/authenticator-fields", "secret-thread", "secret-agent"),
+      );
+      try {
+        const handoff = await runCauseEffect(
+          browser.prepareSecret({
+            namespace: "openbot_browser",
+            tool: "submit_secret",
+            threadId: "secret-thread",
+            ownerAgentId: "secret-agent",
+            turnId: "secret-turn",
+            callId: `authenticator-${selectors.join()}`,
+            arguments: {
+              tabId: tab.id,
+              method: "authenticator",
+              digits: 6,
+              targets: selectors.map((selector) => ({ kind: "css", selector })),
+              submission: "on_input",
+            },
+          }),
+        );
+        handoff.cancel();
+        if (handoff.vaultFillable !== fillable)
+          throw new Error(`${selectors.join()} was classified wrongly for a vault authenticator code.`);
+        checks.push(`${selectors.join()}: vault fill ${fillable ? "allowed" : "refused"}`);
+      } finally {
+        await runCauseEffect(browser.close(tab.id));
+      }
+    }
     for (const [method, path] of [
       ["password", "login"],
       ["otp", "login"],
@@ -76,7 +140,23 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
         },
       };
       try {
+        let externalClosed: Promise<unknown[]> | undefined;
+        if (method === "password" && path === "login") {
+          const connection = await runCauseEffect(
+            browser.handleDynamicTool({ ...params, tool: "connect_cdp", arguments: { tabId: tab.id } }),
+          );
+          const item = connection.contentItems.find((entry) => entry.type === "inputText");
+          if (!connection.success || item?.type !== "inputText") throw new Error("Missing secret-revocation endpoint.");
+          const endpoint = z.object({ endpoint: z.string() }).parse(JSON.parse(item.text)).endpoint;
+          const socket = new WebSocket(endpoint);
+          await once(socket, "open");
+          externalClosed = once(socket, "close");
+        }
         const handoff = await runCauseEffect(browser.prepareSecret(params));
+        if (externalClosed) {
+          await externalClosed;
+          checks.push("secure input revokes an existing external CDP connection");
+        }
         // Only a real password field may take a vault password with no card; the digit boxes do not
         // ask for a one-time code, and an email or SMS code never comes from the vault.
         if (handoff.vaultFillable !== (method === "password"))
@@ -159,16 +239,18 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
     }
     // A target that changes while the secret waits takes no value, also when a page adds a submitter
     // that would send the form as GET.
-    for (const [selector, method, change] of [
-      ["#code", "otp", "document.querySelector('#code').name = 'changed'"],
+    for (const [selector, method, change, path] of [
+      ["#code", "otp", "document.querySelector('#code').name = 'changed'", "/login"],
+      ["#otp-0", "authenticator", "document.querySelector('#otp-0').inputMode = 'text'", "/authenticator-fields"],
       [
         "#post-password",
         "password",
         "const button = document.createElement('button'); button.setAttribute('formmethod', 'get'); document.querySelector('#post-password').form.append(button)",
+        "/login",
       ],
     ] as const) {
       const staleTab = await runCauseEffect(
-        browser.open("https://authentication.openbot.test/login", "secret-thread", "secret-agent"),
+        browser.open(`https://authentication.openbot.test${path}`, "secret-thread", "secret-agent"),
       );
       try {
         const handoff = await runCauseEffect(
@@ -192,13 +274,14 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
         await contents.executeJavaScript(`${change}; true`);
         let rejected = false;
         try {
-          await runCauseEffect(handoff.submit(method === "otp" ? "729104" : "fixture-password-729104", false));
+          await runCauseEffect(handoff.submit(method === "password" ? "fixture-password-729104" : "729104", false));
         } catch {
           rejected = true;
         }
         if (!rejected) throw new Error(`A changed authentication target ${selector} was accepted.`);
         if ((await contents.executeJavaScript(`document.querySelector('${selector}').value`)) !== "")
           throw new Error(`A changed authentication target ${selector} received a value.`);
+        checks.push(`${selector}: changed target receives no secret`);
       } finally {
         await runCauseEffect(browser.close(staleTab.id));
       }
@@ -243,6 +326,9 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
         await runCauseEffect(browser.close(wrongTab.id));
       }
     }
+    const directory = join(process.cwd(), ".openbot-build", "browser-secret");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "smoke.json"), JSON.stringify({ passed: true, checks }, null, 2));
     process.stdout.write("BrowserHost: secure password, OTP and authenticator handoff passed.\n");
   } finally {
     protocol.unhandle("https");
