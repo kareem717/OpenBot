@@ -62,7 +62,7 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
     child.stderr.on("data", (data) => {
       output += data.toString();
     });
-    const [code] = await once(child, "exit");
+    const [code] = await once(child, "close");
     assert.equal(code, 0, `agent-browser ${args[0]} failed: ${output}`);
     return output;
   };
@@ -159,7 +159,8 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
     const cookies = await cli("eval", "document.cookie");
     assert.ok(!cookies.includes("fixture-cdp-cookie-591627") && cookies.includes("[redacted]"));
     await cli("click", "#increment");
-    assert.ok((await cli("get", "text", "#count")).includes("1"));
+    const count = await cli("get", "text", "#count");
+    assert.ok(count.includes("1"), `agent-browser must read the updated fixture count: ${count}`);
     checks.push("real agent-browser preserves page storage and cookies and clicks the existing tab");
     await cli("fill", "#credential", secret);
     const read = await cli("get", "value", "#credential");
