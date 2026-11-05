@@ -215,7 +215,7 @@ const BROWSER_TOOL_DEFINITIONS = [
   browserTool({
     name: "set_control_mode",
     description:
-      "Switch this same tab between cdp and native OS control without a reload. Native mode disconnects CDP and presents only this tab in a separate window. It requires Computer Use on and ready, and is unavailable in task threads. Use native_snapshot and native_input in native mode. Switching back permits a new connect_cdp call. This does not guarantee acceptance by a site's bot checks.",
+      "Switch this same tab between cdp and native OS control without a reload. Native mode disconnects CDP and presents only this tab in a separate window. It requires the agent's Computer Use setting on and ready. A task can control only its own tab. Use native_snapshot and native_input in native mode. Switching back permits a new connect_cdp call. This does not guarantee acceptance by a site's bot checks.",
     shape: { tabId, mode: z.enum(["cdp", "native"]) },
   }),
   browserTool({

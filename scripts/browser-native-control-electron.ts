@@ -218,10 +218,11 @@ async function main(): Promise<void> {
       displayEnvironment: {},
       stateEnvironment: environment,
     });
+    let nativeDriverReady = true;
     native = new NativeBrowserControl({
       driver,
       ownsDriver: true,
-      primaryReady: () => true,
+      primaryReady: () => nativeDriverReady,
       environment,
       platform: process.platform,
       windowTitle: "Native browser fixture",
@@ -232,7 +233,7 @@ async function main(): Promise<void> {
     });
     host.setNativeControl(native);
     await runCauseEffect(host.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 900, height: 650 } }));
-    const tab = await runCauseEffect(host.open(`${origin}/fixture`, "native-thread", "native-agent"));
+    const tab = await runCauseEffect(host.open(`${origin}/fixture`, "native-task-thread", "native-agent"));
     contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
     assert.ok(contents);
     const page = contents;
@@ -242,16 +243,24 @@ async function main(): Promise<void> {
       "undefined:undefined:undefined",
     );
     const nonce = z.uuid().parse(await page.executeJavaScript("window.fixtureNonce"));
+    const sibling = await runCauseEffect(
+      host.open(`${origin}/fixture?sibling=1`, "sibling-task-thread", "native-agent"),
+    );
     let sequence = 0;
     let nativeAllowed = true;
-    const call = (tool: string, args: DynamicToolCallParams["arguments"], owner = "native-agent") =>
+    const call = (
+      tool: string,
+      args: DynamicToolCallParams["arguments"],
+      owner = "native-agent",
+      threadId = "native-task-thread",
+    ) =>
       runCauseEffect(
         host.handleDynamicTool(
           {
             namespace: "openbot_browser",
             tool,
             arguments: args,
-            threadId: "native-thread",
+            threadId,
             ownerAgentId: owner,
             turnId: "native-turn",
             callId: `native-${++sequence}`,
@@ -304,6 +313,8 @@ async function main(): Promise<void> {
     nativeAllowed = true;
     assert.equal((await call("set_control_mode", { tabId: tab.id, mode: "native" }, "other-agent")).success, false);
     cases.push("native entry refuses disabled Computer Use and a different owner");
+    assert.equal((await call("set_control_mode", { tabId: sibling.id, mode: "native" })).success, false);
+    cases.push("the same agent cannot control a sibling thread's tab");
     let firstFrame: (() => void) | undefined;
     const frameReady = new Promise<void>((resolve) => {
       firstFrame = resolve;
@@ -320,6 +331,12 @@ async function main(): Promise<void> {
     await deadline(socketClosed);
     assert.equal(page.debugger.isAttached(), false);
     cases.push("native entry revokes the endpoint and detaches the debugger");
+    assert.equal(
+      (await call("set_control_mode", { tabId: sibling.id, mode: "native" }, "native-agent", "sibling-task-thread"))
+        .success,
+      false,
+    );
+    cases.push("a second owned task tab cannot replace the active native window");
     let nativeAttachments = 0;
     const attach = page.debugger.attach;
     page.debugger.attach = () => {
@@ -401,6 +418,18 @@ async function main(): Promise<void> {
     );
     nativeAllowed = true;
     cases.push("revoking Computer Use refuses tool and local HTTP input before native action");
+    nativeDriverReady = false;
+    assert.equal(
+      (await call("native_input", { tabId: tab.id, snapshotId: initial.metadata.snapshotId, input: deniedClick }))
+        .success,
+      false,
+    );
+    assert.notEqual(
+      await post(nativeInputUrl, JSON.stringify({ snapshotId: initial.metadata.snapshotId, input: deniedClick })),
+      200,
+    );
+    nativeDriverReady = true;
+    cases.push("an unready driver refuses tool and local HTTP input before native action");
     const input = async (action: BrowserNativeInput | { kind: "click"; logicalX: number; logicalY: number }) => {
       const current = await snapshot();
       assert.ok(nativeWindow && !nativeWindow.isDestroyed());
@@ -453,6 +482,7 @@ async function main(): Promise<void> {
     assert.ok((await cli("eval", "window.fixtureClicks===3")).includes("true"));
     await cli("close");
     cases.push("return to CDP keeps document identity, cookies, storage, text, and click state");
+    data(await call("close_tab", { tabId: sibling.id }, "native-agent", "sibling-task-thread"));
     assert.equal(host.listTabs().length, 1);
     assert.equal(host.listTabs()[0]?.id, tab.id);
     cases.push("mode switches keep the same tab and owner");

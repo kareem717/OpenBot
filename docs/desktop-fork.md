@@ -101,6 +101,8 @@ After an upstream merge or rebase, keep these checks in `desktop-fork.yml`:
   autocomplete marker when the numeric field has an explicit OTP identity.
 - `scripts/browser-native-control-e2e.ts`: use real OS input in the same tab between CDP sessions;
   keep the document and sign-in, exclude CDP during native control, and preserve permission gates.
+- `scripts/browser-native-task-permission-e2e.ts`: allow an enabled agent's task to use its own
+  native browser, keep general desktop MCP tools out of tasks, and honor parent permission revocation.
 
 Resolve conflicts in the owning source modules and keep these behavior checks. Preserve the
 credential-source instructions in `agent/developer-instructions.ts` and `agent/tool-guidance.ts`:

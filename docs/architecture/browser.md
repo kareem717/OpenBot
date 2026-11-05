@@ -420,8 +420,8 @@ never a process ID, window ID, shell command, or arbitrary key chord. The adapte
 owned window and current snapshot before it sends foreground OS input. Delivery is not proof
 that the page accepted an action; the agent must read the result.
 
-The calling agent must have Computer Use enabled and ready in its own chat. Task threads cannot
-use native control. The host checks these conditions, ownership, and user takeover for each action,
+The calling agent must have Computer Use enabled and ready. A task can use native control for its
+own tab under its parent agent's permission. It receives no general desktop MCP tools. The host checks permission, ownership, and user takeover for each action,
 including local HTTP input. User control, secure fill, tab close, and shutdown release the native
 window. Returning to `cdp` does not reload the page; `connect_cdp` provides a new endpoint.
 

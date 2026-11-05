@@ -3408,8 +3408,7 @@ export class BrowserHost {
     const tab = this.#tabs.get(tabId);
     if (!tab?.engine.nativeControl || tab.contents.debugger.isAttached())
       throw new Error("Close DevTools before using native browser control.");
-    if (!lease.allowed() || !control.ready())
-      throw new Error("Native browser control requires Computer Use on and ready in the agent's own chat.");
+    if (!lease.allowed() || !control.ready()) throw new Error(sourceText("error.backend.browserNativeUnavailable"));
     return control;
   }
 
@@ -3447,9 +3446,7 @@ export class BrowserHost {
         const control = this.#nativeControl;
         const allowed = hooks.nativeControlAllowed;
         if (!control?.ready() || !allowed?.())
-          return yield* browserFailure(
-            new Error("Native browser control requires Computer Use on and ready in the agent's own chat."),
-          );
+          return yield* browserFailure(new Error(sourceText("error.backend.browserNativeUnavailable")));
         if (this.#nativeTab) {
           if (this.#nativeTab.tabId !== tabId)
             return yield* browserFailure(
