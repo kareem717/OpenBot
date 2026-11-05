@@ -937,17 +937,20 @@ function scheduleTurnRefresh(state: PeerState, delay = SIGNAL_TURN_REFRESH_INTER
 
 /** Keeps `turnRefreshDueAt`: until a `ready` answers, the path still uses the old credentials. */
 function armTurnRefresh(state: PeerState, delay: number): void {
+  if (state.closed) return;
   if (state.turnRefreshTimer !== null) clearTimeout(state.turnRefreshTimer);
   state.turnRefreshTimer = window.setTimeout(() => {
     state.turnRefreshTimer = null;
-    if (!state.socket || state.socket.readyState !== WebSocket.OPEN)
-      return armTurnRefresh(state, SIGNAL_TURN_REFRESH_INTERVAL_MS);
+    if (state.closed) return;
+    // Keep a retry armed until ready supplies new credentials, including when its reply is lost.
+    armTurnRefresh(state, 30_000);
+    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
     try {
       // Null asks for the credentials of this socket, and Signal answers with a null `connectionId`.
       // With a client's connection ID the answer read as the `ready` of a new socket.
       sendSignal(state, { type: "turn-refresh", version: SIGNAL_PROTOCOL_VERSION, connectionId: null });
     } catch {
-      armTurnRefresh(state, SIGNAL_TURN_REFRESH_INTERVAL_MS);
+      // The retry stays within the old credentials' remaining lifetime.
     }
   }, delay);
 }

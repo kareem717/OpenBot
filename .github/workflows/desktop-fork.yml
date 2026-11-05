@@ -67,6 +67,12 @@ jobs:
           xvfb-run -a bun run test:browser-cdp
           xvfb-run -a bun scripts/browser-smoke.ts --scenario=secret-handoff
           xvfb-run -a bun scripts/browser-user-control-e2e.ts
+      - name: Check connection refresh and cookie redaction
+        run: |
+          bun scripts/remote-turn-refresh-e2e.ts
+          bun scripts/onepassword-secure-fill-e2e.ts
+          xvfb-run -a bun scripts/browser-otp-fields-e2e.ts
+          xvfb-run -a bun scripts/redaction-cookie-load-e2e.ts
       - name: Check native browser mode with real OS input
         run: |
           bun scripts/install-cua-driver.ts linux x64
@@ -90,6 +96,10 @@ jobs:
             .openbot-build/agent-webhook-routine-e2e/report.json
             .openbot-build/plan-continuation-e2e/report.json
             .openbot-build/remote-server-retry-e2e/report.json
+            .openbot-build/remote-turn-refresh-e2e/report.json
+            .openbot-build/onepassword-secure-fill-e2e/report.json
+            .openbot-build/browser-otp-fields-e2e/report.json
+            .openbot-build/redaction-cookie-load-e2e/report.json
             .openbot-build/agent-api-keys-e2e/report.json
             .openbot-build/vault-credential-discovery-e2e/report.json
             .openbot-build/browser-native-task-permission-e2e/report.json

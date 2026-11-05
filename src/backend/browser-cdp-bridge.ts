@@ -116,6 +116,10 @@ export class BrowserCdpBridge {
     return this.#revoked;
   }
 
+  get allowsScripts(): boolean {
+    return this.#options.nativeOnly !== true;
+  }
+
   get secretRegistrationUrl(): string {
     return `http://127.0.0.1:${this.#port}/devtools/browser/${this.#token}/secrets`;
   }

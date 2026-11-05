@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Effect } from "effect";
 import { webContents } from "electron";
 import { WebSocket } from "ws";
 import { z } from "zod";
@@ -19,7 +20,14 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
   const protocol = seedContents.session.protocol;
   await protocol.handle("https", (request) => {
     const url = new URL(request.url);
-    if (url.hostname !== "authentication.openbot.test") return new Response("Not found", { status: 404 });
+    if (
+      ![
+        "authentication.openbot.test",
+        "native-authentication.openbot.test",
+        "scripted-authentication.openbot.test",
+      ].includes(url.hostname)
+    )
+      return new Response("Not found", { status: 404 });
     if (url.pathname === "/bitwarden-password") return bitwardenLoginFixture("password");
     if (url.pathname === "/bitwarden-authenticator") {
       const field = url.searchParams.get("field");
@@ -59,11 +67,70 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
       <button id="submit" disabled onclick="${url.pathname === "/native-submit" ? "if (!event.isTrusted) return; " : ""}${url.pathname === "/same-page" ? "history.replaceState({}, '', '/complete')" : "location.href='/complete'"}">Sign in</button>
       <script>
       ${url.pathname === "/component" ? `const host = document.createElement('div'); document.body.append(host); const root = host.attachShadow({mode: 'open'}); root.append(...document.querySelectorAll('input'));` : ""}
-      document.addEventListener('input', event => { if (${url.pathname === "/component"} && !event.isTrusted) return; ${url.pathname === "/native-submit" ? "setTimeout(() => { document.querySelector('#submit').disabled = false; }, 100);" : "document.querySelector('#submit').disabled = false;"} console.error(event.target.value); document.title = event.target.value; });</script>`;
+      document.addEventListener('input', event => { if (${url.pathname === "/component"} && !event.isTrusted) return; ${url.pathname === "/native-submit" ? "setTimeout(() => { document.querySelector('#submit').disabled = false; }, 100);" : "document.querySelector('#submit').disabled = false;"}
+      ${["/failed-submit", "/failed-submit-clean"].includes(url.pathname) ? "const button = document.querySelector('#submit'); button.replaceWith(button.cloneNode(true));" : ""}
+      ${url.pathname === "/failed-submit-clean" ? "" : "console.error(event.target.value); document.title = event.target.value;"} });</script>`;
     return new Response(`<!doctype html><body>${html}</body>`, { headers: { "Content-Type": "text/html" } });
   });
   await runCauseEffect(browser.close(seed.id));
   try {
+    // The real host and Chromium navigation use an injected OS boundary. No OS input is needed.
+    browser.setNativeControl({
+      ready: () => true,
+      open: () => Effect.void,
+      close: () => Effect.void,
+      snapshot: () => Effect.die(new Error("This fixture must not capture the OS.")),
+      input: () => Effect.die(new Error("This fixture must not send OS input.")),
+    });
+    for (const native of [true, false]) {
+      const host = native ? "native-authentication.openbot.test" : "scripted-authentication.openbot.test";
+      const tab = await runCauseEffect(browser.open(localOrigin, "secret-thread", "secret-agent"));
+      try {
+        const connection = await runCauseEffect(
+          browser.handleDynamicTool(
+            {
+              namespace: "openbot_browser",
+              tool: native ? "set_control_mode" : "connect_cdp",
+              threadId: "secret-thread",
+              ownerAgentId: "secret-agent",
+              turnId: "secret-turn",
+              callId: `origin-${native}`,
+              arguments: { tabId: tab.id, ...(native ? { mode: "native" } : {}) },
+            },
+            { nativeControlAllowed: () => true },
+          ),
+        );
+        if (!connection.success) throw new Error("The origin fixture could not connect.");
+        const contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
+        if (!contents) throw new Error("Missing origin fixture page.");
+        await contents.loadURL(`https://${host}/login`);
+        const prepared = await runCauseEffect(
+          browser.prepareSecret({
+            namespace: "openbot_browser",
+            tool: "submit_secret",
+            threadId: "secret-thread",
+            ownerAgentId: "secret-agent",
+            turnId: "secret-turn",
+            callId: `origin-secret-${native}`,
+            arguments: {
+              tabId: tab.id,
+              method: "password",
+              targets: [{ kind: "css", selector: "#password" }],
+              submission: "click",
+              submitTarget: { kind: "css", selector: "#submit" },
+            },
+          }),
+        );
+        prepared.cancel();
+        if (prepared.agentScriptedOrigin !== !native)
+          throw new Error("The host confused native navigation with script access.");
+        checks.push(
+          native ? "native navigation retains vault eligibility" : "CDP navigation blocks automatic vault fill",
+        );
+      } finally {
+        await runCauseEffect(browser.close(tab.id));
+      }
+    }
     await runBitwardenBrowserSmoke(browser);
     checks.push("saved passwords and authenticator codes submit without exposing values");
     for (const [selectors, fillable] of [
@@ -102,6 +169,67 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
         if (handoff.vaultFillable !== fillable)
           throw new Error(`${selectors.join()} was classified wrongly for a vault authenticator code.`);
         checks.push(`${selectors.join()}: vault fill ${fillable ? "allowed" : "refused"}`);
+      } finally {
+        await runCauseEffect(browser.close(tab.id));
+      }
+    }
+    for (const path of ["failed-submit", "failed-submit-clean"]) {
+      const tab = await runCauseEffect(
+        browser.open(`https://authentication.openbot.test/${path}`, "secret-thread", "secret-agent"),
+      );
+      try {
+        const contents = webContents.getAllWebContents().find((entry) => entry.getURL() === tab.url);
+        if (!contents) throw new Error("Missing failed submission fixture.");
+        await waitForPresentedFrame(contents);
+        const handoff = await runCauseEffect(
+          browser.prepareSecret({
+            namespace: "openbot_browser",
+            tool: "submit_secret",
+            threadId: "secret-thread",
+            ownerAgentId: "secret-agent",
+            turnId: "secret-turn",
+            callId: `failed-${path}`,
+            arguments: {
+              tabId: tab.id,
+              method: "password",
+              targets: [{ kind: "css", selector: "#password" }],
+              submission: "click",
+              submitTarget: { kind: "css", selector: "#submit" },
+            },
+          }),
+        );
+        const secret = "fixture-failed-password-729104";
+        const failure = await runCauseEffect(handoff.submit(secret, true)).then(
+          () => false,
+          () => true,
+        );
+        if (!failure) throw new Error("A replaced submit target must not report success.");
+        handoff.cancel();
+        await runCauseEffect(browser.beginTakeover(tab.id));
+        const snapshot = await runCauseEffect(browser.snapshot(tab.id));
+        if (JSON.stringify(snapshot).includes(secret)) throw new Error("Failed submission exposed a value.");
+        if ((await contents.executeJavaScript("document.querySelector('#password').value")) !== "")
+          throw new Error("Failed submission left a password in its field.");
+        const preview = await runCauseEffect(browser.capturePreview(tab.id));
+        if (!preview.dataUrl.startsWith("data:image/")) throw new Error("The sanitized takeover has no preview.");
+        const evaluate = () =>
+          runCauseEffect(
+            browser.handleDynamicTool({
+              namespace: "openbot_browser",
+              tool: "evaluate",
+              threadId: "secret-thread",
+              ownerAgentId: "secret-agent",
+              turnId: "secret-turn",
+              callId: `recover-${path}`,
+              arguments: { tabId: tab.id, expression: "document.title" },
+            }),
+          );
+        if (path === "failed-submit-clean" && (await evaluate()).success)
+          throw new Error("A retained secret document must still block evaluation.");
+        await runCauseEffect(browser.reload(tab.id));
+        browser.endTakeover(tab.id);
+        if (!(await evaluate()).success) throw new Error("Reload did not restore browser access.");
+        checks.push(`${path}: failed entry cleans the page and retains manual recovery`);
       } finally {
         await runCauseEffect(browser.close(tab.id));
       }

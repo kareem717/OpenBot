@@ -7,6 +7,7 @@ import {
   redactText,
   redactValue,
   registerSecretValue,
+  registerSecretValues,
   resolveLogLevel,
   toLogValue,
 } from "./index";
@@ -320,6 +321,28 @@ describe("registerSecretValue", () => {
     registerSecretValue(secret);
 
     expect(redactText(`key ${secret} rejected`)).toBe("key [redacted] rejected");
+  });
+
+  it("masks overlapping values across batches in every encoded form", () => {
+    const first = 'batch-first-credential"/2026';
+    const second = "2026 next-credential-ends";
+    registerSecretValue(first);
+    registerSecretValues(Array.from({ length: 130 }, (_, index) => `separate-batch-value-${index}`));
+    registerSecretValue(second);
+    expect(redactText(`before ${first} next-credential-ends after`)).toBe("before [redacted] after");
+    for (const secret of [first, second]) {
+      expect(redactText(`before ${encodeURIComponent(secret)} after`)).toBe("before [redacted] after");
+      expect(redactText(JSON.stringify({ note: secret }))).toBe('{"note":"[redacted]"}');
+    }
+    expect(redactText(`before ${first} then ${first} after`)).toBe("before [redacted] then [redacted] after");
+  });
+
+  it("masks a long literal and overlapping occurrences without a large pattern", () => {
+    const part = `${"long-literal-".repeat(800)} `;
+    const secret = `${part}${part}`;
+    registerSecretValue(secret);
+    expect(redactText(`before ${part}${part}${part} after`)).toBe("before [redacted] after");
+    expect(redactText(`before ${encodeURIComponent(secret)} after`)).toBe("before [redacted] after");
   });
 });
 

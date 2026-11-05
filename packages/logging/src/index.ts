@@ -122,8 +122,18 @@ const VALUE_MARKER = "__openbot_registered_value__";
 const LABEL_MARKER = "__openbot_registered_secret_authorization";
 const MARKERS = new RegExp(`${VALUE_MARKER}|${LABEL_MARKER}`, "gu");
 const registeredSecrets = new Set<string>();
-// One alternation, longest first, so a secret that contains another one is masked whole.
-let registeredSecretPattern: RegExp | null = null;
+// V8 compiles literal alternatives into native code. One growing pattern can exhaust that
+// allocation even when the JavaScript heap and the machine still have free memory.
+const MAX_REGISTERED_PATTERN_LENGTH = 8_192;
+const MAX_REGISTERED_PATTERN_VALUES = 64;
+interface RegisteredSecretBatch {
+  alternatives: string[];
+  length: number;
+  pattern: RegExp | null;
+}
+const registeredSecretBatches: RegisteredSecretBatch[] = [];
+// A single long value must not exceed the compiler budget either. Match it as literal text.
+const longRegisteredSecrets: string[] = [];
 
 /**
  * Masks `value` in every later log line, export and trace, in its raw, JSON-escaped and
@@ -134,20 +144,32 @@ export function registerSecretValue(value: string, options: { allowShort?: boole
   registerSecretValues([value], options);
 }
 
-/** `registerSecretValue` for many values, such as an imported password list, with one pattern rebuild. */
+/** `registerSecretValue` for many values, such as an imported password list. */
 export function registerSecretValues(values: Iterable<string>, options: { allowShort?: boolean } = {}): void {
-  const size = registeredSecrets.size;
   for (const value of values) {
     if (!value || (!options.allowShort && value.length < MIN_REGISTERED_SECRET_LENGTH)) continue;
     for (const form of [value, JSON.stringify(value).slice(1, -1), uriEncoded(value)]) {
-      if (form !== null) registeredSecrets.add(form);
+      if (form === null || registeredSecrets.has(form)) continue;
+      registeredSecrets.add(form);
+      const alternative = form.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      if (alternative.length > MAX_REGISTERED_PATTERN_LENGTH) {
+        longRegisteredSecrets.push(form);
+        continue;
+      }
+      let batch = registeredSecretBatches.at(-1);
+      if (
+        !batch ||
+        batch.alternatives.length >= MAX_REGISTERED_PATTERN_VALUES ||
+        batch.length + alternative.length + 1 > MAX_REGISTERED_PATTERN_LENGTH
+      ) {
+        batch = { alternatives: [], length: 0, pattern: null };
+        registeredSecretBatches.push(batch);
+      }
+      batch.alternatives.push(alternative);
+      batch.length += alternative.length + 1;
+      batch.pattern = null;
     }
   }
-  if (registeredSecrets.size === size) return;
-  const alternatives = [...registeredSecrets]
-    .sort((left, right) => right.length - left.length)
-    .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
-  registeredSecretPattern = new RegExp(alternatives.join("|"), "gu");
 }
 
 // A lone surrogate cannot be URL-encoded. Such a value cannot appear in a URL either, and a
@@ -174,13 +196,29 @@ export function redactText(value: string): string {
 // Every exact match is found before any grows, so a match inside the token an earlier one grew to
 // still extends the range past it. Ranges that overlap or touch become one token.
 function markRegisteredSecrets(value: string): string {
-  const pattern = registeredSecretPattern;
-  if (!pattern) return value;
-  pattern.lastIndex = 0;
+  if (registeredSecrets.size === 0 || value.length === 0) return value;
+  // Batches can match out of order. Keep the longest match at each offset, then merge ranges
+  // before inserting a marker, so a match in another batch cannot leave part of a secret visible.
+  const matches = new Map<number, number>();
+  for (const batch of registeredSecretBatches) {
+    batch.pattern ??= new RegExp(batch.alternatives.sort((left, right) => right.length - left.length).join("|"), "gu");
+    const pattern = batch.pattern;
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(value); match !== null; match = pattern.exec(value)) {
+      const end = match.index + match[0].length;
+      if (end > (matches.get(match.index) ?? 0)) matches.set(match.index, end);
+    }
+  }
+  for (const secret of longRegisteredSecrets) {
+    for (let start = value.indexOf(secret); start !== -1; start = value.indexOf(secret, start + 1)) {
+      const end = start + secret.length;
+      if (end > (matches.get(start) ?? 0)) matches.set(start, end);
+    }
+  }
   const ranges: Array<{ start: number; end: number }> = [];
-  for (let match = pattern.exec(value); match !== null; match = pattern.exec(value)) {
-    let start = match.index;
-    let end = start + match[0].length;
+  for (const [offset, matchedEnd] of [...matches].sort(([left], [right]) => left - right)) {
+    let start = offset;
+    let end = matchedEnd;
     const previous = ranges.at(-1);
     const floor = previous?.end ?? 0;
     while (start > floor && TOKEN_CHARACTER.test(value.charAt(start - 1))) start -= 1;
