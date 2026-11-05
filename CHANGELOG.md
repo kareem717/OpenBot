@@ -6,6 +6,14 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.9] - 2026-11-05
+
+### Added
+
+- Agents can switch an existing browser tab between agent-browser/CDP and native OS input. The
+  tab keeps its document and sign-in. Native control requires Computer Use permission and uses
+  a separate window for that tab. It does not guarantee that a site accepts automated activity.
+
 ## [0.60.8] - 2026-11-05
 
 ### Added
