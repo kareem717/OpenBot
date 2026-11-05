@@ -32,7 +32,6 @@ const windowSchema = z.object({
 });
 const windowsSchema = z.object({ windows: z.array(windowSchema) });
 const captureSchema = z.object({
-  snapshot_id: z.string().min(1),
   capture_id: z.string().min(1),
   screenshot_width: z.number().int().positive(),
   screenshot_height: z.number().int().positive(),
