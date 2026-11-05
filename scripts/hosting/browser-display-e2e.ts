@@ -1,6 +1,7 @@
 // Drives the real private-display launcher with Xvfb and Openbox. It starts no OpenBot profile.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,9 +10,27 @@ import { z } from "zod";
 const output = resolve(import.meta.dirname, "../../.openbot-build/browser-display-e2e");
 const root = await mkdtemp(join(tmpdir(), "openbot-display-"));
 const launcher = resolve(import.meta.dirname, "openbot-hosted-server");
-const report: { passed: boolean; checks: string[]; diagnostics: { mode: string; stderr: string }[]; error?: string } = {
+const report: {
+  passed: boolean;
+  checks: string[];
+  runtime: string;
+  launcherSha256: string;
+  diagnostics: {
+    mode: string;
+    code?: number | null;
+    signal?: string | null;
+    stdout: string;
+    stderr: string;
+    wrapperTrace?: string;
+  }[];
+  error?: string;
+} = {
   passed: false,
   checks: [],
+  runtime: process.versions.bun ? `Bun ${process.versions.bun}` : `Node ${process.versions.node}`,
+  launcherSha256: createHash("sha256")
+    .update(await readFile(launcher))
+    .digest("hex"),
   diagnostics: [],
 };
 const observationSchema = z.object({
@@ -29,10 +48,14 @@ await writeFile(
   `#!/bin/bash
 set -uo pipefail
 export OPENBOT_AGENT_DISPLAY=$DISPLAY
+printf '%s\\n' 'phase: agent display ready' >&2
 xprop -root _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST >"$1/agent-before"
+printf 'phase: agent properties before exit=%s\\n' "$?" >&2
 xvfb-run -a -f "$XAUTHORITY" bash "$1/browser-display.sh" "$@"
 status=$?
+printf 'phase: browser display child exit=%s\\n' "$status" >&2
 xprop -root _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST >"$1/agent-after"
+printf 'phase: agent properties after exit=%s\\n' "$?" >&2
 exit "$status"
 `,
 );
@@ -41,10 +64,14 @@ await writeFile(
   `#!/bin/bash
 set -uo pipefail
 export OPENBOT_PRIVATE_BROWSER_DISPLAY=1
-bash "$2" --browser-display "$3" "$1/app.cjs" "$@"
+printf '%s\\n' 'phase: private browser display ready' >&2
+# Only this synthetic invocation is traced. It enters --browser-display before profile/keyring code.
+bash -x "$2" --browser-display "$3" "$1/app.cjs" "$@" 2>"$1/wrapper.trace"
 status=$?
+printf 'phase: owned launcher exit=%s\\n' "$status" >&2
 xprop -root _NET_SUPPORTING_WM_CHECK >"$1/browser-after"
 printf '%s' "$?" >"$1/browser-alive"
+printf 'phase: browser display after exit=%s\\n' "$(cat "$1/browser-alive")" >&2
 exit "$status"
 `,
 );
@@ -77,11 +104,15 @@ async function run(mode: "exit" | "signal"): Promise<number | null> {
       ["-a", "bash", join(root, "agent-display.sh"), root, launcher, process.execPath, mode],
       {
         env: { ...process.env, XDG_CONFIG_HOME: join(root, "config") },
-        stdio: ["ignore", "ignore", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       },
     );
     let stderr = "";
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout = (stdout + chunk.toString()).slice(-8192);
+    });
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-8192);
     });
@@ -91,12 +122,20 @@ async function run(mode: "exit" | "signal"): Promise<number | null> {
     }, 30_000);
     child.once("error", (error) => {
       clearTimeout(timeout);
-      report.diagnostics.push({ mode, stderr });
+      report.diagnostics.push({ mode, stdout, stderr });
       reject(error);
     });
-    child.once("exit", (code) => {
+    child.once("close", async (code, signal) => {
       clearTimeout(timeout);
-      report.diagnostics.push({ mode, stderr });
+      const failed = code !== (mode === "exit" ? 7 : 143);
+      // The bounded trace contains only the isolated wrapper's commands, WM root/child identity,
+      // and supported EWMH atoms. It never reads the live app or dumps an environment.
+      const wrapperTrace = failed
+        ? await readFile(join(root, "wrapper.trace"), "utf8")
+            .then((text) => text.slice(-16_384))
+            .catch(() => "No wrapper trace was written.")
+        : undefined;
+      report.diagnostics.push({ mode, code, signal, stdout, stderr, ...(wrapperTrace ? { wrapperTrace } : {}) });
       resolveRun(code);
     });
   });
