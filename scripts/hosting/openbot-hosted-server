@@ -9,6 +9,69 @@
 set -euo pipefail
 umask 077
 
+# This mode runs only inside the private browser Xvfb below. Its window manager is a child of
+# this wrapper, so it stops before xvfb-run removes the display. The agent display is not changed.
+if [ "${1:-}" = --browser-display ]; then
+  shift
+  if [ "${OPENBOT_PRIVATE_BROWSER_DISPLAY:-}" != 1 ] || [ -z "${DISPLAY:-}" ] ||
+    [ "$DISPLAY" = "${OPENBOT_AGENT_DISPLAY:-}" ] || [ "$#" -eq 0 ]; then
+    echo "The browser window manager requires OpenBot's private display." >&2
+    exit 1
+  fi
+  unset OPENBOT_PRIVATE_BROWSER_DISPLAY
+  wm_pid=""
+  app_pid=""
+  cleanup_browser_display() {
+    if [ -n "$wm_pid" ]; then
+      kill -TERM "$wm_pid" 2>/dev/null || true
+      wait "$wm_pid" 2>/dev/null || true
+    fi
+  }
+  stop_browser_display() {
+    if [ -n "$app_pid" ]; then
+      kill -TERM "$app_pid" 2>/dev/null || true
+      wait "$app_pid" 2>/dev/null || true
+    fi
+    exit 143
+  }
+  trap cleanup_browser_display EXIT
+  trap stop_browser_display TERM INT
+  browser_wm_ready() {
+    local root_check child_check window_id supported active
+    root_check=$(xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null) || return 1
+    [[ $root_check =~ window\ id\ \#\ (0x[0-9a-fA-F]+) ]] || return 1
+    window_id=${BASH_REMATCH[1]}
+    [ "$window_id" != 0x0 ] || return 1
+    child_check=$(xprop -id "$window_id" _NET_SUPPORTING_WM_CHECK 2>/dev/null) || return 1
+    [[ $child_check == *"window id # $window_id"* ]] || return 1
+    supported=$(xprop -root _NET_SUPPORTED 2>/dev/null) || return 1
+    [[ $supported == *_NET_ACTIVE_WINDOW* ]] || return 1
+    active=$(xprop -root _NET_ACTIVE_WINDOW 2>/dev/null) || return 1
+    [[ $active == *"window id #"* ]]
+  }
+  # A private Xvfb starts empty. Do not replace or stop a manager if a caller supplied another display.
+  if browser_wm_ready; then
+    echo "The private browser display already has a window manager." >&2
+    exit 1
+  fi
+  openbox --sm-disable >/dev/null 2>&1 &
+  wm_pid=$!
+  for _ in $(seq 1 100); do
+    kill -0 "$wm_pid" 2>/dev/null || break
+    browser_wm_ready && break
+    sleep 0.1
+  done
+  if ! kill -0 "$wm_pid" 2>/dev/null || ! browser_wm_ready; then
+    echo "The private browser window manager did not start." >&2
+    exit 1
+  fi
+  "$@" &
+  app_pid=$!
+  status=0
+  wait "$app_pid" || status=$?
+  exit "$status"
+fi
+
 # ExecStop of openbot.service. The unit also holds the virtual displays, and its stop signal goes to
 # each of its processes at the same time. An Xvfb that stops first ends OpenBot before it closes its
 # database. So this gives the signal to OpenBot only and waits for it; the unit then stops the rest.
@@ -136,11 +199,12 @@ export GNOME_KEYRING_CONTROL
 # OpenBot writes its PID for `--stop` before it starts.
 openbot=(bash -c 'echo "$$" >"$XDG_RUNTIME_DIR/openbot.pid" && exec "$@"' openbot-hosted-server
   /opt/OpenBot/app/openbot --password-store=gnome-libsecret)
+browser_display=(env OPENBOT_PRIVATE_BROWSER_DISPLAY=1 "$0" --browser-display "${openbot[@]}")
 if [ "$mode" = hosted ]; then
   for _ in $(seq 1 60); do
     if DISPLAY=:0 XAUTHORITY="$HOME/.Xauthority" xdpyinfo >/dev/null 2>&1; then
       export OPENBOT_AGENT_DISPLAY=:0
-      exec xvfb-run -a -f "$HOME/.Xauthority" -s "-screen 0 1280x800x24 -nolisten tcp" "${openbot[@]}"
+      exec xvfb-run -a -f "$HOME/.Xauthority" -s "-screen 0 1280x800x24 -nolisten tcp" "${browser_display[@]}"
     fi
     sleep 2
   done
@@ -151,4 +215,4 @@ fi
 # display and adds its key to the same authority file.
 exec xvfb-run -a -s "-screen 0 $(display_size "$requested_size")x24 -nolisten tcp" \
   bash -c 'export OPENBOT_AGENT_DISPLAY=$DISPLAY; exec xvfb-run -a -f "$XAUTHORITY" -s "-screen 0 1280x800x24 -nolisten tcp" "$@"' \
-  openbot-hosted-server "${openbot[@]}"
+  openbot-hosted-server "${browser_display[@]}"

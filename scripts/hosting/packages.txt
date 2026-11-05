@@ -9,6 +9,7 @@ dbus-x11
 gnome-keyring
 libsecret-1-0
 openssl
+openbox
 x11-utils
 xauth
 xvfb

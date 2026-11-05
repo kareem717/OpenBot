@@ -70,7 +70,8 @@ jobs:
       - name: Check native browser mode with real OS input
         run: |
           bun scripts/install-cua-driver.ts linux x64
-          OPENBOT_NATIVE_ISOLATED_DISPLAY=1 xvfb-run -a dbus-run-session -- bun scripts/browser-native-control-e2e.ts
+          bun scripts/hosting/browser-display-e2e.ts
+          OPENBOT_NATIVE_ISOLATED_DISPLAY=1 xvfb-run -a dbus-run-session -- bash -c 'export OPENBOT_AGENT_DISPLAY=$DISPLAY; exec xvfb-run -a -f "$XAUTHORITY" env OPENBOT_PRIVATE_BROWSER_DISPLAY=1 scripts/hosting/openbot-hosted-server --browser-display bun scripts/browser-native-control-e2e.ts'
       - name: Install and verify the pinned Codex runtime
         run: bun scripts/install-codex-runtime.ts linux x64
       - name: Check native MCP discovery and steering
@@ -107,6 +108,7 @@ jobs:
             .openbot-build/browser-native-control-e2e/report.json
             .openbot-build/browser-native-control-e2e/native-window.png
             .openbot-build/browser-native-control-e2e/recording/
+            .openbot-build/browser-display-e2e/report.json
           if-no-files-found: ignore
 
   linux:

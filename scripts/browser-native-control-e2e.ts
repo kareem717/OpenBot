@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -13,7 +13,6 @@ const artifactRoot = join(projectRoot, ".openbot-build/browser-native-control-e2
 const fixtureRoot = await mkdtemp("/tmp/ob-native-");
 const reportPath = join(artifactRoot, "report.json");
 const runId = randomUUID();
-let manager: ReturnType<typeof spawn> | undefined;
 
 async function run(command: string, args: string[], environment = process.env): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -50,17 +49,12 @@ try {
   if (process.platform === "linux") {
     assert.ok(process.env.DISPLAY, "Run the fixture under its own Xvfb display.");
     assert.equal(process.env.OPENBOT_NATIVE_ISOLATED_DISPLAY, "1", "The fixture needs an explicitly isolated display.");
-    manager = spawn("openbox", ["--sm-disable"], {
-      env: {
-        ...withoutElectronRuntimeFlags(process.env),
-        XDG_CONFIG_HOME: join(fixtureRoot, "window-config"),
-        XDG_CACHE_HOME: join(fixtureRoot, "window-cache"),
-      },
-      stdio: "ignore",
+    const properties = execFileSync("xprop", ["-root", "_NET_SUPPORTING_WM_CHECK", "_NET_ACTIVE_WINDOW"], {
+      encoding: "utf8",
+      timeout: 5_000,
     });
-    manager.on("error", () => {
-      /* The fixture reports a missing native window manager through the owned process. */
-    });
+    assert.match(properties, /_NET_SUPPORTING_WM_CHECK\(WINDOW\): window id # 0x[1-9a-f][0-9a-f]*/i);
+    assert.match(properties, /_NET_ACTIVE_WINDOW\(WINDOW\): window id #/);
   }
   const target = cuaDriverTarget();
   const pinned = await loadCuaDriverLock(projectRoot);
@@ -91,7 +85,6 @@ try {
     `--outfile=${entry}`,
   ]);
   const environment = { ...process.env };
-  delete environment.OPENBOT_AGENT_DISPLAY;
   await run(
     join(projectRoot, "node_modules/.bin/electron"),
     [
@@ -135,11 +128,5 @@ try {
     );
   throw error;
 } finally {
-  if (manager?.pid && manager.exitCode === null) {
-    await new Promise<void>((resolve) => {
-      manager?.once("exit", () => resolve());
-      manager?.kill("SIGTERM");
-    });
-  }
   await rm(fixtureRoot, { recursive: true, force: true });
 }
