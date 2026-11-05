@@ -6,6 +6,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.60.11] - 2026-11-05
+
+### Fixed
+
+- Self-hosted servers can start the private browser display before a window is open. Native input still checks the active window before each action.
+
 ## [0.60.10] - 2026-11-05
 
 ### Fixed
