@@ -49,12 +49,15 @@ try {
   if (process.platform === "linux") {
     assert.ok(process.env.DISPLAY, "Run the fixture under its own Xvfb display.");
     assert.equal(process.env.OPENBOT_NATIVE_ISOLATED_DISPLAY, "1", "The fixture needs an explicitly isolated display.");
-    const properties = execFileSync("xprop", ["-root", "_NET_SUPPORTING_WM_CHECK", "_NET_ACTIVE_WINDOW"], {
+    const properties = execFileSync("xprop", ["-root", "_NET_SUPPORTING_WM_CHECK", "_NET_SUPPORTED"], {
       encoding: "utf8",
       timeout: 5_000,
     });
     assert.match(properties, /_NET_SUPPORTING_WM_CHECK\(WINDOW\): window id # 0x[1-9a-f][0-9a-f]*/i);
-    assert.match(properties, /_NET_ACTIVE_WINDOW\(WINDOW\): window id #/);
+    assert.ok(
+      properties.includes("_NET_ACTIVE_WINDOW"),
+      "The window manager must support activation before app startup.",
+    );
   }
   const target = cuaDriverTarget();
   const pinned = await loadCuaDriverLock(projectRoot);

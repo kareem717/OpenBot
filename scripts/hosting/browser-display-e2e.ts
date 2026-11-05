@@ -9,7 +9,11 @@ import { z } from "zod";
 const output = resolve(import.meta.dirname, "../../.openbot-build/browser-display-e2e");
 const root = await mkdtemp(join(tmpdir(), "openbot-display-"));
 const launcher = resolve(import.meta.dirname, "openbot-hosted-server");
-const report: { passed: boolean; checks: string[]; error?: string } = { passed: false, checks: [] };
+const report: { passed: boolean; checks: string[]; diagnostics: { mode: string; stderr: string }[]; error?: string } = {
+  passed: false,
+  checks: [],
+  diagnostics: [],
+};
 const observationSchema = z.object({
   wmPid: z.number().int().positive(),
   display: z.string().min(1),
@@ -73,20 +77,26 @@ async function run(mode: "exit" | "signal"): Promise<number | null> {
       ["-a", "bash", join(root, "agent-display.sh"), root, launcher, process.execPath, mode],
       {
         env: { ...process.env, XDG_CONFIG_HOME: join(root, "config") },
-        stdio: "ignore",
+        stdio: ["ignore", "ignore", "pipe"],
         detached: true,
       },
     );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-8192);
+    });
     const timeout = setTimeout(() => {
       if (child.pid) process.kill(-child.pid, "SIGTERM");
       reject(new Error("The owned display launcher did not finish."));
     }, 30_000);
     child.once("error", (error) => {
       clearTimeout(timeout);
+      report.diagnostics.push({ mode, stderr });
       reject(error);
     });
     child.once("exit", (code) => {
       clearTimeout(timeout);
+      report.diagnostics.push({ mode, stderr });
       resolveRun(code);
     });
   });

@@ -37,7 +37,7 @@ if [ "${1:-}" = --browser-display ]; then
   trap cleanup_browser_display EXIT
   trap stop_browser_display TERM INT
   browser_wm_ready() {
-    local root_check child_check window_id supported active
+    local root_check child_check window_id supported
     root_check=$(xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null) || return 1
     [[ $root_check =~ window\ id\ \#\ (0x[0-9a-fA-F]+) ]] || return 1
     window_id=${BASH_REMATCH[1]}
@@ -45,9 +45,9 @@ if [ "${1:-}" = --browser-display ]; then
     child_check=$(xprop -id "$window_id" _NET_SUPPORTING_WM_CHECK 2>/dev/null) || return 1
     [[ $child_check == *"window id # $window_id"* ]] || return 1
     supported=$(xprop -root _NET_SUPPORTED 2>/dev/null) || return 1
-    [[ $supported == *_NET_ACTIVE_WINDOW* ]] || return 1
-    active=$(xprop -root _NET_ACTIVE_WINDOW 2>/dev/null) || return 1
-    [[ $active == *"window id #"* ]]
+    # An empty display has no active client yet. The manager must advertise the activation
+    # capability; the OS driver verifies the active window when it dispatches browser input.
+    [[ $supported == *_NET_ACTIVE_WINDOW* ]]
   }
   # A private Xvfb starts empty. Do not replace or stop a manager if a caller supplied another display.
   if browser_wm_ready; then
