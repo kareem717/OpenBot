@@ -245,6 +245,7 @@ export function createChannelConversation(env: ChannelConversationEnvironment) {
       if (!current || current.channel.archived) return [];
       return channelAwaitingReplies({
         tasks: current.tasks,
+        messages: current.messages,
         agents: channels.agents(),
         name: (id) => (id ? agentName(id) : t("sidebar.section.unassigned")),
       });

@@ -457,6 +457,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:agent-channel-manage
 
+      - name: Check channel continuations and empty replies
+        if: ${{ !cancelled() }}
+        run: |
+          bun scripts/channel-parent-request-e2e.ts
+          bun scripts/channel-empty-result-e2e.ts
+
       - name: Run the agent profile accounts E2E test
         if: ${{ !cancelled() }}
         run: bun run test:agent-profile-accounts
@@ -602,6 +608,8 @@ jobs:
             .openbot-build/routine-report-failure-e2e/
             .openbot-build/agent-webhook-routine-e2e/
             .openbot-build/agent-channel-manage-e2e/
+            .openbot-build/channel-parent-request-e2e/
+            .openbot-build/channel-empty-result-e2e/
             .openbot-build/agent-profile-accounts-e2e/
             .openbot-build/browser-profile-agents-e2e/
             .openbot-build/claude-usage-resume-e2e/

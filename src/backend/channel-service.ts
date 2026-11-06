@@ -21,6 +21,8 @@ import {
   type CreateChannelMemoryInput,
   channelRoutingConversationEventItemType,
   type DeleteChannelMemoryInput,
+  isAgentAnswer,
+  isChannelChangeMarker,
   type QueueHold,
   type UpdateChannelMemoryInput,
 } from "@openbot/contracts/ipc";
@@ -610,9 +612,16 @@ export class ChannelService {
         const open = allTasks.filter((task) => !terminal(task));
         const eligible = this.eligibleMembers(current);
         const recipients = this.#recipients(eligible, text, command.recipientAgentId);
+        const followUp = this.#followUpText(eligible, text);
+        // A plain resume keeps the delegated work. New instructions can invalidate it, but asking
+        // the same work to continue must have the same effect as the task's Continue button.
+        const resumes =
+          committed === null &&
+          /^(?:please\s+)?(?:continue|resume|go on|keep going)(?:\s+please)?[.!]?\s*$/iu.test(followUp);
         const continues =
+          resumes ||
           /^(?:also|instead|actually|please change|change that|correction|continue|resume|go on|keep going|yes|no|use that|make it)\b/iu.test(
-            text.trim(),
+            followUp,
           );
         // Each recipient answers separately, so a request to several members starts new work; it
         // does not continue the one task that a reply names. When the open work is the tasks that
@@ -639,6 +648,7 @@ export class ChannelService {
         const stoppedRequest = newestStopped ? stoppedRoots.filter((task) => sameRequest(task, newestStopped)) : [];
         const own = (tasks: ChannelTask[]) => newest(tasks.filter((task) => task.ownerAgentId === recipients[0]));
         const recipientStopped = own(pausedRoots) ?? own(failedRoots);
+        const continuingRoot = own(roots) ?? (roots.length === 1 ? roots[0] : undefined);
         const continued: ChannelTask[] =
           recipients.length > 1
             ? []
@@ -646,18 +656,22 @@ export class ChannelService {
               ? allTasks.filter((task) => task.id === referenced.taskId)
               : !continues
                 ? []
-                : !referenced && newestStopped && /^(?:continue|resume|go on|keep going)\b/iu.test(text.trim())
+                : !referenced &&
+                    newestStopped &&
+                    (resumes || /^(?:continue|resume|go on|keep going)\b/iu.test(followUp))
                   ? recipients[0]
                     ? [recipientStopped ?? newestStopped]
                     : stoppedRequest
-                  : open.length === 1
-                    ? open
-                    : !referenced &&
-                        roots.length > 1 &&
-                        roots.every((task) => roots[0] && sameRequest(task, roots[0])) &&
-                        open.every((task) => roots.some((root) => root.id === task.rootTaskId))
-                      ? openRoots
-                      : [];
+                  : resumes && !referenced && continuingRoot
+                    ? [continuingRoot]
+                    : open.length === 1
+                      ? open
+                      : !referenced &&
+                          roots.length > 1 &&
+                          roots.every((task) => roots[0] && sameRequest(task, roots[0])) &&
+                          open.every((task) => roots.some((root) => root.id === task.rootTaskId))
+                        ? openRoots
+                        : [];
         const previous = continued[0];
         // A reply to a member is addressed to that member. The arm above only catches a reply that
         // carries a task; a plain progress note and the lead's own dispatch carry none, and those
@@ -666,20 +680,26 @@ export class ChannelService {
           !previous && referenced && !referenced.taskId && referenced.author.kind === "agent"
             ? eligible.find((agentId) => agentId === referenced.author.id)
             : undefined;
-        const resumed = continued.map(
-          (item, index): ChannelTask => ({
+        const resumed = continued.map((item, index): ChannelTask => {
+          const ownerAgentId = (index === 0 ? recipients[0] : undefined) ?? item.ownerAgentId;
+          const stopped = item.state === "paused" || item.state === "failed";
+          // An active turn already continues, including a parent that waits for a child. Do not
+          // interrupt it or turn its dependency wait into a second assignment for a plain resume.
+          if (resumes && !stopped && !terminal(item) && ownerAgentId === item.ownerAgentId) return item;
+          return {
             ...item,
             // The task keeps the request it was made for. The new message is its request now, and the
             // dispatch and the packet give it as a follow-up: "continue" alone is no assignment.
-            dependencies: [],
+            dependencies: resumes ? item.dependencies : [],
             requestMessageId: id,
             sourceMessageIds: [...item.sourceMessageIds.slice(-30), id],
             revision: item.revision + 1,
             state: "queued",
             error: null,
-            ownerAgentId: (index === 0 ? recipients[0] : undefined) ?? item.ownerAgentId,
-          }),
-        );
+            assignmentCount: resumes && stopped ? 0 : item.assignmentCount,
+            ownerAgentId,
+          };
+        });
         const task = resumed[0] ?? this.newTask(current.id, id, text, recipients[0] ?? repliedMember ?? null);
         const others = [
           ...resumed.slice(1),
@@ -689,8 +709,25 @@ export class ChannelService {
         message.message.replyToMessageId = command.replyToMessageId;
         if (committed) message.message.attachments = committed.attachments;
         const affected = continued.flatMap((item) => descendants(allTasks, item.id));
+        const resumedChildren = resumes
+          ? affected
+              .filter(
+                (item) =>
+                  !continued.some((entry) => entry.id === item.id) &&
+                  (item.state === "paused" || item.state === "failed"),
+              )
+              .map(
+                (item): ChannelTask => ({
+                  ...item,
+                  state: "queued",
+                  revision: item.revision + 1,
+                  assignmentCount: 0,
+                  error: null,
+                }),
+              )
+          : [];
         const stopped = affected
-          .filter((item) => !continued.some((entry) => entry.id === item.id))
+          .filter((item) => !resumes && !continued.some((entry) => entry.id === item.id))
           .map(
             (item): ChannelTask => ({
               ...item,
@@ -706,17 +743,18 @@ export class ChannelService {
               messages: [
                 ...messages
                   .filter(
-                    (entry) => continued.some((item) => item.id === entry.taskId) && entry.author.kind === "agent",
+                    (entry) =>
+                      !resumes && continued.some((item) => item.id === entry.taskId) && entry.author.kind === "agent",
                   )
                   .map((entry) => ({ ...entry, superseded: true })),
                 message,
               ],
-              tasks: [...stopped, task, ...others],
+              tasks: [...stopped, ...resumedChildren, task, ...others],
             },
             operationId,
           ),
         );
-        return { current, continued, affected, resumed, message, result };
+        return { current, continued, affected, resumed, resumedChildren, resumes, message, result };
       }).pipe(
         Effect.onExit((exit) =>
           committed
@@ -727,18 +765,19 @@ export class ChannelService {
             : Effect.void,
         ),
       );
-      const { current, continued, affected, resumed, message, result } = stored;
+      const { current, continued, affected, resumed, resumedChildren, resumes, message, result } = stored;
       this.publish(current.id);
       yield* this.interruptTasks(
         current.id,
-        affected.filter((item) => !continued.some((entry) => entry.id === item.id)),
+        resumes ? resumedChildren : affected.filter((item) => !continued.some((entry) => entry.id === item.id)),
+        { staleOnly: resumes },
       );
       yield* Effect.forEach(
         resumed,
         (item, index) =>
           Effect.gen({ self: this }, function* () {
             const before = continued[index];
-            if (!before) return;
+            if (!before || (resumes && before.revision === item.revision)) return;
             // A failed steer starts the task again from a new delivery, and the other steers go on.
             // A stopped task is not steered: its turn can still be ending, and a correction that
             // turn accepted ended with it, which stopped the resumed task again.
@@ -1150,6 +1189,32 @@ export class ChannelService {
     return named.length === 1 && named[0] ? [named[0].id] : [];
   }
 
+  /** The request after its leading address, for continuation intent only. The stored text stays intact. */
+  #followUpText(eligible: readonly string[], text: string): string {
+    const address = leadingAddress(text);
+    const last = address.mentions.at(-1);
+    if (last || address.everyone)
+      return text
+        .slice(last?.end ?? 0)
+        .replace(/^(?:[\s,:;]|and\b|&|@everyone(?![\p{L}\p{N}_'’-]))*/iu, "")
+        .trim();
+    const [agentId] = this.#typedAddress(eligible, text);
+    const name = agentId
+      ? this.hooks
+          .agents()
+          .find((agent) => agent.id === agentId)
+          ?.name.trim()
+      : undefined;
+    return (
+      name
+        ? text
+            .trimStart()
+            .slice(name.length + 1)
+            .replace(/^[\s,:;]*/u, "")
+        : text
+    ).trim();
+  }
+
   private eligibleMembers(channel: Channel): string[] {
     const live = this.hooks.agents();
     return channel.members
@@ -1357,8 +1422,9 @@ export class ChannelService {
             throw new ChannelRoutingError(sourceText("error.backend.channelRoutingUnreadable"));
           }
           if ("taskId" in decision) {
+            const selectedTaskId = decision.taskId;
             const existing = channelResult(yield* Effect.result(channelSync(() => this.store.tasks(channelId)))).find(
-              (item) => item.id === decision.taskId && item.id !== task?.id && !terminal(item),
+              (item) => item.id === selectedTaskId && item.id !== task?.id && !terminal(item),
             );
             if (!existing?.ownerAgentId)
               throw new ChannelRoutingError(sourceText("error.backend.channelRequestMemberRequired"));
@@ -1369,50 +1435,59 @@ export class ChannelService {
                   yield* Effect.result(channelSync(() => this.store.message(channelId, task.requestMessageId))),
                 )
               : null;
-            const affected = descendants(
-              channelResult(yield* Effect.result(channelSync(() => this.store.tasks(channelId)))),
-              existing.id,
-            );
-            channelResult(
-              yield* Effect.result(
-                channelSync(() =>
-                  this.store.update(channel, {
-                    tasks: [
-                      ...affected
-                        .filter((item) => item.id !== existing.id)
-                        .map(
-                          (item): ChannelTask => ({
-                            ...item,
-                            state: "paused",
-                            revision: item.revision + 1,
-                            error: "The parent request changed.",
-                          }),
-                        ),
-                      { ...task, state: "cancelled" },
-                      {
-                        // The task keeps its instruction; the packet adds the new message as a follow-up.
-                        ...existing,
-                        requestMessageId: task.requestMessageId,
-                        attachmentDraftIds: task.attachmentDraftIds,
-                        sourceMessageIds: [...existing.sourceMessageIds.slice(-30), task.requestMessageId],
-                        dependencies: [],
-                        state: "queued",
-                        revision: existing.revision + 1,
-                        error: null,
-                      },
-                    ],
-                    messages: [
-                      ...(source ? [{ ...source, taskId: existing.id }] : []),
-                      this.dispatch(channelId, existing.id, lead, "continued", ownerAgentId),
-                    ],
-                  }),
+            if (
+              source?.author.kind === "member" &&
+              !source.author.id.startsWith("routine:") &&
+              !source.author.id.startsWith("agent:")
+            ) {
+              const affected = descendants(
+                channelResult(yield* Effect.result(channelSync(() => this.store.tasks(channelId)))),
+                existing.id,
+              );
+              channelResult(
+                yield* Effect.result(
+                  channelSync(() =>
+                    this.store.update(channel, {
+                      tasks: [
+                        ...affected
+                          .filter((item) => item.id !== existing.id)
+                          .map(
+                            (item): ChannelTask => ({
+                              ...item,
+                              state: "paused",
+                              revision: item.revision + 1,
+                              error: "The parent request changed.",
+                            }),
+                          ),
+                        { ...task, state: "cancelled" },
+                        {
+                          // The task keeps its instruction; the packet adds the new message as a follow-up.
+                          ...existing,
+                          requestMessageId: task.requestMessageId,
+                          attachmentDraftIds: task.attachmentDraftIds,
+                          sourceMessageIds: [...existing.sourceMessageIds.slice(-30), task.requestMessageId],
+                          dependencies: [],
+                          state: "queued",
+                          revision: existing.revision + 1,
+                          error: null,
+                        },
+                      ],
+                      messages: [
+                        ...(source ? [{ ...source, taskId: existing.id }] : []),
+                        this.dispatch(channelId, existing.id, lead, "continued", ownerAgentId),
+                      ],
+                    }),
+                  ),
                 ),
-              ),
-            );
-            this.publish(channelId);
-            channelResult(yield* Effect.result(this.interruptTasks(channelId, affected)));
-            this.#wakeAgain.add(channelId);
-            continue;
+              );
+              this.publish(channelId);
+              channelResult(yield* Effect.result(this.interruptTasks(channelId, affected)));
+              this.#wakeAgain.add(channelId);
+              continue;
+            }
+            // Routine runs and agent handoffs are independent requests. A router can choose the
+            // owner of related work, but cannot replace that request or stop its delegated tasks.
+            decision = { agentId: ownerAgentId };
           }
           // Idle stays silent: the lead judged that nothing needs doing, so there is no dispatch.
           if ("idle" in decision) {
@@ -2558,13 +2633,27 @@ export class ChannelService {
       const state = status === "completed" ? "completed" : status === "interrupted" ? "interrupted" : "failed";
       const updated: ChannelTask[] = [];
       if (task.revision === assignment.taskRevision && task.state === "running") {
+        // A provider can end after commentary alone. That is not a confirmed answer, and its work
+        // may already have effects, so pause for inspection instead of claiming success or replaying it.
+        // A scheduled root may intentionally stay quiet. Its explicit child assignments still owe
+        // their parent a result, as a request sent by another agent does.
+        const root = tasks.find((item) => item.id === task.rootTaskId);
+        const request = root ? yield* channelSync(() => this.store.message(channelId, root.requestMessageId)) : null;
+        const expectsReply = task.parentTaskId !== null || !request?.author.id.startsWith("routine:");
+        const noReply =
+          state === "completed" &&
+          expectsReply &&
+          newChildren.length === 0 &&
+          !hasAssignmentReply(yield* channelSync(() => this.store.messages(channelId)), assignment);
         const nextState =
           state === "completed"
             ? newChildren.length
               ? pendingChildren
                 ? "waiting"
                 : "queued"
-              : "completed"
+              : noReply
+                ? "paused"
+                : "completed"
             : state === "interrupted"
               ? "paused"
               : "failed";
@@ -2574,8 +2663,9 @@ export class ChannelService {
           revision: nextState === "queued" ? task.revision + 1 : task.revision,
           // The turn stored the provider's redacted reason on its delivery before it reported the end.
           // Without it, the channel showed only this sentence and the reason was in the agent's chat.
-          error:
-            state === "failed"
+          error: noReply
+            ? sourceText("error.backend.channelNoReply")
+            : state === "failed"
               ? ((assignment.deliveryId ? this.mailbox.getDelivery(assignment.deliveryId)?.delivery.error : null) ??
                 "The agent could not complete this task.")
               : state === "interrupted"
@@ -2585,11 +2675,12 @@ export class ChannelService {
       }
       if (task.parentTaskId) {
         const parent = tasks.find((item) => item.id === task.parentTaskId);
+        const outcome = updated.find((item) => item.id === task.id)?.state ?? task.state;
         if (
           parent?.state === "waiting" &&
           tasks
             .filter((item) => parent.dependencies.includes(item.id))
-            .every((item) => (item.id === task.id ? state === "completed" : item.state === "completed"))
+            .every((item) => (item.id === task.id ? outcome === "completed" : item.state === "completed"))
         )
           updated.push({ ...parent, state: "queued", revision: parent.revision + 1 });
       }
@@ -2611,6 +2702,7 @@ export class ChannelService {
     channelId: string,
     taskId: string,
     agentId: string,
+    turnId: string,
     operationId: string,
     person: { id: string; name: string },
     tool: string,
@@ -2626,7 +2718,7 @@ export class ChannelService {
         undefined,
         CHANNEL_CHANGE_ITEM_TYPE,
       );
-      return { ...message, message: { ...message.message, source: "system" } };
+      return { ...message, message: { ...message.message, source: "system", turnId } };
     };
     // A change that already committed: a retried call must not find the member it added, or the
     // routine it made, and fail. The change and its note commit under this one receipt.
@@ -2716,7 +2808,7 @@ export class ChannelService {
     if (CHANNEL_MANAGEMENT_TOOLS.has(tool)) {
       const person = channelRequester(task, tasks, (messageId) => this.store.message(channelId, messageId));
       if (!person) return yield* channelFailure(new Error(PERSON_REQUEST_REQUIRED));
-      return yield* this.#manage(channelId, task.id, agentId, `tool:${turnId}:${callId}`, person, tool, args);
+      return yield* this.#manage(channelId, task.id, agentId, turnId, `tool:${turnId}:${callId}`, person, tool, args);
     }
     if (tool === "channel_history") {
       if (isString(args.attachmentId)) {
@@ -3345,6 +3437,28 @@ export class ChannelService {
     ]);
     yield* Scope.close(this.#scope, Exit.void);
   }, Effect.uninterruptible).bind(this);
+}
+
+/** Only this assignment's visible output confirms a reply; an older task revision does not. */
+function hasAssignmentReply(messages: readonly ChannelMessage[], assignment: ChannelAssignment): boolean {
+  return messages.some((entry) => {
+    if (
+      entry.taskId !== assignment.taskId ||
+      entry.superseded ||
+      entry.author.kind !== "agent" ||
+      entry.author.id !== assignment.agentId
+    )
+      return false;
+    if (entry.message.turnId !== assignment.turnId) return false;
+    return Boolean(
+      isAgentAnswer(entry.message) ||
+        isChannelChangeMarker(entry.message) ||
+        entry.message.attachments?.length ||
+        entry.message.questionPrompt ||
+        entry.message.uiBlock ||
+        entry.message.imageGeneration,
+    );
+  });
 }
 
 /** The start of the request that fits in its routing bytes. Only whole characters are kept. */

@@ -1,4 +1,10 @@
-import { type ChannelTask, isQueuedAgentReply, type QueueDelivery, type QueueSnapshot } from "@openbot/contracts/ipc";
+import {
+  type ChannelMessage,
+  type ChannelTask,
+  isQueuedAgentReply,
+  type QueueDelivery,
+  type QueueSnapshot,
+} from "@openbot/contracts/ipc";
 import { markdownPreviewText } from "@openbot/contracts/markdown-preview-text";
 import type { AgentMessage, AgentProfile } from "@openbot/ui/data";
 import type { AwaitingReplyItem, AwaitingReplyState } from "@openbot/ui/features/conversation/AwaitingReplies";
@@ -89,18 +95,28 @@ function deliveryState(status: QueueDelivery["status"]): Exclude<AwaitingReplySt
 
 export interface ChannelAwaitingInput {
   tasks: readonly ChannelTask[];
+  messages: readonly ChannelMessage[];
   agents: readonly AgentProfile[];
   /** The name of a task owner, with the channel's own fallback for a task that has none. */
   name: (agentId: string | null) => string;
 }
 
-/** The sub-tasks of each channel task that waits for them. */
+/** Queued requests from people and the sub-tasks whose parents wait for their replies. */
 export function channelAwaitingReplies(input: ChannelAwaitingInput): AwaitingReplyItem[] {
   const { t } = currentText();
+  const requests = new Map(input.messages.map((message) => [message.id, message]));
   const waiting = new Map(input.tasks.filter((task) => task.state === "waiting").map((task) => [task.id, task]));
   return input.tasks.flatMap((task) => {
     const parent = task.parentTaskId ? waiting.get(task.parentTaskId) : undefined;
-    if (!parent) return [];
+    const request = requests.get(task.requestMessageId);
+    const queuedRequest =
+      task.parentTaskId === null &&
+      task.state === "queued" &&
+      task.ownerAgentId !== null &&
+      request?.author.kind === "member" &&
+      !request.author.id.startsWith("routine:") &&
+      !request.author.id.startsWith("agent:");
+    if (!parent && !queuedRequest) return [];
     const state = channelTaskState(task.state);
     if (!state) return [];
     return [
@@ -110,7 +126,8 @@ export function channelAwaitingReplies(input: ChannelAwaitingInput): AwaitingRep
         name: input.name(task.ownerAgentId),
         state,
         preview: previewText(task.instruction),
-        ...(state === "replied" && parent.ownerAgentId
+        ...(queuedRequest ? { detail: t("chat.marker.status.queued") } : {}),
+        ...(state === "replied" && parent?.ownerAgentId
           ? { detail: t("chat.awaiting.readsNext", { name: input.name(parent.ownerAgentId) }) }
           : {}),
       },
