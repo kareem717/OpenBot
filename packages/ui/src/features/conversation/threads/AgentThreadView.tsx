@@ -397,6 +397,11 @@ export function AgentThreadView(props: AgentThreadViewProps) {
   const failed = () => (props.task?.state === "idle" && props.task.outcome === "failed" ? props.task : undefined);
   const running = () =>
     props.task?.state === "running" && !props.approval && !props.waitsForAnswer ? props.task : undefined;
+  // A request stops the activity line, but its draft and earlier steps must stay available.
+  const waitingSteps = () =>
+    props.task?.state === "running" && (props.approval || props.waitsForAnswer) && props.activeSteps?.length
+      ? props.activeSteps
+      : undefined;
   const queued = () => (props.task && props.task.queuedMessages.length > 0 ? props.task : undefined);
   const hold = () => (props.task ? agentThreadHoldText(props.task, props.limit, t) : null);
   const sendLabel = () => t(recording() ? "composer.send.voice" : "composer.send.message");
@@ -498,6 +503,13 @@ export function AgentThreadView(props: AgentThreadViewProps) {
                   steps={props.activeSteps}
                   stepsOpenByDefault={props.stepsOpenByDefault}
                 />
+              </div>
+            )}
+          </Show>
+          <Show when={waitingSteps()}>
+            {(steps) => (
+              <div class="virtual-chat-row">
+                <AgentStepsDisclosure steps={steps()} defaultOpen={props.stepsOpenByDefault ?? false} />
               </div>
             )}
           </Show>

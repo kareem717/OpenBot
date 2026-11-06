@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   type AgentEvent,
+  type AgentRuntimeSnapshot,
   type ChannelMessage,
   type ChannelTask,
   decodeChannelPage,
@@ -49,6 +50,7 @@ import { MailboxStore } from "../src/backend/mailbox-store";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import { SidebarLayoutStore } from "../src/backend/sidebar-layout-store";
 import type { TeamApiBrowser } from "../src/main/team-api/dependencies";
+import { createAgentEventSounds } from "../src/renderer/src/features/agents/agent-event-sounds";
 
 const OUT = resolve(import.meta.dirname, "../.openbot-build/channel-notifications-e2e");
 const APP_VERSION = "0.0.0-e2e";
@@ -60,6 +62,7 @@ interface RecordedNotification {
   title: string;
   body: string;
   click: () => void;
+  isClosed: () => boolean;
 }
 
 /** The notifications that the forwarder showed, in order. */
@@ -86,6 +89,7 @@ plugin({
     class RecordingNotification {
       readonly #options: { title: string; body: string };
       readonly #listeners = new Map<string, (() => void)[]>();
+      #closed = false;
       constructor(options: { title: string; body: string }) {
         this.#options = options;
       }
@@ -99,6 +103,7 @@ plugin({
       show() {
         shown.push({
           ...this.#options,
+          isClosed: () => this.#closed,
           click: () => {
             for (const listener of this.#listeners.get("click") ?? []) listener();
           },
@@ -106,6 +111,7 @@ plugin({
         for (const wake of shownWaiters.splice(0)) wake();
       }
       close() {
+        this.#closed = true;
         for (const listener of this.#listeners.get("close") ?? []) listener();
       }
     }
@@ -551,6 +557,75 @@ try {
     const event = lastOpened();
     assert.equal(event.channelId, undefined, "An own-chat prompt opens a channel.");
     return { title: notification.title, opened: event };
+  });
+
+  await step("A restored side-thread question notifies once and opens that thread", async () => {
+    const question = prompt(30, "openbot-thread-side-wait");
+    assert.ok(question.type === "prompt");
+    const snapshot: AgentRuntimeSnapshot = {
+      agents: [],
+      activeTurns: [],
+      work: [],
+      latestMessages: [],
+      failedTurns: [],
+      attentionComplete: true,
+      pendingPrompts: [question],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+    };
+    const notified = nextNotification();
+    forwarders.forwardAgentEvent(LOCAL_SERVER_ID, { type: "runtime-snapshot", snapshot });
+    const notification = await notified;
+    notification.click();
+    assert.equal(lastOpened().threadId, question.threadId);
+    assert.equal(lastOpened().channelId, undefined);
+    const from = shown.length;
+    forwarders.forwardAgentEvent(LOCAL_SERVER_ID, { type: "runtime-snapshot", snapshot });
+    forwarders.forwardAgentEvent(LOCAL_SERVER_ID, question);
+    await new Promise((settled) => setImmediate(settled));
+    assert.equal(shown.length, from, "The same restored question notified twice.");
+    const sounds: string[] = [];
+    const play = createAgentEventSounds(
+      () => true,
+      (sound) => sounds.push(sound),
+    );
+    play({ type: "runtime-snapshot", snapshot });
+    play(question);
+    play(prompt(31, "openbot-thread-another-side"));
+    play({ type: "runtime-snapshot", snapshot });
+    assert.deepEqual(sounds, ["attention", "attention"]);
+    return { opened: lastOpened(), repeatedNotifications: shown.length - from, sounds };
+  });
+
+  await step("Complete snapshots withdraw answered waits; partial snapshots keep them", async () => {
+    const notified = nextNotification();
+    forwarders.forwardAgentEvent(LOCAL_SERVER_ID, prompt(32, "openbot-thread-side-withdraw"));
+    const notification = await notified;
+    const empty: AgentRuntimeSnapshot = {
+      agents: [],
+      activeTurns: [],
+      work: [],
+      latestMessages: [],
+      failedTurns: [],
+      attentionComplete: false,
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+    };
+    forwarders.forwardAgentEvent(LOCAL_SERVER_ID, { type: "runtime-snapshot", snapshot: empty });
+    assert.equal(notification.isClosed(), false);
+    forwarders.forwardAgentEvent(LOCAL_SERVER_ID, {
+      type: "runtime-snapshot",
+      snapshot: { ...empty, attentionComplete: true },
+    });
+    assert.equal(notification.isClosed(), true);
+    const sounds: string[] = [];
+    createAgentEventSounds(
+      () => false,
+      (sound) => sounds.push(sound),
+    )(prompt(33, "muted-thread"));
+    assert.deepEqual(sounds, []);
+    return { withdrawn: notification.isClosed(), mutedSounds: sounds.length };
   });
 
   const port = await step("Start the Team API host with channels, and sign in", async () => {

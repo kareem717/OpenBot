@@ -375,21 +375,30 @@ export class LiveActivityPushService {
 }
 
 /** Whether the island view shows the event that `subject` names, so a notification would repeat it. */
-function presentationShows(
-  presentation: DynamicIslandPresentation,
-  { agentId, kind }: PushNotificationSubject,
-): boolean {
+function presentationShows(presentation: DynamicIslandPresentation, subject: PushNotificationSubject): boolean {
   switch (presentation.mode) {
     case "message":
-      return kind === "reply" && presentation.message.agent.id === agentId;
+      return subject.kind === "reply" && presentation.message.agent.id === subject.agentId;
     case "question":
-      return kind === "input" && presentation.item.agent.id === agentId;
+      return (
+        subject.kind === "input" &&
+        presentation.item.agent.id === subject.agentId &&
+        String(presentation.item.requestId) === String(subject.requestId)
+      );
     case "approval":
-      return kind === "approval" && presentation.item.agent.id === agentId;
+      return (
+        subject.kind === "approval" &&
+        presentation.item.agent.id === subject.agentId &&
+        String(presentation.item.requestId) === String(subject.requestId)
+      );
     case "takeover":
-      return kind === "browser" && presentation.item.agent.id === agentId;
+      return (
+        subject.kind === "browser" &&
+        presentation.item.agent.id === subject.agentId &&
+        String(presentation.item.requestId) === String(subject.requestId)
+      );
     case "failed":
-      return kind === "failed" && presentation.item.agent.id === agentId;
+      return subject.kind === "failed" && presentation.item.agent.id === subject.agentId;
     default:
       return false;
   }

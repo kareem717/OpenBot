@@ -2,7 +2,7 @@
 // one loopback fixture. No user account, provider, or external sign-in is used.
 // CI: xvfb-run -a bun scripts/side-thread-action-cards-e2e.ts dist/linux-unpacked/openbot
 // Mac: bun scripts/side-thread-action-cards-e2e.ts '/path/OpenBot.app/Contents/MacOS/OpenBot'
-// Also checks live plans and accepted steering in main, side, and branch histories.
+// Also checks live plans, accepted steering, and steps while a side thread waits for input.
 // Writes .openbot-build/side-thread-action-cards-e2e/report.json and one screenshot.
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -256,6 +256,9 @@ const fakeSource = join(root, "codex-fixture.cjs");
 const planControl = join(root, "plan-control.json");
 const planTitle = "Routine fixture plan";
 const planStart = "Start the controlled routine-plan fixture.";
+const questionStart = "Start the controlled input-history fixture.";
+const questionDraft = "Draft complaint: Please review the attached fixture receipt.";
+const questionText = "Do you approve the draft above?";
 await writeFile(planControl, "{}");
 await writeFile(
   fakeSource,
@@ -294,6 +297,11 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   const turn={id,threadId:p.threadId};
   const text=(p.input||[]).map(x=>x.text||'').join('\\n').split('--- current message ---').at(-1);
   if(text.includes(${JSON.stringify(planStart)})){held.set(id,turn);plan(turn,'start');return;}
+  if(text.includes(${JSON.stringify(questionStart)})){
+   send({method:'item/completed',params:{threadId:p.threadId,turnId:id,item:{id:'draft-'+id,type:'agentMessage',text:${JSON.stringify(questionDraft)},phase:'commentary'}}});
+   send({id:'input-'+id,method:'item/tool/requestUserInput',params:{threadId:p.threadId,turnId:id,itemId:'question-'+id,questions:[{id:'review',header:'Review',question:${JSON.stringify(questionText)},options:[{label:'Approve',description:'Approve the fixture draft.'},{label:'Revise',description:'Change the fixture draft.'}]}]}});
+   return;
+  }
   finish(turn);return;
  }
  case 'turn/steer': {
@@ -647,6 +655,66 @@ try {
   assert.equal((await composer.innerText()).trim(), draft);
   check("Continue is stored only in its branch and leaves its draft intact");
   await page.screenshot({ path: join(out, "branch-card.png") });
+
+  await openThread(sideTitle);
+  await page.evaluate(
+    (input) =>
+      window.openbot.agent.sendMessage({
+        agentId: input.agentId,
+        taskId: input.taskId,
+        text: input.text,
+        attachmentDraftIds: [],
+        clientMessageId: crypto.randomUUID(),
+      }),
+    { agentId: agent.id, taskId: side.taskId, text: questionStart },
+  );
+  const readWaitingSide = () =>
+    page.evaluate((input) => window.openbot.agent.readTask(input), { agentId: agent.id, taskId: side.taskId });
+  const waiting = await until("the side thread requests input after its draft", readWaitingSide, (snapshot) =>
+    snapshot.messages.some(
+      (message) =>
+        message.questionPrompt?.resolution === null && message.questionPrompt.questions[0]?.question === questionText,
+    ),
+  );
+  assert.ok(waiting.activeTurnId, "The fixture must still wait in its active turn.");
+  const sideHistory = page.getByRole("region", {
+    name: english("conversation.threads.view.label", { title: sideTitle }),
+    exact: true,
+  });
+  await sideHistory.getByText(questionText, { exact: true }).waitFor();
+  const steps = sideHistory.getByRole("button", { name: english("chat.steps.count", { count: 1 }), exact: true });
+  await steps.waitFor();
+  assert.equal(await steps.getAttribute("aria-expanded"), "false", "Pending steps must keep the closed default.");
+  await steps.click();
+  await sideHistory.getByText(questionDraft, { exact: true }).waitFor();
+  assert.equal(
+    await sideHistory.getByRole("region", { name: english("chat.activity.current"), exact: true }).count(),
+    0,
+  );
+  check("A pending side-thread question keeps its draft steps available without a working indicator");
+  await openThread(branchTitle);
+  await page
+    .getByRole("region", { name: english("conversation.threads.view.label", { title: branchTitle }), exact: true })
+    .waitFor();
+  const waitingAgent = page
+    .getByRole("region", { name: new RegExp(`^${escapeRegExp(english("sidebar.waiting.title"))}`) })
+    .getByRole("button", { name: new RegExp(`^${escapeRegExp(agentName)}[,.]`) });
+  await waitingAgent.waitFor();
+  await waitingAgent.click();
+  await sideHistory.getByText(questionText, { exact: true }).waitFor();
+  check("The Needs you agent row opens the side thread that waits for input");
+  await steps.waitFor();
+  if ((await steps.getAttribute("aria-expanded")) === "false") await steps.click();
+  await sideHistory.getByText(questionDraft, { exact: true }).waitFor();
+  const stillWaiting = await readWaitingSide();
+  assert.equal(stillWaiting.activeTurnId, waiting.activeTurnId);
+  const originalPrompt = waiting.messages.find((message) => message.questionPrompt?.resolution === null);
+  assert.ok(originalPrompt);
+  const reopenedPrompt = stillWaiting.messages.find((message) => message.id === originalPrompt.id);
+  assert.equal(reopenedPrompt?.questionPrompt?.resolution, null);
+  assert.equal(reopenedPrompt?.questionPrompt?.requestId, originalPrompt.questionPrompt?.requestId);
+  check("Reopening the side thread preserves its draft and leaves its question unanswered");
+  await page.screenshot({ path: join(out, "pending-question-steps.png") });
   assert.equal(report.pageErrors.length, 0, "The app emitted a renderer error.");
   report.passed = true;
 } catch (error) {

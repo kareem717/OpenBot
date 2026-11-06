@@ -457,11 +457,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:agent-channel-manage
 
-      - name: Check channel continuations and empty replies
+      - name: Check channel continuations and input notifications
         if: ${{ !cancelled() }}
         run: |
           bun scripts/channel-parent-request-e2e.ts
           bun scripts/channel-empty-result-e2e.ts
+          bun scripts/channel-notifications-e2e.ts
+          bun scripts/live-activity-ice-away-e2e.ts
 
       - name: Run the agent profile accounts E2E test
         if: ${{ !cancelled() }}
@@ -610,6 +612,8 @@ jobs:
             .openbot-build/agent-channel-manage-e2e/
             .openbot-build/channel-parent-request-e2e/
             .openbot-build/channel-empty-result-e2e/
+            .openbot-build/channel-notifications-e2e/
+            .openbot-build/live-activity-ice-away-e2e/
             .openbot-build/agent-profile-accounts-e2e/
             .openbot-build/browser-profile-agents-e2e/
             .openbot-build/claude-usage-resume-e2e/

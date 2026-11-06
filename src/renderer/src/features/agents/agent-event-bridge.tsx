@@ -425,7 +425,10 @@ export function AgentEventBridge() {
     void agentsPort()
       .agent.getRuntimeSnapshot()
       .then((snapshot) => {
-        if (snapshot) flush(() => handleAgentEvent({ type: "runtime-snapshot", snapshot }));
+        if (snapshot) {
+          flush(() => handleAgentEvent({ type: "runtime-snapshot", snapshot }));
+          if (!platform.chatWindow) playAgentEventSound({ type: "runtime-snapshot", snapshot });
+        }
       })
       .catch(() => undefined);
     return () => {

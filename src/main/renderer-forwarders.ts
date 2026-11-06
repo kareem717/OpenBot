@@ -42,9 +42,11 @@ import {
   agentEventAgentId,
   agentEventCanNotify,
   agentEventRequestThread,
+  attentionNotificationIdentity,
   notificationForAgentEvent,
   notificationForUsageLimit,
   notificationRequestKey,
+  pendingAttentionNotificationEvents,
 } from "@openbot/team-client/agent-notifications";
 import {
   channelForThread,
@@ -326,6 +328,7 @@ export function createRendererForwarders({
    * answer that arrives then removes the entry, so the notification is not shown.
    */
   const requestNotifications = new Map<string, Notification | null>();
+  const notifiedRequests = new Set<string>();
 
   function withdrawResolvedNotification(serverId: string, event: AgentEvent): void {
     if (event.type !== "agent-input-resolved" && event.type !== "browser-takeover-resolved") return;
@@ -337,6 +340,19 @@ export function createRendererForwarders({
   }
 
   async function notifyAgentEvent(serverId: string, event: AgentEvent): Promise<void> {
+    if (event.type === "runtime-snapshot") {
+      const pending = pendingAttentionNotificationEvents(event.snapshot);
+      if (event.snapshot.attentionComplete) {
+        const keys = new Set(pending.map((request) => notificationRequestKey(serverId, request)));
+        for (const [key, notification] of requestNotifications) {
+          if (!key.startsWith(`${serverId}:`) || keys.has(key)) continue;
+          requestNotifications.delete(key);
+          if (notification) closeRetainedNotification(notification);
+        }
+      }
+      await Promise.all(pending.map((request) => notifyAgentEvent(serverId, request)));
+      return;
+    }
     withdrawResolvedNotification(serverId, event);
     // Most events stream while an agent works. Only these can notify, so the others skip the server list.
     if (!agentEventCanNotify(event) && event.type !== "usage-limit-reached") return;
@@ -357,13 +373,24 @@ export function createRendererForwarders({
     if (!notifyLevel(mostOpen) || !Notification.isSupported()) return;
     const requestKey = notificationRequestKey(serverId, event);
     if (!requestKey) return showAgentNotification(serverId, event, notifyLevel, null);
+    const identity = attentionNotificationIdentity(event);
+    const seenKey = JSON.stringify([requestKey, identity]);
+    if (notifiedRequests.has(seenKey)) return;
+    notifiedRequests.add(seenKey);
+    for (const oldest of notifiedRequests.keys()) {
+      if (notifiedRequests.size <= RETAINED_NOTIFICATION_LIMIT) break;
+      notifiedRequests.delete(oldest);
+    }
     // A shown notification of the same request stays until the new one replaces it.
     if (!requestNotifications.has(requestKey)) requestNotifications.set(requestKey, null);
     try {
       await showAgentNotification(serverId, event, notifyLevel, requestKey);
     } finally {
       // Nothing was shown, or the lookup failed.
-      if (requestNotifications.get(requestKey) === null) requestNotifications.delete(requestKey);
+      if (requestNotifications.get(requestKey) === null) {
+        requestNotifications.delete(requestKey);
+        notifiedRequests.delete(seenKey);
+      }
     }
   }
 

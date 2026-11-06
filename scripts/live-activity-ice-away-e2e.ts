@@ -2,6 +2,8 @@
 // iOS can suspend the app before its `away` registration goes out. Signal reports the lost connection
 // only about 150 s later, and until then the activity kept "Working" after the turn ended. The failed
 // ICE path now marks the session away without closing it, and the path that comes back ends that.
+// A request in another thread keeps its notification when the activity shows a different request.
+// A completed turn clears only the waits of that same thread and turn in the shared coordinator.
 //
 // It runs the real Live Activity push service with a synthetic runtime snapshot and a local relay
 // adapter, and opens each push with the widget code. It sends nothing. Run it with
@@ -14,7 +16,10 @@ import { join, resolve } from "node:path";
 import type { AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import type { LiveActivityRelayPush } from "@openbot/contracts/live-activity-relay";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { mobileTranslateFor } from "@openbot/i18n/mobile";
 import { createOpenBotLogger } from "@openbot/logging";
+import { DynamicIslandCoordinator } from "@openbot/team-client/dynamic-island-coordinator";
+import { liveActivityIslandText } from "@openbot/team-client/live-activity-props";
 import {
   encodeLiveActivityBytes,
   LIVE_ACTIVITY_SECRET_BYTES,
@@ -23,6 +28,7 @@ import {
 import { Effect } from "effect";
 import { openSealedLiveActivity } from "../apps/mobile/src/features/live-activity/model/live-activity-open";
 import { LiveActivityPushService } from "../src/main/live-activity-push";
+import type { PushNotificationSubject } from "../src/main/push-notifications";
 
 const OUT = resolve(import.meta.dirname, "../.openbot-build/live-activity-ice-away-e2e");
 const STEP_DEADLINE_MS = 10_000;
@@ -37,6 +43,9 @@ const keys = liveActivityKeys(secret);
 const pushes: LiveActivityRelayPush[] = [];
 const waiters = new Set<() => void>();
 let working = true;
+type RuntimeAttention = Pick<AgentRuntimeSnapshot, "pendingPrompts" | "pendingApprovals" | "pendingBrowserTakeovers">;
+const noAttention: RuntimeAttention = { pendingPrompts: [], pendingApprovals: [], pendingBrowserTakeovers: [] };
+let attention = noAttention;
 
 function snapshot(): AgentRuntimeSnapshot {
   return {
@@ -58,11 +67,60 @@ function snapshot(): AgentRuntimeSnapshot {
       ? []
       : [{ agentId: AGENT, id: "fixture-message", text: "Done.", createdAt: "2026-10-28T00:00:00.000Z" }],
     attentionComplete: true,
-    pendingPrompts: [],
-    pendingApprovals: [],
-    pendingBrowserTakeovers: [],
+    ...attention,
     failedTurns: [],
   };
+}
+
+function attentionCases(): {
+  name: string;
+  attention: RuntimeAttention;
+  subject: Extract<PushNotificationSubject, { requestId: string | number }>;
+}[] {
+  const requests = [1, 2].map((requestId) => ({
+    requestId,
+    agentId: AGENT,
+    threadId: `fixture-side-${requestId}`,
+    turnId: `fixture-wait-${requestId}`,
+  }));
+  return [
+    {
+      name: "question",
+      attention: {
+        ...noAttention,
+        pendingPrompts: requests.map((request) => ({
+          ...request,
+          questions: [{ id: "q", header: "Question", question: "Which one?", options: null, isSecret: false }],
+        })),
+      },
+      subject: { agentId: AGENT, kind: "input", requestId: 2 },
+    },
+    {
+      name: "approval",
+      attention: {
+        ...noAttention,
+        pendingApprovals: requests.map((request) => ({
+          ...request,
+          kind: "command",
+          command: "fixture-command",
+          cwd: null,
+          reason: null,
+          grantRoot: null,
+          permissions: null,
+          truncated: false,
+        })),
+      },
+      subject: { agentId: AGENT, kind: "approval", requestId: 2 },
+    },
+    {
+      name: "takeover",
+      attention: {
+        ...noAttention,
+        pendingBrowserTakeovers: requests.map((request) => ({ ...request, tabId: `fixture-tab-${request.requestId}` })),
+      },
+      subject: { agentId: AGENT, kind: "browser", requestId: 2 },
+    },
+  ];
 }
 
 /** Waits for push number `count`, which can already have gone out. */
@@ -164,7 +222,7 @@ try {
     service.disconnected(SESSION);
     // The island shows the work, so it does not show a reply or a question: the phone gets a notification.
     assert.equal(service.showsEvent(SESSION, REPLY, null, null), false);
-    assert.equal(service.showsEvent(SESSION, { agentId: AGENT, kind: "input" }, null, null), false);
+    assert.equal(service.showsEvent(SESSION, { agentId: AGENT, kind: "input", requestId: 1 }, null, null), false);
     const mode = shownMode(await pushNumber(1));
     assert.equal(mode, "working");
     return { away: true, mode };
@@ -201,6 +259,49 @@ try {
     assert.equal(push.alert, null);
     return { mode, alert: push.alert };
   });
+
+  for (const item of attentionCases()) {
+    await step(`a hidden ${item.name} keeps its notification`, async () => {
+      attention = item.attention;
+      assert.equal(service.showsEvent(SESSION, item.subject, null, null), true);
+      assert.equal(service.showsEvent(SESSION, { ...item.subject, requestId: 1 }, null, null), false);
+      assert.equal(service.showsEvent(SESSION, { ...item.subject, requestId: "2" }, null, null), true);
+      const nextPush = pushes.length + 1;
+      events.emit("event", { type: "runtime-snapshot", snapshot: snapshot() });
+      const mode = shownMode(await pushNumber(nextPush));
+      assert.equal(mode, item.name);
+      return { mode, displayedRequest: 2, hiddenRequestNotifies: true };
+    });
+
+    await step(`another thread ending keeps the pending ${item.name}`, async () => {
+      const coordinator = new DynamicIslandCoordinator(() => liveActivityIslandText(mobileTranslateFor("en")));
+      const serverId = "fixture-background-server";
+      coordinator.applyEvent({ serverId, event: { type: "runtime-snapshot", snapshot: snapshot() } }, "foreground");
+      const complete = (threadId: string, turnId: string) => {
+        coordinator.applyEvent(
+          { serverId, event: { type: "turn-completed", agentId: AGENT, threadId, turnId, status: "completed" } },
+          "foreground",
+        );
+      };
+      const otherTurns: [string, string][] = [
+        [AGENT, "fixture-other-turn"],
+        [AGENT, "fixture-wait-2"],
+        ["fixture-side-2", "fixture-other-turn"],
+      ];
+      for (const [threadId, turnId] of otherTurns) {
+        complete(threadId, turnId);
+        const presentation = coordinator.presentation([serverId]);
+        assert.equal(presentation.mode, item.name);
+        assert.ok("item" in presentation && "requestId" in presentation.item);
+        assert.equal(presentation.item.requestId, 2);
+      }
+      complete("fixture-side-2", "fixture-wait-2");
+      const state = coordinator.serverState(serverId);
+      assert.equal(state?.pendingPrompts[AGENT], undefined);
+      assert.equal(state?.pendingApprovals[AGENT], undefined);
+      return { keptAfterOtherThread: true, clearedAfterOwnTurn: true };
+    });
+  }
   passed = true;
 } catch {
   passed = false;

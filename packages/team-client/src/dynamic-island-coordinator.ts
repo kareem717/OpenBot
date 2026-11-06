@@ -222,7 +222,7 @@ export class DynamicIslandCoordinator {
           detail: cleanAgentMessageText(event.detail),
         };
         return;
-      case "turn-completed":
+      case "turn-completed": {
         // A quiet routine run posted no message, so the island has no new reply to show.
         if (
           serverId !== activeServerId &&
@@ -241,11 +241,18 @@ export class DynamicIslandCoordinator {
         // kept the Live Activity on "Working" after the reply. The end of the turn ends its delivery.
         this.#endTurnDeliveries(runtime, event.agentId, event.turnId);
         if (runtime.turnProgress[event.agentId]?.turnId === event.turnId) delete runtime.turnProgress[event.agentId];
-        runtime.pendingPrompts[event.agentId] = undefined;
-        runtime.pendingApprovals[event.agentId] = undefined;
+        // Another thread of this agent can still wait for the user.
+        const pending = runtime.pendingPrompts[event.agentId];
+        const request = pending?.type === "prompt" ? pending : pending?.request;
+        if (request?.threadId === event.threadId && request.turnId === event.turnId)
+          runtime.pendingPrompts[event.agentId] = undefined;
+        const approval = runtime.pendingApprovals[event.agentId];
+        if (approval?.threadId === event.threadId && approval.turnId === event.turnId)
+          runtime.pendingApprovals[event.agentId] = undefined;
         if (event.status === "failed") runtime.failedTurns[event.agentId] = event.turnId;
         else delete runtime.failedTurns[event.agentId];
         return;
+      }
       case "prompt":
         runtime.resolvedPrompts.delete(event.agentId);
         runtime.pendingPrompts[event.agentId] = event;

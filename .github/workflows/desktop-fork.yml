@@ -48,6 +48,8 @@ jobs:
           bun scripts/plan-continuation-e2e.ts
           bun scripts/channel-parent-request-e2e.ts
           bun scripts/channel-empty-result-e2e.ts
+          bun scripts/channel-notifications-e2e.ts
+          bun scripts/live-activity-ice-away-e2e.ts
           bun scripts/remote-server-retry-e2e.ts
           bun scripts/agent-api-keys-e2e.ts
           bun scripts/vault-credential-discovery-e2e.ts
@@ -99,6 +101,8 @@ jobs:
             .openbot-build/plan-continuation-e2e/report.json
             .openbot-build/channel-parent-request-e2e/report.json
             .openbot-build/channel-empty-result-e2e/report.json
+            .openbot-build/channel-notifications-e2e/report.json
+            .openbot-build/live-activity-ice-away-e2e/report.json
             .openbot-build/remote-server-retry-e2e/report.json
             .openbot-build/remote-turn-refresh-e2e/report.json
             .openbot-build/onepassword-secure-fill-e2e/report.json

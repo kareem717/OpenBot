@@ -1,6 +1,7 @@
 import { agentProviderName } from "@openbot/contracts/agent-providers";
 import type {
   AgentEvent,
+  AgentRuntimeSnapshot,
   ClientAgentSummary,
   ServerNotificationLevel,
   TeamRealtimeEvent,
@@ -127,6 +128,33 @@ export function notificationRequestKey(serverId: string, event: AgentEvent): str
 /** Whether the event waits for the user, so that the "needs-me" level keeps it. */
 export function agentEventNeedsUser(event: AgentEvent): boolean {
   return event.type === "prompt" || event.type === "approval" || event.type === "browser-takeover-requested";
+}
+
+/** Restored waits use the same notification path as live requests. */
+export function pendingAttentionNotificationEvents(snapshot: AgentRuntimeSnapshot): AgentEvent[] {
+  return [
+    ...snapshot.pendingPrompts.map((prompt): AgentEvent => ({ type: "prompt", ...prompt })),
+    ...snapshot.pendingApprovals.map((approval): AgentEvent => ({ type: "approval", approval })),
+    ...snapshot.pendingBrowserTakeovers.map(
+      (request): AgentEvent => ({
+        type: "browser-takeover-requested",
+        request,
+      }),
+    ),
+  ];
+}
+
+/** A provider can reuse a request id in a later turn or another thread. */
+export function attentionNotificationIdentity(event: AgentEvent): string | null {
+  const request =
+    event.type === "prompt"
+      ? event
+      : event.type === "approval"
+        ? event.approval
+        : event.type === "browser-takeover-requested"
+          ? event.request
+          : null;
+  return request ? JSON.stringify([request.threadId, request.turnId]) : null;
 }
 
 /** The thread that an event waits on, or null when it is not a request. A channel can own that thread. */

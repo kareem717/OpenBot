@@ -1,6 +1,7 @@
 import { type ChatWindowTarget, canAdministerServer } from "@openbot/contracts/ipc";
 import { AGENT_HIDDEN_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { computeAgentAvatarMoods } from "@openbot/ui/features/agents/agent-avatar-mood";
+import { MAIN_THREAD_ID } from "@openbot/ui/features/conversation/threads/thread-types";
 import { Sidebar } from "@openbot/ui/features/sidebar/Sidebar";
 import { SidebarCommunityCard } from "@openbot/ui/features/sidebar/SidebarCommunityCard";
 import { SidebarMachineCard } from "@openbot/ui/features/sidebar/SidebarMachineCard";
@@ -20,7 +21,7 @@ import { useTurns } from "../../turns";
 import { useAgentTasks } from "../agent-tasks/agent-tasks-context";
 import { useAgentThreads } from "../agent-threads/agent-threads-context";
 import { useAgentActions } from "../agents/agent-actions";
-import { attentionByAgent } from "../agents/agent-runtime-snapshot";
+import { attentionAgentId, attentionByAgent, attentionKey } from "../agents/agent-runtime-snapshot";
 import { agentThreadAttention } from "../agents/agent-thread-attention";
 import { useAgents } from "../agents/agents-context";
 import { useChannels } from "../channels/channels-context";
@@ -209,8 +210,72 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
     return turns;
   });
 
-  /* The agent conversation shows only the waits of the agent's own thread. A wait in a channel
-   * thread stays out of "Needs you", because selecting the row cannot answer it. */
+  const sideThreads = createMemo(() => agentList().flatMap((agent) => agentTasks.snapshot(agent.id)?.tasks ?? []));
+  const sidebarAttention = createMemo(() =>
+    agentThreadAttention({
+      agents: agentList(),
+      pendingPrompts: pendingPrompts(),
+      approvals: approvals(),
+      sideThreads: agentTasks.available() ? sideThreads() : [],
+    }),
+  );
+  // A runtime snapshot can bring a side-thread wait before that agent's thread list is loaded.
+  // Read each new waiting thread once. Only a confirmed open side thread gets an agent-row target.
+  const requestedWaitingThreads = new Set<string>();
+  createEffect(
+    () => {
+      if (!agentTasks.available()) return [];
+      const ownThreads = new Map(agentList().map((agent) => [agent.id, agent.threadId]));
+      const known = new Set(sideThreads().map((task) => attentionKey(task.agentId, task.threadId)));
+      const channelThreads = new Set(
+        sidebarChannels().flatMap((channel) =>
+          (channel.threads ?? []).map((thread) => attentionKey(thread.agentId, thread.threadId)),
+        ),
+      );
+      const requests = [
+        ...Object.values(pendingPrompts()).flatMap((event) =>
+          event
+            ? [
+                {
+                  agentId: attentionAgentId(event),
+                  threadId: event.type === "prompt" ? event.threadId : event.request.threadId,
+                },
+              ]
+            : [],
+        ),
+        ...approvals(),
+      ];
+      return requests.flatMap((request) => {
+        if (
+          !request.threadId ||
+          !ownThreads.has(request.agentId) ||
+          ownThreads.get(request.agentId) === request.threadId
+        )
+          return [];
+        const key = attentionKey(request.agentId, request.threadId);
+        return known.has(key) || channelThreads.has(key)
+          ? []
+          : [{ agentId: request.agentId, key: `${activeServerId()}\n${key}` }];
+      });
+    },
+    (requests) => {
+      const agents = new Set<string>();
+      for (const request of requests) {
+        if (requestedWaitingThreads.has(request.key)) continue;
+        requestedWaitingThreads.add(request.key);
+        agents.add(request.agentId);
+      }
+      for (const agentId of agents) void agentTasks.loadTasks(agentId);
+    },
+  );
+
+  /* The row opens the selected waiting thread before the agent's view, including in a chat window.
+   * A channel's wait still goes only to its channel row. */
+  const selectSidebarAgent = (agentId: string) => {
+    const target = sidebarAttention().targets[agentId];
+    if (target) agentThreads.open(agentId, target.taskId ?? MAIN_THREAD_ID);
+    return selectAgent(agentId);
+  };
   const sidebarAgentStates = createMemo(() =>
     computeSidebarAgentStates({
       agentIds: agentList().map((agent) => agent.id),
@@ -218,7 +283,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       queues: queues(),
       unreadReplies: unreadReplies(),
       recentReplies: recentReplies(),
-      ...agentThreadAttention({ agents: agentList(), pendingPrompts: pendingPrompts(), approvals: approvals() }),
+      ...sidebarAttention(),
       failedTurns: failedTurns(),
       usageLimits: usageLimits(),
     }),
@@ -331,7 +396,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
         onUnpin={unpinSidebarItem}
         onReorderPinned={reorderPinnedSidebarItems}
         onReorderPeople={reorderSidebarPeople}
-        onSelectAgent={selectAgent}
+        onSelectAgent={selectSidebarAgent}
         onSelectPerson={(memberId) => void selectDirectMember(memberId)}
         onPreloadDirectConversation={props.peopleEnabled ? () => void DirectConversation.preload() : undefined}
         onCreateAgent={() => {

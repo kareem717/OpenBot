@@ -29,7 +29,6 @@ import {
 import {
   type PushNotificationContent,
   type PushNotificationKeys,
-  type PushNotificationKind,
   pushNotificationKeys,
   sealPushNotification,
 } from "@openbot/team-client/push-notification-seal";
@@ -124,11 +123,10 @@ interface PushNotificationViewer {
   capabilities: ReadonlySet<string>;
 }
 
-/** The agent and the kind of an event that can notify. */
-export interface PushNotificationSubject {
-  agentId: string;
-  kind: PushNotificationKind;
-}
+/** The event that a Live Activity must show before its notification can be skipped. */
+export type PushNotificationSubject =
+  | { agentId: string; kind: "reply" | "failed" }
+  | { agentId: string; kind: "input" | "approval" | "browser"; requestId: string | number };
 
 interface HeldEvent {
   event: AgentEvent;
@@ -589,11 +587,11 @@ function eventSubject(event: AgentEvent): PushNotificationSubject | null {
     case "turn-completed":
       return { agentId: event.agentId, kind: event.status === "completed" ? "reply" : "failed" };
     case "prompt":
-      return { agentId: event.agentId, kind: "input" };
+      return { agentId: event.agentId, kind: "input", requestId: event.requestId };
     case "approval":
-      return { agentId: event.approval.agentId, kind: "approval" };
+      return { agentId: event.approval.agentId, kind: "approval", requestId: event.approval.requestId };
     case "browser-takeover-requested":
-      return { agentId: event.request.agentId, kind: "browser" };
+      return { agentId: event.request.agentId, kind: "browser", requestId: event.request.requestId };
     // A message or a routine run that did not start failed as a turn does.
     case "error":
       return event.agentId ? { agentId: event.agentId, kind: "failed" } : null;
