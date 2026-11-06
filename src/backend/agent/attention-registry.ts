@@ -852,7 +852,11 @@ export class AttentionRegistry {
     } else {
       pending.submitting = true;
       const outcome = yield* secret.submit(input.secret, pending.vaultLoginId !== undefined).pipe(
-        Effect.catch(() => Effect.succeed("takeover")),
+        Effect.catch(() => {
+          // Page errors can contain the entered value. Log only the fixed stage and method.
+          logger.warn("Secure browser submission needs takeover", { stage: "submit", method: secret.request.method });
+          return Effect.succeed("takeover");
+        }),
         Effect.ensuring(
           Effect.sync(() => {
             pending.submitting = false;

@@ -203,7 +203,7 @@ const BROWSER_TOOL_DEFINITIONS = [
   browserTool({
     name: "connect_cdp",
     description:
-      "Connect an external tool such as agent-browser to this existing OpenBot tab. Returns a local CDP WebSocket endpoint, secretRegistrationUrl, and recent diagnostics for this tab only; it does not open a browser. Calling again reuses a live connection, including after credential registration. Use only when the user asks for an external browser tool. A local script must POST its supplied credential values to secretRegistrationUrl before filling them, without printing them. Disconnect before using OpenBot browser tools again. Secure input or user takeover revokes the connection.",
+      "Connect an external tool such as agent-browser to this existing OpenBot tab. Returns a local CDP WebSocket endpoint, secretRegistrationUrl, and recent diagnostics for this tab only; it does not open a browser. Calling again reuses a live connection, including after credential registration. Use only when the user asks for an external browser tool. Audited standard agent-browser snapshots and supported input actions preserve automatic saved-login fill. Use CLI snapshot refs for CLI actions; before submit_secret, take a fresh OpenBot snapshot or use unique CSS/role field targets. Other page scripts prevent automatic vault fill. A local script must POST its supplied credential values to secretRegistrationUrl before filling them, without printing them. Disconnect before using OpenBot browser tools again. Secure input or user takeover revokes the connection.",
     shape: { tabId },
   }),
   browserTool({
@@ -244,7 +244,7 @@ const BROWSER_TOOL_DEFINITIONS = [
   browserTool({
     name: "submit_secret",
     description:
-      "Request the secret card for the active authentication step discovered in a fresh page snapshot. Identify password, email/SMS code, or authenticator-app code from the page instructions before calling. Select any login-method option first. The user authorizes one fill-and-submit action to the shown HTTPS origin. Never pass a secret as an argument. Use takeover if the method or code length is unclear, for nonnumeric/recovery codes, CAPTCHA, passkeys, or payment confirmation. Fill saved cards with fill_card.",
+      "Request the secret card for the active authentication step discovered in a fresh page snapshot. Identify password, email/SMS code, or authenticator-app code from the page instructions before calling. Select any login-method option first. The user authorizes one fill-and-submit action to the shown HTTPS origin. Never pass a secret as an argument. Use takeover if the method or code length is unclear, for nonnumeric/recovery codes, CAPTCHA, passkey-only steps, or payment confirmation. First try a site-supported saved-password or authenticator alternative to a passkey. Fill saved cards with fill_card.",
     shape: {
       tabId,
       method: z
@@ -400,7 +400,7 @@ const BROWSER_TOOL_DEFINITIONS = [
   browserTool({
     name: "request_takeover",
     description:
-      "Ask the user to take over a tab for unclear OAuth account selection, CAPTCHA, passkeys, payment confirmation such as 3-D Secure, or when secure password/code handoff or card fill is unavailable.",
+      "Ask the user to take over a tab for unclear OAuth account selection, CAPTCHA, passkey-only or human-presence steps, payment confirmation such as 3-D Secure, or when secure password/code handoff or card fill is unavailable. First check for a site-supported saved-password or authenticator alternative.",
     shape: {
       tabId,
       reason: z

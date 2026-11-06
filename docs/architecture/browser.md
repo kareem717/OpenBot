@@ -387,9 +387,39 @@ listener and sockets. No application debugging port is enabled.
 
 The host checks ownership and user control before each queued command. User control, takeover,
 secure input, and card fill revoke external access before entry. A document that received a secret
-cannot open an endpoint until it navigates. A connected origin counts as scripted for later saved
-vault fills. Replies redact registered secret values and sensitive fields. External tools have page-script
-access, so the agent uses this connection only when the user requests the tool. For credentials
+cannot open an endpoint until it navigates. A connection, approved inspection methods, and supported
+input actions do not mark its origin as scripted. The bridge also permits exact audited
+`agent-browser` helpers by SHA-256 of their complete UTF-8 source, with no normalization or prefix
+matching. Modified helpers, other scripts, and other DOM mutations mark the affected origins before
+and after dispatch, and on later navigation while the bridge has script history. That protection
+stays after disconnection. Replies redact registered secret values and sensitive fields. A
+password-manager token does not make an injected handler safe.
+
+Standard snapshots from `agent-browser` 0.27.0 and 0.41.2 use the same cursor-inspection and cleanup
+helpers. They read the DOM and add/remove only temporary `data-__ab-ci` markers. They do not install
+handlers, write storage, change prototypes, or use the network. The fixed fill-by-ref functions
+focus and clear an element with an input event; their bodies accept no script argument. The source
+is pinned to [0.27.0](https://github.com/vercel-labs/agent-browser/tree/c830d1b67dc18b754e305859f0ae587f858a1447/cli/src/native)
+and [0.41.2](https://github.com/vercel-labs/agent-browser/tree/d52a5e90c372ec4710c69adc3837ac14bbd852aa/cli/src/native),
+in `snapshot.rs`, `browser.rs`, and `interaction.rs`.
+
+| Method and helper | SHA-256 |
+| --- | --- |
+| `Runtime.evaluate`: cursor inspection | `74725063d5035488751fc064797673b3392e301698adf66d7d7cb68f42d95c41` |
+| `Runtime.evaluate`: marker cleanup | `e0a0131bd17e00339a6f265db007db8636023645b0b71cd8bd539f138a87a969` |
+| `Runtime.evaluate`: `location.href` | `305d076223e0260b539f371026511ea91d1537f4b73bd1dce5252dc8fdf5b5a0` |
+| `Runtime.evaluate`: liveness probe `1` | `6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b` |
+| `Runtime.callFunctionOn`: focus | `f986c03bf1f36d338f70ac7927e015d6e99d2557eaf186a88c698cae3557a5af` |
+| `Runtime.callFunctionOn`: clear | `02337bef426345581f9363175ae42b52f972adb815482762436b8d13b0e1971b` |
+
+Use CLI snapshot refs for CLI actions. Before `submit_secret`, use a fresh built-in snapshot or
+unique CSS/role field targets; a CLI ref is not an OpenBot ref. Dynamic selector scripts, optional
+snapshot extensions, and unaudited helpers still require the script protection. When a site starts
+with a passkey, try its supported saved-password and authenticator alternatives first. The
+password-manager SDK does not support passkeys. A passkey-only or human-presence step needs takeover.
+
+External tools have page-script access, so the agent uses this connection only when the user
+requests the tool. For credentials
 supplied in files or APIs, a local script can read the source and send the value directly to the
 connected page; it must not print the secret or include its literal value in a provider tool call.
 Before entry, that script sends `{ "values": ["..."] }` to the returned `secretRegistrationUrl`

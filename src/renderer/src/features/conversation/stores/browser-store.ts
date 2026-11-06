@@ -157,14 +157,15 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
       suspended: deps.props.browserVisibilitySuspended,
     }),
     ({ request, tab, suspended }) => {
-      if (!request || request.secret || suspended) {
+      if (!request || (request.secret && !request.secret.requiresReload) || suspended) {
         browserTakeoverPreviewKey = null;
         browserTakeoverPreviewGeneration += 1;
         setBrowserTakeoverPreview({ status: "idle", preview: null });
         return;
       }
 
-      const requestKey = String(request.requestId);
+      // A failed secure fill can reload its page. The host permits a preview only after cleanup.
+      const requestKey = JSON.stringify([request.requestId, tab?.url, tab?.title, tab?.loading]);
       if (!tab) {
         if (browserTakeoverPreviewKey !== requestKey) {
           setBrowserTakeoverPreview({ status: "loading", preview: null });

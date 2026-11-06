@@ -1293,18 +1293,27 @@ export class BrowserHost {
             };
             if (vault) contents.on("will-frame-navigate", blockLeak);
             yield* Effect.gen({ self: this }, function* () {
-              yield* this.#enqueue(
-                args.tabId,
-                (_tab, keepQueueBlocked) =>
-                  Effect.gen({ self: this }, function* () {
-                    yield* boundEngineOperation(
+              const entered = yield* Effect.result(
+                this.#enqueue(
+                  args.tabId,
+                  (_tab, keepQueueBlocked) =>
+                    boundEngineOperation(
                       tab,
                       entry.enter(secret),
                       10_000,
                       "Authentication submission timed out.",
                       keepQueueBlocked,
-                    );
-                    if (!protection.replaced && !leaked) {
+                    ),
+                  true,
+                ),
+              );
+              // A failed entry can leave a value in the page. Let its owned commands drain before
+              // cleanup, and keep inspection blocked until the fields are cleared or the page reloads.
+              yield* this.#enqueue(
+                args.tabId,
+                (_tab, keepQueueBlocked) =>
+                  Effect.gen({ self: this }, function* () {
+                    if (Result.isSuccess(entered) && !protection.replaced && !leaked) {
                       yield* Effect.callback<void>((resume) => {
                         const contents = tab.contents;
                         const cleanup = () => {
@@ -1352,6 +1361,7 @@ export class BrowserHost {
                   }),
                 true,
               );
+              if (Result.isFailure(entered)) return yield* entered.failure;
             }).pipe(
               Effect.ensuring(
                 Effect.sync(() => {
@@ -3050,7 +3060,7 @@ export class BrowserHost {
         );
         contents.navigationHistory.clear();
       }
-      if (tab.externalCdp && !tab.externalCdp.revoked) {
+      if (tab.externalCdp?.hasRunScript && !tab.externalCdp.revoked) {
         const origin = urlOrigin(url);
         if (origin) this.#agentScriptedOrigins.add(origin);
       }
@@ -3609,13 +3619,19 @@ export class BrowserHost {
                   ),
                 );
                 yield* refreshCookies;
-                markScripted();
+                if (bridge.hasRunScript) markScripted();
                 const result = yield* boundEngineOperation(
                   current,
                   lease.send(method, arguments_, sessionId),
                   30_000,
                   "External CDP command timed out.",
                   keepQueueBlocked,
+                ).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      if (bridge.hasRunScript) markScripted();
+                    }),
+                  ),
                 );
                 yield* refreshCookies;
                 return result;
@@ -3624,7 +3640,6 @@ export class BrowserHost {
         });
         yield* Scope.addFinalizer(tab.scope, bridge.close());
         yield* bridge.start();
-        if (!nativeOnly) markScripted();
         tab.externalCdp = bridge;
         return connectionResult(bridge);
       }),

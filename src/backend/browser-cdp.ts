@@ -330,7 +330,10 @@ export class BrowserCdpEngine {
     const generation = this.#navigationGeneration;
     // A submitter that overrides the form to GET is part of it, so a page cannot add one while the
     // vault read waits.
-    const fingerprintFields = `[this.localName, this.type, this.id, this.name, this.getAttribute('autocomplete'), this.getAttribute('aria-label'), this.getAttribute('inputmode'), this.form?.action, this.form?.method, [...(this.form?.elements ?? [])].some((element) => element.hasAttribute('formmethod') && element.getAttribute('formmethod').trim().toLowerCase() !== 'post')]`;
+    // A site's accessible label can identify a code field even when its id is opaque. Keep every
+    // label used for classification in the fingerprint, so a changed label cannot authorize entry.
+    const identityFields = `[this.id, this.name, this.getAttribute('aria-label') ?? '', this.getAttribute('placeholder') ?? '', ...[...(this.labels ?? [])].map(label => label.textContent ?? ''), ...(this.getAttribute('aria-labelledby') ?? '').split(/\\s+/).filter(Boolean).map(id => this.getRootNode().getElementById?.(id)?.textContent ?? '')]`;
+    const fingerprintFields = `[this.localName, this.type, ${identityFields}, this.getAttribute('autocomplete'), this.getAttribute('inputmode'), this.form?.action, this.form?.method, [...(this.form?.elements ?? [])].some((element) => element.hasAttribute('formmethod') && element.getAttribute('formmethod').trim().toLowerCase() !== 'post')]`;
     const fingerprint = `function() { return JSON.stringify(${fingerprintFields}); }`;
     const nodes = yield* this.#leaseEffect((send) =>
       Effect.gen({ self: this }, function* () {
@@ -365,7 +368,7 @@ export class BrowserCdpEngine {
           const valid = yield* this.#callOnNode(
             send,
             node.backendNodeId,
-            `function(origin, input) { if (this.isConnected && this.ownerDocument !== document) return 'frame'; return this.isConnected && location.origin === origin && (!input || (this.localName === 'input' && !this.disabled && !this.readOnly && ['password','text','tel','number'].includes(this.type))); }`,
+            `function(origin, input) { if (this.isConnected && this.ownerDocument !== document) return 'frame'; return this.isConnected && location.origin === origin && (!input || (this.localName === 'input' && !this.disabled && !this.readOnly && this.getClientRects().length > 0 && getComputedStyle(this).visibility === 'visible' && ['password','text','tel','number'].includes(this.type))); }`,
             [origin, input],
           );
           if (valid === "frame") return yield* inFrame(index);
@@ -398,10 +401,12 @@ export class BrowserCdpEngine {
             node.backendNodeId,
             `function() {
               const autocomplete = (this.getAttribute('autocomplete') ?? '').toLowerCase().split(/\\s+/).filter(Boolean);
-              const identity = [this.id, this.name, this.getAttribute('aria-label') ?? ''].join(' ')
+              const identity = ${identityFields}.join(' ')
                 .replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
               const numeric = ['tel', 'number'].includes(this.type) || this.inputMode === 'numeric';
-              const code = /\\b(?:otp|totp|authenticator|one time (?:code|password))\\b/.test(identity);
+              const verification = !/\\b(?:card|credit|debit|cvv|cvc|csc|postal|zip)\\b/.test(identity)
+                && /\\b(?:verification|authentication|mfa|2fa|two factor) (?:code|token|passcode)\\b/.test(identity);
+              const code = /\\b(?:otp|totp|authenticator|one time (?:code|password|passcode))\\b/.test(identity) || verification;
               const unspecified = autocomplete.every(value => value === 'off' || value === 'on');
               return { password: this.type === 'password', oneTimeCode: autocomplete.includes('one-time-code') || (unspecified && this.type !== 'password' && numeric && code) };
             }`,
@@ -428,7 +433,7 @@ export class BrowserCdpEngine {
                 const valid = yield* this.#callOnNode(
                   send,
                   node.backendNodeId,
-                  `function(origin, input) { return this.isConnected && this.ownerDocument === document && location.origin === origin && (!input || (!this.disabled && !this.readOnly)); }`,
+                  `function(origin, input) { return this.isConnected && this.ownerDocument === document && location.origin === origin && (!input || (!this.disabled && !this.readOnly && this.getClientRects().length > 0 && getComputedStyle(this).visibility === 'visible')); }`,
                   [origin, nodes.inputs.includes(node)],
                 );
                 if (valid !== true) return yield* browserFailure(new Error("Authentication target changed."));

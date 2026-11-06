@@ -1929,6 +1929,9 @@ export function createRemoteTeamPeer(
     if (state.turnRefreshTimer !== null) clearTimeout(state.turnRefreshTimer);
     state.turnRefreshTimer = setTimeout(() => {
       state.turnRefreshTimer = null;
+      if (!active || state.closed || peer !== state) return;
+      // Keep a retry armed until ready supplies new credentials, including when its reply is lost.
+      armTurnRefresh(state, 30_000);
       if (canSignal(state)) {
         try {
           // Null asks for the credentials of this socket, and Signal answers with a null `connectionId`.
@@ -1938,7 +1941,6 @@ export function createRemoteTeamPeer(
           // The reconnect path will request fresh TURN credentials.
         }
       }
-      armTurnRefresh(state, SIGNAL_TURN_REFRESH_INTERVAL_MS);
     }, delay);
   }
 

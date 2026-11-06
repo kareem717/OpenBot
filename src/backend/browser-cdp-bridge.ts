@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { BrowserJsonValue } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
@@ -64,6 +64,96 @@ const BLOCKED_METHODS = new Set([
   "Page.addScriptToEvaluateOnNewDocument",
   "Page.removeScriptToEvaluateOnNewDocument",
 ]);
+// Exact methods only. Other commands require an exact audited helper hash below, or mark the origin.
+const NON_SCRIPTING_METHODS = new Set([
+  "Accessibility.enable",
+  "Accessibility.disable",
+  "Accessibility.getFullAXTree",
+  "Accessibility.getPartialAXTree",
+  "Accessibility.getRootAXNode",
+  "Accessibility.getAXNodeAndAncestors",
+  "Accessibility.getChildAXNodes",
+  "Accessibility.queryAXTree",
+  "DOM.enable",
+  "DOM.disable",
+  "DOM.getDocument",
+  "DOM.getFlattenedDocument",
+  "DOM.describeNode",
+  "DOM.requestNode",
+  "DOM.resolveNode",
+  "DOM.querySelector",
+  "DOM.querySelectorAll",
+  "DOM.getAttributes",
+  "DOM.getOuterHTML",
+  "DOM.getBoxModel",
+  "DOM.getContentQuads",
+  "DOM.getNodeForLocation",
+  "DOM.getFrameOwner",
+  "DOM.requestChildNodes",
+  "DOM.pushNodesByBackendIdsToFrontend",
+  "DOM.scrollIntoViewIfNeeded",
+  "DOM.focus",
+  "DOMSnapshot.enable",
+  "DOMSnapshot.disable",
+  "DOMSnapshot.captureSnapshot",
+  "CSS.enable",
+  "CSS.disable",
+  "CSS.getComputedStyleForNode",
+  "CSS.getMatchedStylesForNode",
+  "CSS.getInlineStylesForNode",
+  "Page.enable",
+  "Page.disable",
+  "Page.getFrameTree",
+  "Page.getLayoutMetrics",
+  "Page.getNavigationHistory",
+  "Page.captureScreenshot",
+  "Page.stopScreencast",
+  "Page.setLifecycleEventsEnabled",
+  "Page.bringToFront",
+  "Runtime.enable",
+  "Runtime.disable",
+  "Runtime.runIfWaitingForDebugger",
+  "Input.insertText",
+  "Input.dispatchMouseEvent",
+  "Input.dispatchKeyEvent",
+  "Input.dispatchTouchEvent",
+  "Emulation.setFocusEmulationEnabled",
+  "Network.enable",
+  "Network.disable",
+  "Network.getResponseBody",
+  "Performance.enable",
+  "Performance.disable",
+  "Performance.getMetrics",
+  "Log.enable",
+  "Log.disable",
+]);
+// agent-browser v0.27.0 (c830d1b67dc18b754e305859f0ae587f858a1447) and v0.41.2
+// (d52a5e90c372ec4710c69adc3837ac14bbd852aa), cli/src/native/{snapshot,browser,interaction}.rs.
+// These exact helpers read the page and add/remove only temporary data-__ab-ci markers. They do not
+// install handlers, write storage, change prototypes, or use the network. See docs/architecture/browser.md.
+// Hash the full UTF-8 expression without normalization. A modified helper is untrusted script.
+const SNAPSHOT_EVALUATION_HASHES = new Set([
+  "74725063d5035488751fc064797673b3392e301698adf66d7d7cb68f42d95c41", // Cursor inspection.
+  "e0a0131bd17e00339a6f265db007db8636023645b0b71cd8bd539f138a87a969", // Marker cleanup.
+  "305d076223e0260b539f371026511ea91d1537f4b73bd1dce5252dc8fdf5b5a0", // location.href.
+  "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b", // Liveness probe: 1.
+]);
+// The fixed fill-by-ref helpers focus the selected element and clear it with an input event. They
+// accept no source or handler argument. Arbitrary callFunctionOn functions remain untrusted.
+const INPUT_FUNCTION_HASHES = new Set([
+  "f986c03bf1f36d338f70ac7927e015d6e99d2557eaf186a88c698cae3557a5af", // Focus.
+  "02337bef426345581f9363175ae42b52f972adb815482762436b8d13b0e1971b", // Clear.
+]);
+
+function isAuditedAgentBrowserCommand(method: string, params: DynamicRecord): boolean {
+  const source = method === "Runtime.evaluate" ? params.expression : params.functionDeclaration;
+  const hashes = method === "Runtime.evaluate" ? SNAPSHOT_EVALUATION_HASHES : INPUT_FUNCTION_HASHES;
+  return (
+    (method === "Runtime.evaluate" || method === "Runtime.callFunctionOn") &&
+    isString(source) &&
+    hashes.has(createHash("sha256").update(source).digest("hex"))
+  );
+}
 
 interface BrowserCdpBridgeOptions {
   /** Native mode keeps local secret registration but accepts no CDP socket. */
@@ -99,6 +189,7 @@ export class BrowserCdpBridge {
   #revoked = false;
   #pending = 0;
   #sourceRegistered = false;
+  #hasRunScript = false;
 
   constructor(options: BrowserCdpBridgeOptions) {
     this.#options = options;
@@ -114,6 +205,10 @@ export class BrowserCdpBridge {
 
   get revoked(): boolean {
     return this.#revoked;
+  }
+
+  get hasRunScript(): boolean {
+    return this.#hasRunScript;
   }
 
   get secretRegistrationUrl(): string {
@@ -323,6 +418,8 @@ export class BrowserCdpBridge {
           );
         if (!PAGE_DOMAINS.has(method.split(".")[0] ?? "") || BLOCKED_METHODS.has(method))
           return yield* browserFailure(new Error("This CDP command is unavailable for an OpenBot tab."));
+        if (!NON_SCRIPTING_METHODS.has(method) && !isAuditedAgentBrowserCommand(method, params))
+          this.#hasRunScript = true;
         return yield* this.#options.send(method, params, sessionId === PAGE_SESSION ? undefined : sessionId);
       }),
     );
