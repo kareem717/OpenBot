@@ -714,7 +714,7 @@ try {
   assert.equal(reopenedPrompt?.questionPrompt?.resolution, null);
   assert.equal(reopenedPrompt?.questionPrompt?.requestId, originalPrompt.questionPrompt?.requestId);
   check("Reopening the side thread preserves its draft and leaves its question unanswered");
-  await page.screenshot({ path: join(out, "pending-question-steps.png") });
+  await page.screenshot({ path: join(out, "pending-question-steps.png"), animations: "disabled" });
   assert.equal(report.pageErrors.length, 0, "The app emitted a renderer error.");
   report.passed = true;
 } catch (error) {
