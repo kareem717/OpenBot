@@ -4,6 +4,12 @@ import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { teamCapabilitiesForProtocol } from "@openbot/contracts/team-protocol/current";
 import { optionalTeamEvent, optionalTeamEventToCurrent } from "@openbot/contracts/team-protocol/optional-events";
+import {
+  decodeRpcJsonFile,
+  RPC_JSON_FILE_MIME,
+  RPC_JSON_FILES_CAPABILITY,
+  rpcJsonFileName,
+} from "@openbot/contracts/team-protocol/rpc-json-files-v1";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
 import {
   type TeamProtocolV1CurrentEventControl,
@@ -27,6 +33,7 @@ import { decodeTeamProtocolSupportV9 } from "@openbot/contracts/team-protocol/v9
 import { decodeTeamProtocolV9WebRtcHttpResponse } from "@openbot/contracts/team-protocol/v9-webrtc-adapter";
 import { sourceText } from "@openbot/i18n/source";
 import { remoteWorkspaceReadTimeout } from "@openbot/team-client/remote-recovery";
+import { decodeRpcJsonFileBody } from "@openbot/team-client/rpc-json-file";
 import { type RemoteRequestProfile, startRemoteRequest } from "@openbot/team-client/sync-profile";
 import { Context, Deferred, Effect, Fiber, Layer, Result, Schema } from "effect";
 import type { CentralAuthOperationError } from "./central-auth-effects";
@@ -47,7 +54,7 @@ import {
 } from "./remote-service-effects";
 import type { RemoteSessionCache } from "./remote-session-cache";
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
-import { TeamWebRtcFileTransfer } from "./team-webrtc-file-transfer";
+import { type IncomingFileWatch, TeamWebRtcFileTransfer } from "./team-webrtc-file-transfer";
 
 export const TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS = 10 * 60_000 + 30_000;
 
@@ -473,6 +480,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   > {
     // Set once the frame exists; `bun run perf:remote` reads it. Null when nothing records.
     let profile: RemoteRequestProfile | null = null;
+    let jsonWatch: IncomingFileWatch | null = null;
     return yield* this.#owned(
       Effect.gen({ self: this }, function* () {
         yield* this.#ensureConnected(hostId);
@@ -540,6 +548,27 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         // The host sends the file before the answer that names it. A stopped request refuses the file.
         const progress = init.fileProgress;
         const watch = progress ? this.#files.watchIncoming(hostId, progress.size, progress.onProgress) : null;
+        const canReadJsonFile = teamCapabilitiesForProtocol(this.#hostProtocols.get(hostId)).includes(
+          RPC_JSON_FILES_CAPABILITY,
+        );
+        if (canReadJsonFile)
+          jsonWatch = this.#files.watchIncoming(
+            hostId,
+            0,
+            () => {
+              const pending = this.#pending.get(requestId);
+              if (!pending || pending.hostId !== hostId) return;
+              clearTimeout(pending.timer);
+              pending.timer = setTimeout(() => {
+                if (this.#pending.get(requestId) !== pending) return;
+                this.#pending.delete(requestId);
+                pending.reject(
+                  new TeamWebRtcRequestError(504, "remote_timeout", sourceText("error.remote.requestTimeout")),
+                );
+              }, 60_000);
+            },
+            { name: rpcJsonFileName(requestId), mimeType: RPC_JSON_FILE_MIME },
+          );
         const envelope = yield* this.#exchange(hostId, requestId, frame, profile, remainingMs).pipe(
           Effect.catchIf(
             (error) => !bodyTransferId && isClosedChannelError(error.cause),
@@ -564,6 +593,34 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
             cause: new TeamWebRtcRequestError(502, "protocol_error", "The host returned an invalid response."),
           });
         }
+        let responseBody = envelope.body;
+        if (Object.hasOwn(envelope, "jsonFile")) {
+          if (!canReadJsonFile || envelope.body !== null || Object.hasOwn(envelope, "file"))
+            return yield* new RemoteWorkflowError({
+              cause: new TeamWebRtcRequestError(
+                502,
+                "protocol_error",
+                "The host returned an unexpected JSON response file.",
+              ),
+            });
+          const invalidJson = () =>
+            new RemoteWorkflowError({
+              cause: new TeamWebRtcRequestError(
+                502,
+                "protocol_error",
+                "The host returned an invalid JSON response file.",
+              ),
+            });
+          const metadata = yield* remoteDecode(() => decodeRpcJsonFile(envelope.jsonFile, requestId)).pipe(
+            Effect.mapError(invalidJson),
+          );
+          const transferred = yield* this.#files.consume(hostId, metadata.transferId);
+          responseBody = yield* remoteDecode(() => decodeRpcJsonFileBody(transferred, metadata)).pipe(
+            Effect.mapError(invalidJson),
+          );
+          jsonWatch?.end(metadata.transferId);
+          jsonWatch = null;
+        }
         const fileRecord = isDynamicRecord(envelope.file) ? envelope.file : null;
         const transferId = fileRecord && isString(fileRecord.transferId) ? fileRecord.transferId : null;
         const file = transferId ? yield* this.#files.consume(hostId, transferId) : undefined;
@@ -576,12 +633,12 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
           ? null
           : yield* remoteDecode(() =>
               sideRoute
-                ? sideRoute.response(path, status, envelope.body, {
+                ? sideRoute.response(path, status, responseBody, {
                     historyExtent: true,
                     channelAttention: true,
                     agentTaskUiBlocks: true,
                   })
-                : decodeTeamProtocolV9WebRtcHttpResponse(method, path, status, envelope.body),
+                : decodeTeamProtocolV9WebRtcHttpResponse(method, path, status, responseBody),
             ).pipe(
               Effect.mapError(
                 () =>
@@ -599,7 +656,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
           this.#hostProtocols.set(hostId, support.protocol.maximum);
         }
         return { status: envelope.status, body, ...(file ? { file } : {}) };
-      }).pipe(Effect.onExit((exit) => Effect.sync(() => profile?.end(exit)))),
+      }).pipe(
+        Effect.ensuring(Effect.suspend(() => jsonWatch?.stop ?? Effect.void)),
+        Effect.onExit((exit) => Effect.sync(() => profile?.end(exit))),
+      ),
     );
   }).bind(this);
 

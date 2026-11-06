@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { isString } from "@openbot/contracts/runtime-values";
+import { RPC_JSON_FILE_MAX_BYTES, RPC_JSON_FILE_MIME } from "@openbot/contracts/team-protocol/rpc-json-files-v1";
 import {
   decodeTeamProtocolV2FileChunk,
   decodeTeamProtocolV2FileControlFrame,
@@ -68,6 +69,7 @@ interface IncomingWatch {
   peerId: string;
   size: number;
   onProgress: (received: number, size: number) => void;
+  identity?: { name: string; mimeType: string };
   transferId: string | null;
   /** Each file that the watch took. A file of a stopped request of the same size can come first. */
   taken: string[];
@@ -318,19 +320,41 @@ export class TeamWebRtcFileTransfer {
    * its answer, after the last byte, so the size ties a file to the request. Two files of one size can
    * swap their progress; their bytes still go to the request that the answer names.
    */
-  watchIncoming(peerId: string, size: number, onProgress: (received: number, size: number) => void): IncomingFileWatch {
-    const watch: IncomingWatch = { peerId, size, onProgress, transferId: null, taken: [], stopped: false };
+  watchIncoming(
+    peerId: string,
+    size: number,
+    onProgress: (received: number, size: number) => void,
+    identity?: { name: string; mimeType: string },
+  ): IncomingFileWatch {
+    const watch: IncomingWatch = {
+      peerId,
+      size,
+      onProgress,
+      ...(identity ? { identity } : {}),
+      transferId: null,
+      taken: [],
+      stopped: false,
+    };
     // The host does not keep the order of its files. A stopped request that has no file yet must not
     // refuse the file of this request. This watch can take that file first; `end` then removes it.
     for (const item of this.#watches)
-      if (item.stopped && item.peerId === peerId && item.size === size && item.transferId === null)
+      if (
+        item.stopped &&
+        item.peerId === peerId &&
+        item.size === size &&
+        item.identity?.name === identity?.name &&
+        item.transferId === null
+      )
         this.#watches.delete(item);
     this.#watches.add(watch);
     return {
       end: (answered) => {
         if (watch.stopped || !this.#watches.delete(watch)) return;
         // While another request waits for a file of this size, a file that this watch took can be its file.
-        const shared = [...this.#watches].some((item) => !item.stopped && item.peerId === peerId && item.size === size);
+        const shared = [...this.#watches].some(
+          (item) =>
+            !item.stopped && item.peerId === peerId && item.size === size && item.identity?.name === identity?.name,
+        );
         const others = shared ? [] : watch.taken.filter((transferId) => transferId !== answered);
         // The file of a stopped request counts against the file set limit of the peer until it expires.
         for (const transferId of others)
@@ -527,7 +551,12 @@ export class TeamWebRtcFileTransfer {
       if (frame.type === "file-open") {
         const existing = this.#incoming.get(key);
         if (existing) {
-          if (existing.size !== frame.size || existing.sha256 !== frame.sha256)
+          if (
+            existing.size !== frame.size ||
+            existing.sha256 !== frame.sha256 ||
+            (existing.mimeType === RPC_JSON_FILE_MIME &&
+              (existing.name !== frame.name || existing.mimeType !== frame.mimeType))
+          )
             return yield* new RemoteWorkflowError({ cause: new Error("The resumed WebRTC file metadata changed.") });
           yield* this.#bridge.send(
             peerId,
@@ -542,8 +571,29 @@ export class TeamWebRtcFileTransfer {
           return;
         }
         const watch = [...this.#watches].find(
-          (item) => item.peerId === peerId && item.transferId === null && item.size === frame.size,
+          (item) =>
+            item.peerId === peerId &&
+            item.transferId === null &&
+            (item.identity
+              ? item.identity.name === frame.name && item.identity.mimeType === frame.mimeType
+              : frame.mimeType !== RPC_JSON_FILE_MIME && item.size === frame.size),
         );
+        if (frame.mimeType === RPC_JSON_FILE_MIME) {
+          const jsonBytes = [...this.#incoming.values(), ...this.#completed.values()]
+            .filter((item) => item.peerId === peerId && item.mimeType === RPC_JSON_FILE_MIME)
+            .reduce((sum, item) => sum + item.size, 0);
+          if (
+            !watch ||
+            frame.size < 1 ||
+            frame.size > RPC_JSON_FILE_MAX_BYTES ||
+            jsonBytes + frame.size > RPC_JSON_FILE_MAX_BYTES
+          )
+            return yield* this.#refuse(
+              peerId,
+              frame.transferId,
+              new Error(sourceText("error.remote.responseTooLarge")),
+            );
+        }
         if (watch?.stopped) {
           this.#watches.delete(watch);
           return yield* this.#refuse(peerId, frame.transferId, new Error(sourceText("error.remote.downloadStopped")));
@@ -629,7 +679,8 @@ export class TeamWebRtcFileTransfer {
         // A watch can take the file of a stopped request of the same size. When its own answer does not
         // come with this file, the watch takes the next file.
         for (const watch of this.#watches)
-          if (watch.peerId === peerId && watch.transferId === frame.transferId) watch.transferId = null;
+          if (watch.peerId === peerId && watch.transferId === frame.transferId && !watch.identity)
+            watch.transferId = null;
         const waiter = this.#waiters.get(key);
         if (waiter) {
           clearTimeout(waiter.timer);
