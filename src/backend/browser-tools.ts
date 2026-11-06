@@ -203,7 +203,7 @@ const BROWSER_TOOL_DEFINITIONS = [
   browserTool({
     name: "connect_cdp",
     description:
-      "Connect an external tool such as agent-browser to this existing OpenBot tab. Returns a local CDP WebSocket endpoint and secretRegistrationUrl for this tab only; it does not open a browser. Use only when the user asks for an external browser tool. A local script must POST its supplied credential values to secretRegistrationUrl before filling them, without printing them. Disconnect before using OpenBot browser tools again. Secure input or user takeover revokes the connection.",
+      "Connect an external tool such as agent-browser to this existing OpenBot tab. Returns a local CDP WebSocket endpoint, secretRegistrationUrl, and recent diagnostics for this tab only; it does not open a browser. Calling again reuses a live connection, including after credential registration. Use only when the user asks for an external browser tool. A local script must POST its supplied credential values to secretRegistrationUrl before filling them, without printing them. Disconnect before using OpenBot browser tools again. Secure input or user takeover revokes the connection.",
     shape: { tabId },
   }),
   browserTool({
@@ -238,7 +238,7 @@ const BROWSER_TOOL_DEFINITIONS = [
   browserTool({
     name: "snapshot",
     description:
-      'Read the current semantic page and obtain element refs. Refs stay valid until a navigation or the next snapshot. An adaptive image is returned separately when useful. The output is bounded: text in the viewport comes first, and truncated is true when text or elements were left out. Scroll, or wait for text, to read more. Each element is a line: ref, role, "name", then <tag>, value=, description= and states when present. diagnostics and actions list only new entries, without successful requests and plain successful actions.',
+      'Read the current semantic page and obtain element refs. Refs stay valid until a navigation or the next snapshot. An adaptive image is returned separately when useful. The output is bounded: text in the viewport comes first, and truncated is true when text or elements were left out. Scroll, or wait for text, to read more. Each element is a line: ref, role, "name", then <tag>, value=, description= and states when present. diagnostics and actions list only new entries. Write requests include their start and response status; successful reads and plain successful actions are omitted.',
     shape: { tabId, image },
   }),
   browserTool({

@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { BrowserHost } from "../src/backend/browser-host";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import type { DynamicToolCallParams, DynamicToolResult } from "../src/backend/protocol";
+import { runSubmissionScenario } from "./browser-submission-smoke";
 import { withoutElectronRuntimeFlags } from "./electron-spawn-env";
 
 const replySchema = z.object({
@@ -133,6 +134,7 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
       body: JSON.stringify({ values: [secret, "123456"] }),
     });
     assert.equal(registered.status, 200);
+    assert.equal(endpointOf(await call("connect_cdp")), endpoint, "A live protected connection remains discoverable.");
     sequence = 123455;
     assert.equal((await send("Browser.getVersion")).id, 123456);
     assert.ok((await send("Page.captureScreenshot", {}, pageSession)).error);
@@ -166,6 +168,7 @@ export async function runCdpBridgeScenario(browser: BrowserHost, origin: string)
     const read = await cli("get", "value", "#credential");
     assert.ok(!read.includes(secret) && read.includes("[redacted]"));
     checks.push("registered credentials are redacted from external CDP results");
+    checks.push(...(await runSubmissionScenario(browser, tab.id, registrationUrl, cli, () => call("connect_cdp"))));
     await cli("close");
     await call("disconnect_cdp");
     assert.equal(

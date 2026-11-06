@@ -120,6 +120,11 @@ export class BrowserCdpBridge {
     return `http://127.0.0.1:${this.#port}/devtools/browser/${this.#token}/secrets`;
   }
 
+  /** Reuse the live connection's credential scope only while its original access checks pass. */
+  assertAccess(): void {
+    this.#checkAccess();
+  }
+
   readonly start = Effect.fn("BrowserCdpBridge.start")(function* (this: BrowserCdpBridge) {
     registerSecretValue(this.#token);
     this.#server.on("upgrade", (request, socket, head) => {

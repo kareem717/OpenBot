@@ -63,7 +63,7 @@ import {
 import { BrowserCdpBridge } from "./browser-cdp-bridge";
 import { BrowserControlSessions } from "./browser-control-sessions";
 import { browserViewCursor } from "./browser-cursor";
-import { BrowserDiagnostics } from "./browser-diagnostics";
+import { BrowserDiagnostics, isBrowserWriteMethod } from "./browser-diagnostics";
 import { type BrowserOperationError, browserCall, browserFailure, browserSync } from "./browser-effects";
 import {
   type BrowserHostTab,
@@ -2759,6 +2759,19 @@ export class BrowserHost {
     // Service workers read the process fallback instead of the session, so it changes too.
     app.userAgentFallback = sessionBrowserUserAgent(app.userAgentFallback);
     target.setUserAgent(sessionBrowserUserAgent(target.getUserAgent()), preferredBrowserLanguageCodes());
+    target.webRequest.onBeforeRequest((details, callback) => {
+      const tab = [...this.#tabs.values()].find((candidate) => candidate.contents.id === details.webContentsId);
+      if (tab && !tab.secret && isBrowserWriteMethod(details.method)) {
+        tab.diagnostics.add({
+          kind: "network",
+          level: "info",
+          message: `${details.method} started`,
+          ...diagnosticUrlField(details.url),
+          method: details.method,
+        });
+      }
+      callback({ cancel: false });
+    });
     target.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
         requestHeaders: browserRequestHeaders(details.url, details.requestHeaders),
@@ -2776,6 +2789,18 @@ export class BrowserHost {
         status: details.statusCode,
       });
       if (details.statusCode >= 400) this.#emitChanged();
+    });
+    target.webRequest.onBeforeRedirect((details) => {
+      const tab = [...this.#tabs.values()].find((candidate) => candidate.contents.id === details.webContentsId);
+      if (!tab || tab.secret || !isBrowserWriteMethod(details.method)) return;
+      tab.diagnostics.add({
+        kind: "network",
+        level: "info",
+        message: `${details.method} ${details.statusCode}`,
+        ...diagnosticUrlField(details.url),
+        method: details.method,
+        status: details.statusCode,
+      });
     });
     target.webRequest.onErrorOccurred((details) => {
       const tab = [...this.#tabs.values()].find((candidate) => candidate.contents.id === details.webContentsId);
@@ -3498,11 +3523,29 @@ export class BrowserHost {
     yield* browserSync(() => this.#requireToolTab(params, tabId));
     return yield* this.#enqueue(tabId, (tab) =>
       Effect.gen({ self: this }, function* () {
-        const sourceSecretTabs = new Set<BrowserHostTab>();
-        const checkAccess = () => {
+        const checkControl = () => {
           this.#requireToolTab(params, tabId);
           if (nativeOnly) this.#requireNativeAccess(params, tabId);
           else if (tab.engine.nativeControl) throw new Error("Switch this tab to cdp control before connecting.");
+        };
+        yield* browserSync(checkControl);
+        const connectionResult = (bridge: BrowserCdpBridge) =>
+          textResult({
+            tabId,
+            mode: nativeOnly ? "native" : "cdp",
+            ...(nativeOnly ? { nativeInputUrl: bridge.nativeInputUrl } : { endpoint: bridge.endpoint }),
+            secretRegistrationUrl: bridge.secretRegistrationUrl,
+            diagnostics: tab.diagnostics.snapshot().diagnostics,
+          });
+        const existing = tab.externalCdp;
+        if (existing && !existing.revoked) {
+          yield* browserSync(() => existing.assertAccess());
+          if (!nativeOnly) yield* this.activate(tabId);
+          return connectionResult(existing);
+        }
+        const sourceSecretTabs = new Set<BrowserHostTab>();
+        const checkAccess = () => {
+          checkControl();
           if (
             [...this.#connectedTabs(tab)].some(
               (connected) =>
@@ -3517,14 +3560,6 @@ export class BrowserHost {
         };
         yield* browserSync(checkAccess);
         if (!nativeOnly) yield* this.activate(tabId);
-        const connectionResult = (bridge: BrowserCdpBridge) =>
-          textResult({
-            tabId,
-            mode: nativeOnly ? "native" : "cdp",
-            ...(nativeOnly ? { nativeInputUrl: bridge.nativeInputUrl } : { endpoint: bridge.endpoint }),
-            secretRegistrationUrl: bridge.secretRegistrationUrl,
-          });
-        if (tab.externalCdp && !tab.externalCdp.revoked) return connectionResult(tab.externalCdp);
         const lease = nativeOnly ? null : yield* tab.engine.retainExternalCdp();
         const markScripted = () => {
           for (const frame of tab.contents.mainFrame.framesInSubtree) {

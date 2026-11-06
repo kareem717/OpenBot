@@ -32,7 +32,12 @@ export class BrowserDiagnostics {
   add(entry: Omit<BrowserDiagnosticEntry, "timestamp">): void {
     pushRing(
       this.#diagnostics,
-      { ...entry, message: boundedText(entry.message), timestamp: new Date().toISOString() },
+      {
+        ...entry,
+        message: boundedText(entry.message),
+        ...(entry.url === undefined ? {} : { url: boundedText(entry.url) }),
+        timestamp: new Date().toISOString(),
+      },
       DIAGNOSTIC_LIMIT,
     );
     this.#addedDiagnostics += 1;
@@ -54,8 +59,8 @@ export class BrowserDiagnostics {
 
   /**
    * The entries no delivered snapshot has carried yet. Pass the cursor to `delivered` once the snapshot is
-   * read. A successful request or a plain successful action tells the model nothing, so it is left out
-   * before the limit: on a busy page they would fill the window and push out the error that matters.
+   * read. Write requests retain their start and response status, so an unchanged sign-in page can
+   * be distinguished from a form that sent no request. Successful reads and plain actions stay out.
    */
   snapshot(): {
     diagnostics: BrowserDiagnosticEntry[];
@@ -64,7 +69,7 @@ export class BrowserDiagnostics {
   } {
     return {
       diagnostics: newest(this.#diagnostics, this.#addedDiagnostics - this.#deliveredDiagnostics, DIAGNOSTIC_LIMIT)
-        .filter((entry) => entry.kind !== "network" || entry.level !== "info")
+        .filter((entry) => entry.kind !== "network" || entry.level !== "info" || isBrowserWriteMethod(entry.method))
         .slice(-SNAPSHOT_DIAGNOSTICS),
       actions: newest(this.#actions, this.#addedActions - this.#deliveredActions, ACTION_LIMIT)
         .filter((entry) => entry.outcome !== "success" || entry.detail)
@@ -98,6 +103,11 @@ export class BrowserDiagnostics {
   get errorCount(): number {
     return this.#diagnostics.filter((entry) => entry.level === "error").length;
   }
+}
+
+/** Requests that can submit a form or change server state, including POST-based sign-in APIs. */
+export function isBrowserWriteMethod(method: string | undefined): boolean {
+  return method !== undefined && !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
 }
 
 export interface BrowserHistoryCursor {
