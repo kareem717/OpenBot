@@ -120,6 +120,9 @@ const keysRoot = join(root, "agent-api-keys");
 const apiKeys = new AgentApiKeys(keysRoot, () => vault.items.apiKeys());
 const unused = () => Effect.die(new Error("This fixture must not act on a browser page."));
 const browser: AgentBrowserHost = {
+  shareTab: () => {},
+  unshareThread: () => {},
+  agentTab: () => null,
   listTabs: () => [],
   beginTakeover: unused,
   endTakeover: () => {},

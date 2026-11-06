@@ -105,6 +105,7 @@ export const messages = {
   "workflow.model.providerModels": "نماذج {name}",
   "workflow.model.effort": "الجهد: {name}",
   "workflow.model.effortRange": "{from}–{to}",
+  "workflow.model.auto": "تلقائي",
 
   "workflow.llm.title": "LLM",
   "workflow.llm.name": "خطوة LLM",
@@ -237,6 +238,8 @@ export const messages = {
   "workflow.row.whoChooses": "من يختار",
 
   "workflow.github.repository": "المستودع",
+  "workflow.github.repositories": "المستودعات",
+  "workflow.github.noEvents": "لا أحداث",
   "workflow.github.chooseRepository": "اختيار مستودع",
   "workflow.github.searchRepositories": "البحث في المستودعات",
   "workflow.github.events.issues": "المشكلات",

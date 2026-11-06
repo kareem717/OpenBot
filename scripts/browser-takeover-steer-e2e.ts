@@ -111,6 +111,9 @@ let secretSubmitting = false;
 let secretCancelled = 0;
 const unused = () => Effect.die(new Error("The fixture must not act on a browser page."));
 const browser: AgentBrowserHost = {
+  shareTab: () => {},
+  unshareThread: () => {},
+  agentTab: () => null,
   listTabs: () => tabs,
   beginTakeover: () => Effect.void,
   endTakeover: (tabId) => endedTabs.push(tabId),

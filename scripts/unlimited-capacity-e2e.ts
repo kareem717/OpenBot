@@ -29,6 +29,7 @@ import { AGENT_IMPORT_MANIFEST } from "../src/main/agent-import-manifest";
 import { type AgentImportAgents, AgentImportService } from "../src/main/agent-import-service";
 import { CentralAuthManager } from "../src/main/central-auth-manager";
 import { readHermesProfiles } from "../src/main/hermes-import-reader";
+import { InstanceTransferService } from "../src/main/instance-transfer-service";
 import { LocalSkillLibrary } from "../src/main/local-skill-library";
 import { listFolderSkills } from "../src/main/skill-folder-discovery";
 import { SkillMarketplaceService } from "../src/main/skill-marketplace-service";
@@ -387,6 +388,95 @@ try {
   checked("archive application installs all 205 skills and saves all 600 memories", {
     skills: installed.length,
     memories: 600,
+    oldMemoryPreference: 1,
+  });
+  const transfer = new InstanceTransferService({
+    agents: {
+      listAgents: () => store.list(),
+      listRoutines: () => [],
+      listMemories: (agentId) => memories.list(agentId),
+      getMemorySelection: (agentId) => memories.selectionState(agentId),
+      setMemoryInclusion: (input) => memories.setInclusions(input),
+      resolveAvatar: () => null,
+      listModels: () => [{ provider: "codex", id: importedAgent.model }],
+      createAgentProfile: (input) => store.createAgent(input),
+      updateAgent: (input) => store.updateAgent(input),
+      createRoutine: () => {
+        throw new Error("This transfer has no routines.");
+      },
+      createMemory: (input) => memories.create(input),
+      // An old stored preference must not truncate the imported collection.
+      memoryLimit: () => 1,
+      initializeMemorySelection: (agentId) => memories.initializeSelection(agentId),
+      setAvatar: (agentId, image) => store.setAvatar(agentId, image),
+      deleteAgent: (agentId) => store.deleteAgent(agentId),
+    },
+    skills: { library: () => library, installLocal: (input) => skills.installLocal(input) },
+    settings: {
+      mcpServers: () => mcp.list(),
+      saveMcpServer: unavailable,
+      customProviders: () => [],
+      saveCustomProvider: unavailable,
+      customAgents: () => Effect.succeed([]),
+      providersOff: () => [],
+      sidebar: () => {
+        throw new Error("This transfer excludes settings.");
+      },
+      mutateSidebar: unavailable,
+      routineFlowLinks: () => Effect.succeed([]),
+      connectRoutineFlow: unavailable,
+      signedInProviders: () => ["codex"],
+    },
+    sharedRoot: store.sharedRoot,
+    appVersion: "capacity-e2e",
+    timezone: () => "UTC",
+  });
+  const transferArchive = join(root, "instance-transfer.zip");
+  const exported = await runCauseEffect(
+    transfer.exportTo(transferArchive, {
+      agentIds: [importedAgent.id],
+      includeFiles: false,
+      includeSettings: false,
+    }),
+  );
+  assert.equal(exported.saved, true);
+  assert.deepEqual(exported.warnings, []);
+  const transferPreview = await runCauseEffect(transfer.stage(transferArchive));
+  assert.equal(transferPreview.agents.length, 1);
+  assert.equal(transferPreview.agents[0]?.skillCount, 205);
+  assert.equal(transferPreview.agents[0]?.memoryCount, 600);
+  const transferred = await runCauseEffect(
+    transfer.apply({
+      token: transferPreview.token,
+      keys: transferPreview.agents.map((agent) => agent.key),
+      includeSettings: false,
+    }),
+  );
+  assert.deepEqual(transferred.skipped, []);
+  assert.equal(transferred.agents.length, 1);
+  const transferredAgent = transferred.agents[0];
+  assert.ok(transferredAgent);
+  assert.deepEqual(
+    memories
+      .list(transferredAgent.id)
+      .map((memory) => memory.text)
+      .sort(),
+    memories
+      .list(importedAgent.id)
+      .map((memory) => memory.text)
+      .sort(),
+  );
+  assert.deepEqual(
+    (await runCauseEffect(skills.listInstalled(transferredAgent.id))).map((skill) => skill.slug).sort(),
+    installed.map((skill) => skill.slug).sort(),
+  );
+  checked("instance export and import preserve every skill and memory above the old limits", {
+    sourceSkills: installed.length,
+    previewSkills: transferPreview.agents[0]?.skillCount,
+    importedSkills: 205,
+    sourceMemories: 600,
+    previewMemories: transferPreview.agents[0]?.memoryCount,
+    importedMemories: memories.list(transferredAgent.id).length,
     oldMemoryPreference: 1,
   });
   const lastSkill = installed.at(-1);

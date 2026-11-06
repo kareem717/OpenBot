@@ -80,6 +80,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 );
 const unused = () => Effect.die(new Error("No browser in this fixture."));
 const browser: AgentBrowserHost = {
+  shareTab: () => {},
+  unshareThread: () => {},
+  agentTab: () => null,
   listTabs: () => [],
   beginTakeover: unused,
   endTakeover: () => {},

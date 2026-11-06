@@ -98,6 +98,7 @@ export const messages = {
   "workflow.model.providerModels": "{name} modelleri",
   "workflow.model.effort": "Efor: {name}",
   "workflow.model.effortRange": "{from}–{to}",
+  "workflow.model.auto": "Otomatik",
 
   "workflow.llm.title": "LLM",
   "workflow.llm.name": "LLM adımı",
@@ -221,6 +222,8 @@ export const messages = {
   "workflow.row.agentCanChoose": "Ajan seçebilir",
   "workflow.row.whoChooses": "Kim seçer",
   "workflow.github.repository": "Depo",
+  "workflow.github.repositories": "Depolar",
+  "workflow.github.noEvents": "Olay yok",
   "workflow.github.chooseRepository": "Depo seç",
   "workflow.github.searchRepositories": "Depolarda ara",
   "workflow.github.events.issues": "Sorunlar",

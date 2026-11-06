@@ -98,6 +98,7 @@ export const messages = {
   "workflow.model.providerModels": "Modelos de {name}",
   "workflow.model.effort": "Esforço: {name}",
   "workflow.model.effortRange": "{from}–{to}",
+  "workflow.model.auto": "Auto",
 
   "workflow.llm.title": "LLM",
   "workflow.llm.name": "etapa de LLM",
@@ -221,6 +222,8 @@ export const messages = {
   "workflow.row.agentCanChoose": "O agente pode escolher",
   "workflow.row.whoChooses": "Quem escolhe",
   "workflow.github.repository": "Repositório",
+  "workflow.github.repositories": "Repositórios",
+  "workflow.github.noEvents": "Sem eventos",
   "workflow.github.chooseRepository": "Escolher repositório",
   "workflow.github.searchRepositories": "Pesquisar repositórios",
   "workflow.github.events.issues": "Issues",

@@ -32,6 +32,7 @@ export interface ChannelRoutineHost {
   routineRecovery: () => boolean;
   /** Whether the `eventsServerId` host sends a test event to a webhook routine. */
   webhookTests: () => boolean;
+  webhookSenderSecret: () => boolean;
 }
 
 function useOpenChannel(channelId: string) {
@@ -211,7 +212,12 @@ export function ChannelSettingsPane(
     const eventApi =
       runtime().eventRoutines ??
       (serverId
-        ? desktopEventRoutinesApi(serverId, props.routines.routineRecovery(), props.routines.webhookTests())
+        ? desktopEventRoutinesApi(
+            serverId,
+            props.routines.routineRecovery(),
+            props.routines.webhookTests(),
+            props.routines.webhookSenderSecret(),
+          )
         : undefined);
     return eventApi ? eventRoutinesPort({ kind: "channel", id: props.channelId }, eventApi, legacy) : legacy;
   });

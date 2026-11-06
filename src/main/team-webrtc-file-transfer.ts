@@ -57,6 +57,8 @@ interface OutgoingTransfer {
   acknowledgementGeneration: number;
   lastProgressAt: number;
   cancelled: Error | null;
+  /** A JSON response stays bound to the logical session that authorized its read. */
+  allowed?: (() => boolean) | undefined;
   /** Gets the bytes that the peer confirmed, after each acknowledgement. */
   onProgress?: ((acknowledged: number, size: number) => void) | undefined;
 }
@@ -180,7 +182,12 @@ export class TeamWebRtcFileTransfer {
   readonly sendStream = Effect.fn("TeamFileTransfer.sendStream")(function* (
     this: TeamWebRtcFileTransfer,
     peerId: string,
-    input: { name: string; mimeType: string; body: AsyncIterable<Uint8Array> | Iterable<Uint8Array> },
+    input: {
+      name: string;
+      mimeType: string;
+      body: AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
+      allowed?: (() => boolean) | undefined;
+    },
   ): Effect.fn.Return<{ transferId: string; size: number }, RemoteWorkflowError> {
     return yield* this.#owned(
       Effect.gen({ self: this }, function* () {
@@ -202,7 +209,10 @@ export class TeamWebRtcFileTransfer {
           () =>
             Effect.gen({ self: this }, function* () {
               const hash = createHash("sha256");
-              const check = (size: number) => this.#checkOutgoing(peerId, size, pending);
+              const check = (size: number) => {
+                this.#checkAllowed(input);
+                this.#checkOutgoing(peerId, size, pending);
+              };
               yield* remoteCall(() =>
                 pipeline(
                   Readable.from(input.body),
@@ -219,6 +229,7 @@ export class TeamWebRtcFileTransfer {
                 ),
               );
               const size = pending.size;
+              yield* remoteDecode(() => this.#checkAllowed(input));
               const source = yield* remoteCall(() => open(path, "r"));
               file = source;
               // No `await` between this check and `#sendOutgoing`, which adds the transfer: two parallel
@@ -230,6 +241,7 @@ export class TeamWebRtcFileTransfer {
                 mimeType: input.mimeType,
                 size,
                 sha256: hash.digest("hex"),
+                allowed: input.allowed,
                 read: async (offset, length) => {
                   const bytes = new Uint8Array(length);
                   const { bytesRead } = await source.read(bytes, 0, length, offset);
@@ -250,6 +262,10 @@ export class TeamWebRtcFileTransfer {
     );
   }).bind(this);
 
+  #checkAllowed(input: { allowed?: (() => boolean) | undefined }): void {
+    if (input.allowed && !input.allowed()) throw new Error(sourceText("error.remote.peerDisconnected"));
+  }
+
   /** `own` is the stream that asks, so its bytes on disk are not counted twice. */
   #checkOutgoing(peerId: string, size: number, own?: { peerId: string; size: number }): void {
     if (this.#stopped) throw new Error(sourceText("error.remote.fileTransportIsStopped"));
@@ -265,7 +281,7 @@ export class TeamWebRtcFileTransfer {
   readonly #sendOutgoingEffect = Effect.fn("TeamFileTransfer.sendOutgoing")(function* (
     this: TeamWebRtcFileTransfer,
     peerId: string,
-    input: Pick<OutgoingTransfer, "name" | "mimeType" | "size" | "sha256" | "read" | "onProgress">,
+    input: Pick<OutgoingTransfer, "name" | "mimeType" | "size" | "sha256" | "read" | "onProgress" | "allowed">,
   ): Effect.fn.Return<string, RemoteWorkflowError> {
     const transferId = randomUUID();
     const transfer: OutgoingTransfer = {
@@ -281,6 +297,7 @@ export class TeamWebRtcFileTransfer {
       lastProgressAt: Date.now(),
       cancelled: null,
       onProgress: input.onProgress,
+      allowed: input.allowed,
     };
     this.#outgoing.set(transferKey(peerId, transferId), transfer);
     recordRestartActivity();
@@ -730,13 +747,15 @@ export class TeamWebRtcFileTransfer {
     transfer: OutgoingTransfer,
   ): Effect.fn.Return<void, RemoteWorkflowError> {
     while (Date.now() < transfer.lastProgressAt + this.#resumeMilliseconds) {
+      yield* remoteDecode(() => this.#checkAllowed(transfer));
       if (transfer.cancelled) return yield* new RemoteWorkflowError({ cause: transfer.cancelled });
       yield* this.#waitUntilEffect(
-        () => this.#connectedPeers.has(transfer.peerId),
+        () => Boolean(transfer.allowed && !transfer.allowed()) || this.#connectedPeers.has(transfer.peerId),
         transfer.lastProgressAt + this.#resumeMilliseconds,
       );
       const generation = transfer.acknowledgementGeneration;
       const attempt = yield* Effect.gen({ self: this }, function* () {
+        yield* remoteDecode(() => this.#checkAllowed(transfer));
         yield* this.#bridge.send(
           transfer.peerId,
           "files",
@@ -760,6 +779,7 @@ export class TeamWebRtcFileTransfer {
         if (transfer.cancelled) return yield* new RemoteWorkflowError({ cause: transfer.cancelled });
         if (!this.#connectedPeers.has(transfer.peerId)) return false;
         for (let offset = transfer.acknowledged; offset < transfer.size; offset += FILE_CHUNK_BYTES) {
+          yield* remoteDecode(() => this.#checkAllowed(transfer));
           const bytes = yield* remoteCall(() =>
             transfer.read(offset, Math.min(transfer.size, offset + FILE_CHUNK_BYTES) - offset),
           );
@@ -768,8 +788,10 @@ export class TeamWebRtcFileTransfer {
           );
           const transferable = new Uint8Array(chunk.byteLength);
           transferable.set(chunk);
+          yield* remoteDecode(() => this.#checkAllowed(transfer));
           yield* this.#bridge.send(transfer.peerId, "files", transferable.buffer);
         }
+        yield* remoteDecode(() => this.#checkAllowed(transfer));
         yield* this.#bridge.send(
           transfer.peerId,
           "files",
@@ -785,6 +807,7 @@ export class TeamWebRtcFileTransfer {
         if (transfer.cancelled) return yield* new RemoteWorkflowError({ cause: transfer.cancelled });
         return this.#connectedPeers.has(transfer.peerId);
       }).pipe(Effect.result);
+      yield* remoteDecode(() => this.#checkAllowed(transfer));
       if (Result.isSuccess(attempt)) {
         if (attempt.success) return;
         continue;

@@ -97,6 +97,7 @@ export const messages = defineMessages("workflow", {
   "workflow.model.providerModels": "{name} models",
   "workflow.model.effort": "Effort: {name}",
   "workflow.model.effortRange": "{from}–{to}",
+  "workflow.model.auto": "Auto",
 
   "workflow.llm.title": "LLM",
   "workflow.llm.name": "LLM step",
@@ -222,6 +223,8 @@ export const messages = defineMessages("workflow", {
   "workflow.row.whoChooses": "Who chooses",
 
   "workflow.github.repository": "Repository",
+  "workflow.github.repositories": "Repositories",
+  "workflow.github.noEvents": "No events",
   "workflow.github.chooseRepository": "Choose repository",
   "workflow.github.searchRepositories": "Search repositories",
   "workflow.github.events.issues": "Issues",

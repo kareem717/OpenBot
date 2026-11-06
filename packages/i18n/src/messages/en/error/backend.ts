@@ -5,6 +5,8 @@ export const messages = defineMessages("error.backend", {
   "error.backend.databaseIntegrity": "OpenBot database failed its integrity check.",
   "error.backend.webhookRouteLimit": "A host can have at most {limit} webhook routines.",
   "error.backend.webhookSettingsInvalid": "Check the webhook settings and try again.",
+  "error.backend.webhookSenderSecretInvalid":
+    "Paste the complete signing secret from the sender. It has 16 to 1024 characters and no spaces.",
   "error.backend.webhookRouteUnavailable":
     "The public webhook route is not ready. Check the host connection and try again.",
   "error.backend.webhookTestUnavailable":
@@ -57,6 +59,8 @@ export const messages = defineMessages("error.backend", {
   "error.backend.channelLeadModelUnavailable": "The channel lead model is unavailable.",
   "error.backend.contextCompactionIneffective":
     "Compaction does not make this chat smaller: after two compactions it still uses {percent}% of the model's context window, so OpenBot stops compacting it. Tools and instructions use most of the window. Turn off the MCP servers or computer use that this agent does not need, or select a model with a larger window. Then start a new chat.",
+  "error.backend.contextCompactionStopped":
+    "Two compactions of this chat failed in a row, so OpenBot stops compacting it automatically. Each try sends the whole chat to the model and uses your plan limit. Select Compact now to try again, or start a new chat.",
   "error.backend.providerRetrying":
     "The provider failed this request {attempts} times and tries again. If the agent does not continue, stop the turn.",
   "error.backend.providerRetryingLargeContext":
@@ -195,6 +199,10 @@ export const messages = defineMessages("error.backend", {
   "error.backend.agentWaitRemoteUnsupported": "Open waits are only available for agents on this computer.",
   "error.backend.markUnreadRemoteUnsupported":
     "Marking a message unread is only available for agents on this computer.",
+  "error.backend.messageDeleteUnsupported": "Deleting messages is not supported by this server.",
+  "error.backend.messageDeleteNotFound": "This message is not in the chat.",
+  "error.backend.messageDeleteBusy": "This message is part of a running turn. Delete it when the turn ends.",
+  "error.backend.messageDeleteForbidden": "You can delete only the messages that you sent.",
   "error.backend.routineFlowHandoffFailed": "The routine could not pass the work on to this agent.",
   "error.backend.mcpServerLimit": "OpenBot keeps up to {limit} MCP servers.",
   "error.backend.mcpServerNameTaken": "An MCP server named {name} already exists.",
@@ -299,6 +307,16 @@ export const messages = defineMessages("error.backend", {
   "error.backend.browserProfileNameTaken": "A browser profile with this name already exists.",
   "error.backend.browserSessionInUse": "A tab still uses this browser session. Try again.",
   "error.backend.browserProfileLimit": "You can have up to {limit} browser profiles.",
+  "error.backend.browserProxyNotFound": "This proxy no longer exists.",
+  "error.backend.browserProxyAddressInvalid":
+    "Type a proxy address such as socks5://host:1080 or http://user:password@host:3128.",
+  "error.backend.browserProxyLimit": "You can have up to {limit} proxies.",
+  "error.backend.browserProxyTaken": "A proxy with this address already exists.",
+  "error.backend.browserProxyChanged": "This proxy changed after you opened it. Look at it again, then try again.",
+  "error.backend.browserProxyUnreachable": "The proxy {name} does not answer, so the page did not open.",
+  "error.backend.browserProxySignInRefused": "The proxy {name} refused the sign-in, so the page did not open.",
+  "error.backend.browserProxyComputerUnreachable":
+    "The computer that this profile uses does not answer, so the page did not open.",
   "error.backend.browserLowMemory":
     "This server is low on memory, so the browser cannot open another tab. Close a tab, or wait for other agents to finish.",
   "error.backend.browserOpenFailed": "Unable to open {url}: {reason}",

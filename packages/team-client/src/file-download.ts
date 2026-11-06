@@ -1,5 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
+  RPC_JSON_FILE_MAX_BYTES,
+  RPC_JSON_FILE_MIME,
+  rpcJsonFileName,
+} from "@openbot/contracts/team-protocol/rpc-json-files-v1";
+import {
   decodeTeamProtocolV2FileChunk,
   decodeTeamProtocolV2FileControlFrame,
   encodeTeamProtocolV2Frame,
@@ -21,6 +26,7 @@ interface Download {
   complete: boolean;
   /** An allowed larger file. It does not count against the attachment total. */
   allowed: boolean;
+  jsonRequest?: string;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -36,6 +42,7 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
   // Requests that wait for one file larger than an attachment, such as a transfer file. Each one
   // takes the first larger file of its type that fits it, and it ends with its request.
   const allowances = new Set<DownloadAllowance>();
+  const jsonRequests = new Map<string, { progress: () => void; failed: (error: Error) => void }>();
   const waiters = new Map<
     string,
     { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -45,20 +52,26 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
     if (entry) clearTimeout(entry.timer);
     downloads.delete(id);
   }
-  function expire(id: string) {
+  function failDownload(id: string, error: Error) {
+    const entry = downloads.get(id);
+    if (entry?.jsonRequest) jsonRequests.get(entry.jsonRequest)?.failed(error);
     remove(id);
     const waiter = waiters.get(id);
     if (waiter) {
       clearTimeout(waiter.timer);
       waiters.delete(id);
-      waiter.reject(new Error(sourceText("error.remote.downloadTimeout")));
+      waiter.reject(error);
     }
+  }
+  function expire(id: string) {
+    failDownload(id, new Error(sourceText("error.remote.downloadTimeout")));
   }
   function touch(id: string) {
     const entry = downloads.get(id);
     if (entry) {
       clearTimeout(entry.timer);
       entry.timer = setTimeout(() => expire(id), 60_000);
+      if (entry.jsonRequest) jsonRequests.get(entry.jsonRequest)?.progress();
     }
     const waiter = waiters.get(id);
     if (waiter) {
@@ -67,7 +80,7 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
     }
   }
   const sendFrame = (data: string) => send(data).pipe(Effect.mapError(fileTransferError));
-  const take = Effect.fn("RemoteFileReceiver.take")(function* (id: string) {
+  const takeBytes = Effect.fn("RemoteFileReceiver.takeBytes")(function* (id: string) {
     if (!downloads.get(id)?.complete) {
       if (waiters.has(id) || waiters.size >= 10)
         return yield* transferFailure(sourceText("error.remote.tooManyDownloads"));
@@ -88,10 +101,31 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
     const entry = downloads.get(id);
     if (!entry?.complete) return yield* transferFailure(sourceText("error.remote.downloadIncompleteRetry"));
     remove(id);
+    return { name: entry.name, mimeType: entry.mimeType, bytes: entry.bytes };
+  });
+  const take = Effect.fn("RemoteFileReceiver.take")(function* (id: string) {
+    const file = yield* takeBytes(id);
     const parts: string[] = [];
-    for (let offset = 0; offset < entry.bytes.length; offset += 8192)
-      parts.push(String.fromCharCode(...entry.bytes.subarray(offset, offset + 8192)));
-    return { name: entry.name, mimeType: entry.mimeType, base64: btoa(parts.join("")) };
+    for (let offset = 0; offset < file.bytes.length; offset += 8192)
+      parts.push(String.fromCharCode(...file.bytes.subarray(offset, offset + 8192)));
+    return { name: file.name, mimeType: file.mimeType, base64: btoa(parts.join("")) };
+  });
+  const cancelJson = Effect.fn("RemoteFileReceiver.cancelJson")(function* (requestId: string) {
+    const name = rpcJsonFileName(requestId);
+    jsonRequests.delete(name);
+    for (const [id, entry] of downloads) {
+      if (entry.jsonRequest !== name) continue;
+      failDownload(id, new Error(sourceText("error.remote.downloadIncompleteRetry")));
+      if (!entry.complete)
+        yield* sendFrame(
+          encodeTeamProtocolV2Frame({
+            version: 2,
+            type: "file-cancel",
+            transferId: id,
+            reason: "The JSON response request ended.",
+          }),
+        );
+    }
   });
   const receive = Effect.fn("RemoteFileReceiver.receive")(function* (data: string | ArrayBuffer) {
     if (typeof data !== "string") {
@@ -134,24 +168,43 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
       const total = [...downloads.values()]
         .filter((entry) => !entry.allowed)
         .reduce((sum, entry) => sum + entry.bytes.length, 0);
+      const json = frame.mimeType === RPC_JSON_FILE_MIME;
+      const jsonRequest = json ? jsonRequests.get(frame.name) : undefined;
+      const jsonTotal = [...downloads.values()]
+        .filter((entry) => entry.jsonRequest !== undefined)
+        .reduce((sum, entry) => sum + entry.bytes.length, 0);
       const allowance =
-        frame.size > MOBILE_ATTACHMENT_BYTES
+        !json && frame.size > MOBILE_ATTACHMENT_BYTES
           ? [...allowances].find(
               (entry) => !entry.taken && entry.mimeType === frame.mimeType && frame.size <= entry.maxBytes,
             )
           : undefined;
+      const invalidJson =
+        json &&
+        (!jsonRequest ||
+          frame.size < 1 ||
+          frame.size > RPC_JSON_FILE_MAX_BYTES ||
+          jsonTotal + frame.size > RPC_JSON_FILE_MAX_BYTES ||
+          [...downloads.values()].some((entry) => entry.jsonRequest === frame.name));
       if (allowance) allowance.taken = true;
-      else if (
-        frame.size > MOBILE_ATTACHMENT_BYTES ||
-        total + frame.size > MOBILE_ATTACHMENT_BYTES * 2 ||
-        downloads.size >= 10
+      if (
+        (json && downloads.size >= 10) ||
+        invalidJson ||
+        (!json &&
+          !allowance &&
+          (frame.size > MOBILE_ATTACHMENT_BYTES ||
+            total + frame.size > MOBILE_ATTACHMENT_BYTES * 2 ||
+            downloads.size >= 10))
       ) {
+        if (jsonRequest) jsonRequest.failed(new Error(sourceText("error.remote.responseTooLarge")));
         yield* sendFrame(
           encodeTeamProtocolV2Frame({
             version: 2,
             type: "file-cancel",
             transferId: frame.transferId,
-            reason: "Attachments must be 10 MB or smaller. Download fewer files at once.",
+            reason: json
+              ? sourceText("error.remote.responseTooLarge")
+              : "Attachments must be 10 MB or smaller. Download fewer files at once.",
           }),
         );
         return true;
@@ -163,7 +216,8 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
         received: 0,
         digest: frame.sha256,
         complete: false,
-        allowed: allowance !== undefined,
+        allowed: allowance !== undefined || json,
+        ...(json ? { jsonRequest: frame.name } : {}),
         timer: setTimeout(() => expire(frame.transferId), 60_000),
       });
       touch(frame.transferId);
@@ -179,7 +233,7 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
         return yield* transferFailure(sourceText("error.remote.downloadIncomplete"));
       const digest = Array.from(sha256(entry.bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
       if (digest !== entry.digest) {
-        remove(frame.transferId);
+        failDownload(frame.transferId, new Error(sourceText("error.remote.downloadDamaged")));
         return yield* transferFailure(sourceText("error.remote.downloadDamaged"));
       }
       entry.complete = true;
@@ -193,7 +247,10 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
       return true;
     }
     if (frame.type === "file-cancel" && downloads.has(frame.transferId)) {
-      remove(frame.transferId);
+      const entry = downloads.get(frame.transferId);
+      if (entry?.jsonRequest)
+        failDownload(frame.transferId, new Error(sourceText("error.remote.downloadIncompleteRetry")));
+      else remove(frame.transferId);
       return true;
     }
     return false;
@@ -210,7 +267,14 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
         allowances.delete(allowance);
       };
     },
+    expectJson(requestId: string, progress: () => void, failed: (error: Error) => void) {
+      const name = rpcJsonFileName(requestId);
+      if (jsonRequests.has(name)) throw new Error("Repeated JSON response request.");
+      jsonRequests.set(name, { progress, failed });
+    },
+    cancelJson,
     clear() {
+      jsonRequests.clear();
       for (const id of downloads.keys()) remove(id);
       for (const waiter of waiters.values()) {
         clearTimeout(waiter.timer);
@@ -219,6 +283,7 @@ export function createRemoteFileReceiver<E, R>(send: (data: string) => Effect.Ef
       waiters.clear();
     },
     take,
+    takeBytes,
     receive,
   };
 }

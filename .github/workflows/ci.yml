@@ -333,6 +333,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:team-legacy-clients
 
+      - name: Run the chunked JSON response E2E test
+        if: ${{ !cancelled() }}
+        run: bun scripts/rpc-json-files-e2e.ts
+
       - name: Run the Team session revoke and reconnect E2E test
         if: ${{ !cancelled() }}
         run: bun run test:team-session-revoke
@@ -421,6 +425,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:provider-exit-session
 
+      - name: Run the ACP subagent card E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:acp-subagents
+
+      - name: Run the Codex subagent steps E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:codex-subagent-steps
+
+      - name: Run the subagent status and failure alert E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:subagent-status
+
       - name: Run the hung Codex app-server E2E test
         if: ${{ !cancelled() }}
         run: bun run test:codex-hung-app-server
@@ -464,6 +480,14 @@ jobs:
           bun scripts/channel-empty-result-e2e.ts
           bun scripts/channel-notifications-e2e.ts
           bun scripts/live-activity-ice-away-e2e.ts
+
+      - name: Run the agent channel creation E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:agent-channel-create
+
+      - name: Run the agent workflow gate E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:agent-workflow-gate
 
       - name: Run the agent profile accounts E2E test
         if: ${{ !cancelled() }}
@@ -545,6 +569,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:workflow-slack
 
+      - name: Run the workflow agent tools E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:workflow-agent-tools
+
       - name: Run the Discord files to GitHub E2E test
         if: ${{ !cancelled() }}
         run: bun run test:discord-github-files
@@ -556,6 +584,10 @@ jobs:
       - name: Run the Claude API key E2E test
         if: ${{ !cancelled() }}
         run: bun run test:claude-api-key
+
+      - name: Run the Claude stored sign-in E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:claude-stored-sign-in
 
       - name: Run the Cursor usage E2E test
         if: ${{ !cancelled() }}
@@ -573,6 +605,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:agent-api-keys
 
+      - name: Run the remote connect analytics E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:remote-connect-analytics
+
       - name: Upload the reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -580,6 +616,7 @@ jobs:
           name: reverse-actions-e2e
           path: |
             .openbot-build/team-api-legacy-clients-e2e/
+            .openbot-build/rpc-json-files-e2e/
             .openbot-build/team-session-revoke-e2e/
             .openbot-build/sign-in-relay-paste-e2e/
             .openbot-build/sign-in-relay-replay-e2e/
@@ -601,6 +638,9 @@ jobs:
             .openbot-build/provider-update-after-app-upgrade-e2e/
             .openbot-build/provider-runtime-remove-e2e/
             .openbot-build/provider-exit-session-e2e/
+            .openbot-build/acp-subagents-e2e/
+            .openbot-build/codex-subagent-steps-e2e/
+            .openbot-build/subagent-status-e2e/
             .openbot-build/codex-hung-app-server-e2e/
             .openbot-build/codex-missing-rollout-e2e/
             .openbot-build/codex-usage-metering-e2e/
@@ -614,6 +654,9 @@ jobs:
             .openbot-build/channel-empty-result-e2e/
             .openbot-build/channel-notifications-e2e/
             .openbot-build/live-activity-ice-away-e2e/
+
+            .openbot-build/agent-channel-create-e2e/
+            .openbot-build/agent-workflow-gate-e2e/
             .openbot-build/agent-profile-accounts-e2e/
             .openbot-build/browser-profile-agents-e2e/
             .openbot-build/claude-usage-resume-e2e/
@@ -633,19 +676,23 @@ jobs:
             .openbot-build/workflow-discord-e2e/
             .openbot-build/workflow-telegram-e2e/
             .openbot-build/workflow-slack-e2e/
+            .openbot-build/workflow-agent-tools-e2e/
             .openbot-build/discord-github-files-e2e/
             .openbot-build/opencode-usage-metering-e2e/
             .openbot-build/claude-api-key-e2e/
+            .openbot-build/claude-stored-sign-in-e2e/
             .openbot-build/cursor-usage-e2e/
             .openbot-build/opencode-go-usage-e2e/
             .openbot-build/pi-sign-in-watch-e2e/
             .openbot-build/agent-api-keys-e2e/
+            .openbot-build/remote-connect-analytics-e2e/
           if-no-files-found: ignore
 
   provider-fakes-e2e:
     # Runs the real ACP provider drivers (custom agents, OpenCode, Cline) over fake agents from
     # `scripts/provider-fakes/`. The fakes speak ACP on stdio as the released CLIs do, or replay a
     # recorded transcript of a released CLI, so the job needs no provider account, network or display.
+    # It also runs the agent database host start test, which starts the real host with Node.
     name: Provider fakes E2E
     needs: detect
     if: needs.detect.outputs.desktop == 'true'
@@ -704,6 +751,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun run test:acp-turn-stall
 
+      - name: Run the agent database host start E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:agent-database-host-start
+
       - name: Run the ACP instructions once E2E test
         if: ${{ !cancelled() }}
         run: bun run test:acp-instructions-once
@@ -715,6 +766,10 @@ jobs:
       - name: Run the Grok steer E2E test
         if: ${{ !cancelled() }}
         run: bun run test:grok-steer
+
+      - name: Run the Grok partial model list E2E test
+        if: ${{ !cancelled() }}
+        run: bun run test:grok-partial-model-list
 
       - name: Run the Pi steer E2E test
         if: ${{ !cancelled() }}
@@ -781,9 +836,11 @@ jobs:
             .openbot-build/acp-flavor-e2e/
             .openbot-build/acp-mcp-server-names-e2e/
             .openbot-build/acp-turn-stall-e2e/
+            .openbot-build/agent-database-host-start-e2e/
             .openbot-build/acp-instructions-once-e2e/
             .openbot-build/acp-audio-input-e2e/
             .openbot-build/grok-steer-e2e/
+            .openbot-build/grok-partial-model-list-e2e/
             .openbot-build/pi-steer-e2e/
             .openbot-build/muse-instructions-once-e2e/
             .openbot-build/provider-conformance-e2e/

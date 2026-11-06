@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { accountUsageCoversModel } from "@openbot/contracts/agent-providers";
 import { type AgentSummary, isAgentModel, type UsageTokens, WORKFLOWS_USAGE_ID } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger } from "@openbot/logging";
@@ -7,6 +8,7 @@ import type { ProviderSession } from "../database/provider-sessions";
 import { getRecord, getString } from "../protocol";
 
 const logger = createOpenBotLogger("usage-collection");
+const GROK_USD_TICKS = 10_000_000_000;
 
 function count(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -118,7 +120,9 @@ export function collectProviderUsage(
     // OpenCode 1.19 and 2.x send the tokens of this prompt only (`state.usage.turn` starts again for
     // each prompt). `inputTokens` is the uncached input, and each cache and thinking field is left
     // out when it is 0, so a missing one is 0. Reasoning is billed as output. The cost is the
-    // session's total, so its own counter keeps the last one.
+    // session's total, so its own counter keeps the last one. From OpenCode 2.2.0 the cost is what
+    // OpenCode Console charged, and the Go subscription charges $0 for a Go model, so a Go turn has
+    // no API-equivalent cost.
     const output = count(value.outputTokens);
     usage.record({
       agentId: agent.id,
@@ -128,7 +132,7 @@ export function collectProviderUsage(
       model,
       counterId: `${session.id}:opencode:${getString(params, "promptId") ?? turnId}`,
       costCounterId: `${session.id}:opencode:cost`,
-      reportedCost: isDynamicRecord(params) ? cost(params.cost) : null,
+      reportedCost: isDynamicRecord(params) && !accountUsageCoversModel("opencode", model) ? cost(params.cost) : null,
       baseline: false,
       tokens: {
         uncachedInput: count(value.inputTokens),
@@ -136,6 +140,23 @@ export function collectProviderUsage(
         cacheCreation: count(value.cachedWriteTokens ?? 0),
         output: output === null ? null : output + (count(value.thoughtTokens ?? 0) ?? 0),
       },
+    });
+    return;
+  }
+  if (session.provider === "grok") {
+    // Grok CLI 1.0.22 and 1.0.70 send the tokens of this prompt only, with its cost in units of
+    // 10^-10 USD. `inputTokens` include the cache reads and writes, and `outputTokens` the reasoning.
+    const ticks = cost(value.costUsdTicks);
+    usage.record({
+      agentId: agent.id,
+      sessionId: session.id,
+      turnId,
+      provider: session.provider,
+      model,
+      counterId: `${session.id}:grok:${getString(params, "promptId") ?? turnId}`,
+      baseline: false,
+      tokens: acpTokens({ ...value, cachedWriteTokens: value.cacheCreationTokens }),
+      reportedCost: ticks === null ? null : ticks / GROK_USD_TICKS,
     });
     return;
   }

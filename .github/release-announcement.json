@@ -1,10 +1,10 @@
 {
-  "version": "0.60.0",
+  "version": "0.63.0",
   "highlights": [
-    "Talk to your agents from WhatsApp: link a number under Marketplace → Apps → WhatsApp.",
-    "Start a workflow when someone mentions OpenBot in Slack or in a Telegram group, and send its result back there.",
-    "OpenBot is now available in Arabic, with a right-to-left layout.",
-    "Turn models off for each provider, and find the newest models first in the model picker.",
-    "Owners and admins can see an Audit log of member, role and agent access changes in Server settings."
+    "Claude stays signed in after a restart or an update, and Claude agents use less of the 5-hour usage window.",
+    "Choose when the plan card starts a long task by itself, or let it start only when you press Start.",
+    "Choose the provider account when you create an agent.",
+    "The Usage page shows how often your agents load each skill and what it costs.",
+    "Connect Higgsfield in the Marketplace to make images, videos and audio."
   ]
 }

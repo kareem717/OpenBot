@@ -67,6 +67,7 @@ export function conversationThreads(input: ConversationThreadsInput): Conversati
           : ofTaskThread(task, takeovers) !== undefined
             ? "takeover"
             : undefined,
+    unread: (task) => tasks.unreadCount(task),
   };
   const lists = threadLists({ ...listInput, open: tabs.openIds(agentId), draft: tabs.hasDraft(agentId) });
   const activeId = activeThreadId(lists.tabs, tabs.activeId(agentId));
@@ -151,6 +152,7 @@ export function conversationThreads(input: ConversationThreadsInput): Conversati
       onMove: (id, index) => tabs.moveSide(agentId, id, index),
     },
     open,
+    tasks: list,
     limit: snapshot?.limit ?? 1,
     running: list.filter(isAgentTaskActive).length,
     conversation: open ? tasks.conversation(open.id) : undefined,
@@ -175,12 +177,54 @@ export function conversationThreads(input: ConversationThreadsInput): Conversati
     onCompactContext: open && onCompactContext ? () => onCompactContext(open.id) : undefined,
     // Only this computer moves a queued message to a new thread.
     onRunQueuedMessage: tasks.local() ? (deliveryId) => void tabs.runQueuedMessage(agentId, deliveryId) : undefined,
+    queueActions: tasks.queueActions()
+      ? {
+          cancel: (deliveryId) => tasks.cancelQueuedMessage(agentId, deliveryId),
+          steer: (task, deliveryId) => {
+            if (task.activeTurnId) tasks.steerQueuedMessage(agentId, task.id, deliveryId, task.activeTurnId);
+          },
+          reorder: (taskId, deliveryIds) => tasks.reorderQueue(agentId, taskId, deliveryIds),
+        }
+      : undefined,
     onBranch: tasks.canBranch()
       ? (sourceTaskId, messageId) => tabs.branch(agentId, sourceTaskId, messageId)
       : undefined,
+    onDeleteMessage: tasks.canDeleteMessage()
+      ? (taskId, messageId) => tasks.deleteTaskMessage(agentId, taskId, messageId)
+      : undefined,
     branchSource,
+    routineThread: (routineId) => {
+      const task = routineTask(list, routineId);
+      return task ? () => tabs.open(agentId, task.id) : undefined;
+    },
+    onOpenRoutineThread: async (routineId) => {
+      const listed = () => routineTask(tasks.snapshot(agentId)?.tasks ?? [], routineId);
+      if (!listed()) await tasks.loadTasks(agentId);
+      const task = listed();
+      if (task) tabs.open(agentId, task.id);
+      return task !== undefined;
+    },
+    onOpenRoutineRun: async (routineId, messageId) => {
+      // An archived thread of the routine keeps its runs too. `openAt` restores it.
+      const listed = () =>
+        (tasks.snapshot(agentId)?.tasks ?? [])
+          .filter((task) => task.routineId === routineId)
+          .sort((left, right) => Number(left.state === "closed") - Number(right.state === "closed"));
+      if (listed().length === 0) await tasks.loadTasks(agentId);
+      for (const task of listed()) {
+        if (!(await tasks.taskHasMessage(agentId, task.id, messageId))) continue;
+        await tabs.openAt(agentId, task.id, messageId);
+        return true;
+      }
+      return false;
+    },
     focusMessage: focus && list.some((task) => task.id === focus.taskId) ? focus : null,
   };
+}
+
+/** The open side thread where the routine runs. */
+function routineTask(list: readonly AgentTask[], routineId: string): AgentTask | undefined {
+  return list.find((task) => task.routineId === routineId && task.state !== "closed");
 }
 
 type TaskThread = { agentId: string; threadId: string };

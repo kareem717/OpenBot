@@ -16,6 +16,7 @@ import {
   serverCanAdminister,
   serverHasUnlimitedMemoryStorage,
   serverSendsWebhookTests,
+  serverSetsWebhookSenderSecret,
 } from "../servers/server-capabilities";
 import { useServerScope } from "../servers/server-scope";
 import { useServerSettings } from "../servers/server-settings";
@@ -88,6 +89,7 @@ function DesktopChannelConversation(props: { channelId: string; account: () => C
       eventsServerId: () => (serverCanAdminister(activeServer(), "events-v1") ? activeServer()?.id : undefined),
       routineRecovery: () => remoteRoutineRecovery(activeServer()),
       webhookTests: () => serverSendsWebhookTests(activeServer()),
+      webhookSenderSecret: () => serverSetsWebhookSenderSecret(activeServer()),
     },
     approvals,
     takeovers,
@@ -161,6 +163,8 @@ function DesktopChannelConversation(props: { channelId: string; account: () => C
       onCloseBrowserTab={closeBrowserTab}
       onOpenRemoteDesktop={openRemoteDesktopWorkspace}
       onStop={view.onStop}
+      onDeleteMessage={view.deleteMessageAction()}
+      canDeleteMessage={view.canDeleteMessage}
     />
   );
 }

@@ -6,6 +6,7 @@ export const messages = {
   "error.backend.databaseIntegrity": "OpenBot 数据库未通过完整性校验。",
   "error.backend.webhookRouteLimit": "一台主机最多可有 {limit} 个 Webhook 自动化任务。",
   "error.backend.webhookSettingsInvalid": "请检查 Webhook 设置后重试。",
+  "error.backend.webhookSenderSecretInvalid": "请粘贴发送方提供的完整签名密钥。它包含 16 到 1024 个字符，且没有空格。",
   "error.backend.webhookRouteUnavailable": "公共 Webhook 路由尚未就绪。请检查主机连接后重试。",
   "error.backend.webhookTestUnavailable": "主机现在无法接收测试事件。请确认它已登录，然后重试。",
   "error.backend.webhookTestFailed": "测试事件没有送达该自动化任务，请重试。",
@@ -55,6 +56,8 @@ export const messages = {
   "error.backend.channelLeadModelUnavailable": "频道主责模型不可用。",
   "error.backend.contextCompactionIneffective":
     "压缩无法缩小这个聊天：压缩两次后，它仍占用模型上下文窗口的 {percent}%，所以 OpenBot 停止自动压缩。窗口的大部分被工具和指令占用。请关闭这个智能体不需要的 MCP 服务器或电脑操作，或选择窗口更大的模型。然后开始新的聊天。",
+  "error.backend.contextCompactionStopped":
+    "此对话的压缩连续失败了两次，因此 OpenBot 停止自动压缩它。每次尝试都会把整个对话发送给模型，并消耗你的套餐额度。选择“立即压缩”重试，或开始新对话。",
   "error.backend.providerRetrying":
     "提供方已 {attempts} 次未能完成这个请求，正在重试。如果智能体没有继续，请停止本轮。",
   "error.backend.providerRetryingLargeContext":
@@ -182,6 +185,10 @@ export const messages = {
     "只有你自己的自动化任务运行才能唤醒等待，而你还没有自动化任务。请先用 openbot.create_routine 创建一个，再开启等待。",
   "error.backend.agentWaitRemoteUnsupported": "未关闭的等待仅适用于本电脑上的助手。",
   "error.backend.markUnreadRemoteUnsupported": "仅本电脑上的助手可以将消息标为未读。",
+  "error.backend.messageDeleteUnsupported": "此服务器不支持删除消息。",
+  "error.backend.messageDeleteNotFound": "这条消息不在聊天中。",
+  "error.backend.messageDeleteBusy": "这条消息属于正在运行的回合。请在回合结束后删除。",
+  "error.backend.messageDeleteForbidden": "你只能删除自己发送的消息。",
   "error.backend.routineFlowHandoffFailed": "自动化任务无法把工作交给该助手。",
   "error.backend.mcpServerLimit": "OpenBot 最多保留 {limit} 个 MCP 服务器。",
   "error.backend.mcpServerNameTaken": "名为 {name} 的 MCP 服务器已存在。",
@@ -276,6 +283,15 @@ export const messages = {
   "error.backend.browserProfileNameTaken": "已有同名的浏览器配置文件。",
   "error.backend.browserSessionInUse": "仍有标签页在使用该浏览器会话，请重试。",
   "error.backend.browserProfileLimit": "最多可以有 {limit} 个浏览器配置文件。",
+  "error.backend.browserProxyNotFound": "此代理已不存在。",
+  "error.backend.browserProxyAddressInvalid":
+    "请输入代理地址，例如 socks5://host:1080 或 http://user:password@host:3128。",
+  "error.backend.browserProxyLimit": "最多可以有 {limit} 个代理。",
+  "error.backend.browserProxyTaken": "已存在使用此地址的代理。",
+  "error.backend.browserProxyChanged": "此代理在你打开后已被更改。请重新查看，然后再试一次。",
+  "error.backend.browserProxyUnreachable": "代理 {name} 没有响应，因此页面没有打开。",
+  "error.backend.browserProxySignInRefused": "代理 {name} 拒绝了登录，因此页面没有打开。",
+  "error.backend.browserProxyComputerUnreachable": "此配置文件使用的计算机没有响应，因此页面没有打开。",
   "error.backend.browserLowMemory": "该服务器内存不足，浏览器无法再打开标签页。请关闭一个标签页，或等其他助手结束。",
   "error.backend.browserOpenFailed": "无法打开 {url}：{reason}",
   "error.backend.popupSecureInput": "安全输入期间弹窗被阻止。请完成或取消安全输入，再从页面重试。",

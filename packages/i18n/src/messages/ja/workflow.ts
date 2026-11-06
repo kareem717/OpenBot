@@ -98,6 +98,7 @@ export const messages = {
   "workflow.model.providerModels": "{name} のモデル",
   "workflow.model.effort": "推論レベル: {name}",
   "workflow.model.effortRange": "{from}～{to}",
+  "workflow.model.auto": "自動",
 
   "workflow.llm.title": "LLM",
   "workflow.llm.name": "LLM ステップ",
@@ -221,6 +222,8 @@ export const messages = {
   "workflow.row.agentCanChoose": "エージェントの選択肢",
   "workflow.row.whoChooses": "選択者",
   "workflow.github.repository": "リポジトリ",
+  "workflow.github.repositories": "リポジトリ",
+  "workflow.github.noEvents": "イベントなし",
   "workflow.github.chooseRepository": "リポジトリを選択",
   "workflow.github.searchRepositories": "リポジトリを検索",
   "workflow.github.events.issues": "Issue",

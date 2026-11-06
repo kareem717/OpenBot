@@ -83,6 +83,9 @@ const calls: { threadId: string; allowed: boolean }[] = [];
 const activePermissions: (() => boolean)[] = [];
 const unused = () => Effect.die(new Error("The permission fixture must not control a browser page."));
 const browser: AgentBrowserHost = {
+  shareTab: () => {},
+  unshareThread: () => {},
+  agentTab: () => null,
   listTabs: () => [],
   beginTakeover: unused,
   endTakeover: () => {},

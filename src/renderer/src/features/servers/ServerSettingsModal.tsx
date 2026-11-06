@@ -22,7 +22,6 @@ import {
   Blocks,
   Button,
   CalendarClock,
-  ChevronRight,
   Download,
   Globe2,
   HardDrive,
@@ -55,6 +54,7 @@ import { actionToast } from "../../action-toast";
 import { type ServerBrowserProfilesOptions, ServerBrowserProfilesPanel } from "../browser/ServerBrowserProfilesPanel";
 import { type ServerStorageOptions, ServerStoragePanel } from "../files/ServerStoragePanel";
 import { type HostProviderSettings, HostProviderSettingsPanel } from "../settings/ProviderSettingsSection";
+import type { HostDefaultProviderOptions, HostDefaultProviderSource } from "../settings/provider-host-default";
 import type { HostModelVisibilityOptions, ProviderModelVisibilitySource } from "../settings/provider-model-visibility";
 import type { HostPromptCacheTtlOptions, ProviderPromptCacheSource } from "../settings/provider-prompt-cache";
 import { type ServerVaultOptions, ServerVaultPanel } from "../vault/ServerVaultPanel";
@@ -104,6 +104,11 @@ export interface ServerSettingsModalProps {
   license?: Pick<LicenseCalls, "getState" | "setUsers" | "changePlan"> | undefined;
   /** Company sign-in for the owner of a published server. Absent where the app cannot manage it. */
   companySignIn?: CompanySignInCalls | undefined;
+  /**
+   * Opens the desktop app download where `companySignIn` is absent. The owner then sees that setup
+   * needs the desktop app, instead of no section.
+   */
+  onDownloadDesktopApp?: (() => void) | undefined;
   /** Opens the contact page when a full license already has the most users that the app sells. */
   onContactUs?: () => void;
   onUpdateMember: (input: UpdateTeamMemberInput) => Promise<void>;
@@ -215,6 +220,12 @@ export interface ServerSettingsModalProps {
    * local server or a remote host with `model-visibility-v1` that this member administers.
    */
   hostModelVisibility?: HostModelVisibilityOptions | undefined;
+  /**
+   * The Providers section of a remote host with `provider-default-v1` that this member administers
+   * shows the host's Default provider only when a caller supplies this. This computer's comes with
+   * `providers`.
+   */
+  hostDefaultProvider?: HostDefaultProviderOptions | undefined;
   /**
    * The Roles section appears only when a caller supplies this, and only for the local server or a
    * remote host with `agent-access-v1` that this member administers.
@@ -334,6 +345,12 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     if (!options || !actionsAvailable() || !serverCanAdminister(props.server, "model-visibility-v1")) return undefined;
     return { ...options, serverId: props.server.id };
   }
+  function hostDefaultProviderSource(): HostDefaultProviderSource | undefined {
+    const options = props.hostDefaultProvider;
+    if (!options || local() || !actionsAvailable() || !serverCanAdminister(props.server, "provider-default-v1"))
+      return undefined;
+    return { ...options, serverId: props.server.id };
+  }
   const availableInitialSection = (): Section | null =>
     props.initialSection === "updates" && !props.hostUpdate ? null : (props.initialSection ?? null);
   const published = () => (local() ? props.hostStatus?.phase === "online" : props.server.state === "online");
@@ -387,6 +404,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   const companySignIn = createServerCompanySignInSection(
     host,
     () => props.companySignIn,
+    () => props.onDownloadDesktopApp,
     () => props.open && section() === "members",
   );
   const hostedSites = createSettingsHostedSitesStore(
@@ -536,19 +554,8 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         class="server-settings-modal-shell"
         page={props.page}
         open={props.open}
-        title={
-          <Show when={crumbDetail()} fallback={t(sections[section()].title)}>
-            {(detail) => (
-              <span class="settings-modal-crumbs">
-                <Button type="button" variant="ghost" class="settings-modal-crumb-parent" onClick={detail().back}>
-                  {t(sections[section()].title)}
-                </Button>
-                <ChevronRight class="settings-modal-crumb-separator" aria-hidden="true" />
-                <span class="settings-modal-crumb-current">{detail().title}</span>
-              </span>
-            )}
-          </Show>
-        }
+        title={t(sections[section()].title)}
+        crumb={crumbDetail()}
         description={t(sections[section()].description)}
         contentKey={`${props.server.id}:${section()}`}
         restoreFocusTarget={props.restoreFocusTarget}
@@ -866,6 +873,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   onDetailChange={setProviderDetail}
                   promptCache={promptCacheSource()}
                   modelVisibility={modelVisibilitySource()}
+                  hostDefaultProvider={hostDefaultProviderSource()}
                 />
               )}
             </Show>

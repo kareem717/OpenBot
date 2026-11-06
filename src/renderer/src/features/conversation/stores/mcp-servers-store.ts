@@ -24,23 +24,24 @@ export function createMcpServersStore(deps: McpServersStoreDeps) {
   const [mcpServers, setMcpServers] = createSignal<McpServerConfig[]>([]);
   let request = 0;
   // An agent that saves a server asks for its sign-in with a card, which draws from this list. Each
-  // new card is read again, or the card would wait for the settings to close.
+  // new card, in the chat or in a thread, is read again, or the card would wait for the settings to close.
   const signInCards = createMemo(() => {
-    const ids = deps.props.messages.flatMap((message) =>
-      message.actionMarker?.kind === "mcp-sign-in" ? [message.actionMarker.mcpServerId] : [],
-    );
     const threads = deps.props.threads;
-    const histories = [
+    const threadMessages = [
       threads?.conversation,
-      ...(threads?.side.tabs.map((tab) => threads.side.thread(tab.id)?.conversation) ?? []),
-    ];
-    for (const history of histories) {
-      for (const message of history?.messages ?? []) {
-        const event = mcpSignInEvent(message);
-        if (event) ids.push(event.mcpServerId);
-      }
-    }
-    return ids.join(",");
+      ...(threads?.side.tabs ?? []).map((tab) => threads?.side.thread(tab.id)?.conversation),
+    ].flatMap((conversation) => conversation?.messages ?? []);
+    // Sorted and without repeats, so a tab that moves or opens reads nothing again.
+    const ids = new Set([
+      ...deps.props.messages.flatMap((message) =>
+        message.actionMarker?.kind === "mcp-sign-in" ? [message.actionMarker.mcpServerId] : [],
+      ),
+      ...threadMessages.flatMap((message) => {
+        const signIn = mcpSignInEvent(message);
+        return signIn ? [signIn.mcpServerId] : [];
+      }),
+    ]);
+    return [...ids].sort().join(",");
   });
   const source = createMemo(() => {
     const server = deps.props.server;

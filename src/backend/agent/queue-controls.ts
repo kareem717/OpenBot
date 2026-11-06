@@ -17,7 +17,7 @@ import type { MailboxStore } from "../mailbox-store";
 import { decodeRecordResponse } from "../protocol";
 import type { ConversationRuntime } from "./conversation-runtime";
 import type { CustomEndpoints } from "./custom-endpoints";
-import { agentNamesById, deliveryPromptInput } from "./delivery-content";
+import { agentNamesById, deliveryPromptInput, type TagReferenceSource } from "./delivery-content";
 import { type DrainScheduler, REMOVED_ENDPOINT_MESSAGE } from "./drain-scheduler";
 import type { MailboxSync } from "./mailbox-sync";
 import type { ProviderRuntime } from "./provider-runtime";
@@ -34,6 +34,8 @@ export interface QueueControlsHooks {
   taskThreadId(deliveryId: string): string | null;
   /** An accepted user message releases that turn's browser handoff without accepting it. */
   userMessageSteered(client: AgentClient, agentId: string, threadId: string, turnId: string): void;
+  /** The tabs and threads that a steered message names. `threadId` is the public thread. */
+  tagReferences(agentId: string, threadId: string | null): TagReferenceSource;
 }
 
 export interface QueueControlsOptions {
@@ -210,6 +212,28 @@ export class QueueControls {
       return yield* new QueueOperationFailed({
         cause: new Error(sourceText("error.backend.useChannelTaskControlsWork")),
       });
+    // A side thread orders only its own messages. They take the places that they hold now in the
+    // whole queued order, so the other work of the agent does not move. A message that an editor
+    // holds is not in the order the panel sends, and keeps its place.
+    const { taskId } = input;
+    if (taskId !== undefined) {
+      const thread = new Set(this.#mailbox.laneQueuedIds(input.agentId, taskId));
+      const moved = new Set(input.deliveryIds);
+      // A stale order names a message that left the thread, or leaves out one that is not edited.
+      const left = [...thread].filter((id) => !moved.has(id));
+      if (
+        input.deliveryIds.some((id) => !thread.has(id)) ||
+        left.some((id) => !this.#mailbox.getDelivery(id)?.delivery.editing)
+      )
+        return yield* new QueueOperationFailed({ cause: new Error(sourceText("error.backend.queueOrderStale")) });
+      let next = 0;
+      const order = this.#mailbox
+        .queuedDeliveryIds(input.agentId)
+        .map((id) => (moved.has(id) ? (input.deliveryIds[next++] ?? id) : id));
+      yield* this.#mailbox.reorderQueue(input.agentId, order).pipe(toQueueOperationFailed);
+      this.#mailboxSync.emitQueue(input.agentId);
+      return;
+    }
     // The queue the user reads holds no channel or messaging work, so the order it sends names the
     // normal messages alone, and the mailbox reads the whole queued order. That work stays at the
     // head: it reserved the agent before these messages arrived.
@@ -222,13 +246,17 @@ export class QueueControls {
 
   readonly steer = Effect.fn("QueueControls.steer")(function* (this: QueueControls, input: SteerQueuedMessageInput) {
     const agent = yield* this.#store.existing(input.agentId).pipe(toQueueOperationFailed);
-    const { client, session, snapshot, context, turnId, taskThreadId } = yield* queueStep(() => {
+    const { client, session, snapshot, context, turnId, routineSession, publicThreadId } = yield* queueStep(() => {
       const client = this.#providers.requireReadyClientForAgent(agent);
       // A task message steers the task's turn, in the task's own provider session.
       const taskThreadId = this.#hooks.taskThreadId(input.deliveryId);
-      const session = taskThreadId
-        ? this.#store.database.activeProviderSession(taskThreadId, agent.provider)?.externalSessionId
-        : this.#store.activeProviderSession(agent.id)?.externalSessionId;
+      const publicThreadId = taskThreadId ?? agent.threadId;
+      const routineSession = publicThreadId ? this.#conversation.routineSession(agent.id, publicThreadId) : undefined;
+      const session =
+        routineSession ??
+        (taskThreadId
+          ? this.#store.database.activeProviderSession(taskThreadId, agent.provider)?.externalSessionId
+          : this.#store.activeProviderSession(agent.id)?.externalSessionId);
       const snapshot = this.#conversation.ensureSnapshot(agent.id, taskThreadId ?? agent.threadId);
       if (!session || !snapshot.activeTurnId || snapshot.activeTurnId !== input.expectedTurnId)
         throw new Error(sourceText("error.backend.steerTurnChanged"));
@@ -241,11 +269,11 @@ export class QueueControls {
       // Steering uses the running turn's endpoint even when the saved model has changed.
       if (!this.#endpoints.serves(this.#drain.modelForTurn(agent.id, turnId) ?? agent.model, client.provider))
         throw new Error(REMOVED_ENDPOINT_MESSAGE);
-      return { client, session, snapshot, context, turnId, taskThreadId };
+      return { client, session, snapshot, context, turnId, routineSession, publicThreadId };
     });
-    // A routine run in the agent's chat has its own session, which ends with the run. A message
-    // steered into it would not stay in the chat's session, so it waits for the next turn.
-    if (!taskThreadId && this.#conversation.routineSession(agent.id)) {
+    // A routine run has its own session, which ends with the run. A message steered into it would not
+    // stay in the session of its thread, so it waits for the next turn.
+    if (routineSession) {
       yield* this.#mailbox.markSteerFallback(input.deliveryId, "steer-failed").pipe(toQueueOperationFailed);
       this.#mailboxSync.emitQueue(agent.id);
       return yield* new QueueOperationFailed({
@@ -272,6 +300,7 @@ export class QueueControls {
             routineRun:
               context.delivery.sender.kind === "routine" ? this.#routines.runForDelivery(input.deliveryId) : null,
             wokenWaits: context.delivery.sender.kind === "routine" ? this.#routines.wokenWaits(input.deliveryId) : [],
+            tags: this.#hooks.tagReferences(agent.id, publicThreadId),
           }),
         },
         decodeRecordResponse,

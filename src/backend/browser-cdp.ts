@@ -27,6 +27,7 @@ import {
   CARD_SELECT_OPTION_FUNCTION,
   cardFieldAccepts,
   cardFieldText,
+  LOADED_FROM_NETWORK,
   parseCardFieldDescription,
 } from "./browser-card-fill";
 import {
@@ -324,6 +325,11 @@ export class BrowserCdpEngine {
        * `enter` keeps this true until the fill.
        */
       fields: { password: boolean; oneTimeCode: boolean };
+      /**
+       * A service worker handled the page's navigation, so its code could come from Cache Storage. Read
+       * in the automation world. A worker that the page registers and claims later serves no navigation.
+       */
+      servedByWorker: boolean;
     },
     BrowserOperationError
   > {
@@ -395,6 +401,7 @@ export class BrowserCdpEngine {
         // Some authenticator forms omit autocomplete. Accept an explicit code identifier only with
         // a numeric input. The fingerprint includes each attribute used to make this decision.
         const fields = { password: inputs.length > 0, oneTimeCode: inputs.length > 0 };
+        let servedByWorker = false;
         for (const node of inputs) {
           const kind = yield* this.#callOnNode(
             send,
@@ -408,14 +415,15 @@ export class BrowserCdpEngine {
                 && /\\b(?:verification|authentication|mfa|2fa|two factor) (?:code|token|passcode)\\b/.test(identity);
               const code = /\\b(?:otp|totp|authenticator|one time (?:code|password|passcode))\\b/.test(identity) || verification;
               const unspecified = autocomplete.every(value => value === 'off' || value === 'on');
-              return { password: this.type === 'password', oneTimeCode: autocomplete.includes('one-time-code') || (unspecified && this.type !== 'password' && numeric && code) };
+              return { password: this.type === 'password', oneTimeCode: autocomplete.includes('one-time-code') || (unspecified && this.type !== 'password' && numeric && code), network: ${LOADED_FROM_NETWORK} };
             }`,
             [],
           );
           fields.password &&= isDynamicRecord(kind) && kind.password === true;
           fields.oneTimeCode &&= isDynamicRecord(kind) && kind.oneTimeCode === true;
+          servedByWorker ||= !isDynamicRecord(kind) || kind.network !== true;
         }
-        return { inputs, button, fingerprints, fields };
+        return { inputs, button, fingerprints, fields, servedByWorker };
       }),
     );
     if (generation !== this.#navigationGeneration)
@@ -532,7 +540,7 @@ export class BrowserCdpEngine {
           return !recordValue(scan.exceptionDetails) && recordValue(scan.result)?.value === false;
         }),
       ).pipe(Effect.catch(() => Effect.succeed(false)));
-    return { enter, clear, fields: nodes.fields };
+    return { enter, clear, fields: nodes.fields, servedByWorker: nodes.servedByWorker };
   });
 
   /**
@@ -549,7 +557,8 @@ export class BrowserCdpEngine {
     targets: BrowserCardTargets,
     card: VaultCardSecret,
     policy: {
-      checkOrigin: (origin: string) => void;
+      /** `servedByWorker`: a service worker handled the navigation of the field's frame. */
+      checkOrigin: (origin: string, servedByWorker: boolean) => void;
       allowFill: () => Effect.Effect<boolean, BrowserOperationError>;
       onFill: () => void;
     },
@@ -582,7 +591,7 @@ export class BrowserCdpEngine {
           if (!description?.connected)
             return yield* unavailable(field, "is unavailable here. Take a fresh snapshot, or use request_takeover.");
           if (!description.secure) return yield* unavailable(field, "is not in an HTTPS page. Use request_takeover.");
-          yield* browserSync(() => policy.checkOrigin(description.origin));
+          yield* browserSync(() => policy.checkOrigin(description.origin, !description.network));
           if (description.disabled || !cardFieldAccepts(field, description))
             return yield* unavailable(field, "is not an enabled field that takes this value.");
           if (description.sendsGet && (field === "number" || field === "securityCode"))

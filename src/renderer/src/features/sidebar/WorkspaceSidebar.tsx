@@ -95,8 +95,9 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   // The host refuses a member: a hidden agent stops for every member, as a deleted one does.
   const hideAllowed = () =>
     activeServerSupportsCapability(AGENT_HIDDEN_CAPABILITY) && serverRoleCanAdminister(activeServer());
-  const { activeTurns, queues, failedTurns, usageLimits, pendingPrompts, pendingApprovals, approvals } = useTurns();
-  const { unreadReplies, recentReplies, markAllAgentMessagesRead } = useConversation();
+  const { activeTurns, subagentTurns, queues, failedTurns, usageLimits, pendingPrompts, pendingApprovals, approvals } =
+    useTurns();
+  const { agentUnreadReplies, recentReplies, markAllAgentMessagesRead } = useConversation();
   const { directPeople, teamPresence } = usePresence();
   const { activeDirectMember, activeDirectMemberId, directThreads } = useDirectMessages();
   const { selectAgent, selectDirectMember, setGlobalSearchVisibility, chatHistory } = useNavigation();
@@ -112,6 +113,11 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
           if (selectAgent(agentId)) agentThreads.startNew(agentId);
         }
       : undefined;
+  /** What Back opens: the list of an open settings detail page, or else the previous chat. */
+  const backTarget = (): { name: string } | null => {
+    const pageBack = chatHistory.pageBack();
+    return pageBack ? { name: pageBack.name } : chatName(chatHistory.previous());
+  };
   /** The name of a chat as its sidebar row shows it. */
   const chatName = (entry: ChatHistoryEntry | undefined): { name: string } | null => {
     if (!entry) return null;
@@ -200,12 +206,15 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   );
 
   /* The turn events of a side thread reach only its thread list, so an agent that works in a side
-   * thread is found there. */
+   * thread is found there. A subagent that runs on after its turn keeps its agent at work. */
   const workingTurns = createMemo(() => {
     const turns = { ...activeTurns() };
+    const subagents = subagentTurns();
     for (const agent of agentList()) {
       const running = agentTasks.snapshot(agent.id)?.tasks.find((task) => task.state === "running");
       if (running && !turns[agent.id]) turns[agent.id] = running.activeTurnId ?? running.id;
+      const subagentTurn = subagents[agent.id];
+      if (subagentTurn && !turns[agent.id]) turns[agent.id] = subagentTurn;
     }
     return turns;
   });
@@ -281,7 +290,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       agentIds: agentList().map((agent) => agent.id),
       activeTurns: workingTurns(),
       queues: queues(),
-      unreadReplies: unreadReplies(),
+      unreadReplies: agentUnreadReplies(),
       recentReplies: recentReplies(),
       ...sidebarAttention(),
       failedTurns: failedTurns(),
@@ -333,8 +342,9 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
           void channels.markAllRead();
         }}
         hasUnread={
-          agentList().some((agent) => !userHiddenAgentIds().has(agent.id) && (unreadReplies()[agent.id] ?? 0) > 0) ||
-          channels.hasUnread()
+          agentList().some(
+            (agent) => !userHiddenAgentIds().has(agent.id) && (agentUnreadReplies()[agent.id] ?? 0) > 0,
+          ) || channels.hasUnread()
         }
         view={layout.sidebarView()}
         serverName={activeServer()?.name ?? t("sidebar.topbar.localServer")}
@@ -343,7 +353,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
           if (server) openServerSettings(server.id, trigger);
         }}
         chatHistory={{
-          back: chatName(chatHistory.previous()),
+          back: backTarget(),
           forward: chatName(chatHistory.next()),
           keys: chatHistoryKeys(platform.appInfo()?.platform === "darwin"),
           onBack: chatHistory.goBack,
@@ -481,6 +491,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
                 label: t("sidebar.empty.firstAgent"),
                 avatarSeed: agentSetupDraft().avatarSeed,
                 avatarHue: agentSetupDraft().avatarHue,
+                avatarColor: agentSetupDraft().avatarColor ?? null,
                 onSelect: () => {
                   channels.close();
                   openAgentSetup();

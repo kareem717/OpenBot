@@ -5,6 +5,8 @@ import { Button, Spinner, Typography } from "heroui-native";
 import ArrowUp from "lucide-react-native/icons/arrow-up";
 import AudioLines from "lucide-react-native/icons/audio-lines";
 import Blocks from "lucide-react-native/icons/blocks";
+import Globe from "lucide-react-native/icons/globe";
+import Link from "lucide-react-native/icons/link";
 import Mic from "lucide-react-native/icons/mic";
 import MicOff from "lucide-react-native/icons/mic-off";
 import Plus from "lucide-react-native/icons/plus";
@@ -60,6 +62,7 @@ import { useMotionPreference, useReducedMotion } from "@/shared/lib/motion";
 import { isAndroid } from "@/shared/lib/platform";
 import { selectionColorProps } from "@/shared/lib/selection-color";
 import { useText } from "@/shared/lib/text";
+import { END_X, fieldDirectionStyle, layoutDirection, MIRROR_IN_RTL, textDirection } from "@/shared/lib/text-direction";
 import { editMentionDraft, insertMention, mentionDraft, mentionQuery } from "../model/chat-mentions";
 import { applyMarkdownListEdit, markdownListReturn } from "../model/composer-lists";
 import { largePastedText } from "../model/composer-paste";
@@ -151,6 +154,8 @@ interface ChatComposerProps {
   mentionAgents: MobileAgent[];
   /** The skills of the chat's agent and the apps of its server. `@` offers them after the agents. */
   mentionSkills?: readonly MentionSkill[];
+  /** The browser tabs and the open threads of the chat's agent. `@` offers them after the agents. */
+  mentionReferences?: readonly MentionReference[];
   /** A new value writes `@` in the field and offers the skills and apps alone, for the plus menu. */
   skillPickerVersion?: number;
   /** Tells the chat when the `@` list opens and closes, so that a drag in it does not move the keyboard. */
@@ -201,6 +206,7 @@ interface ChatComposerProps {
 
 const NO_FILES: ChatAttachments["items"] = [];
 const NO_SKILLS: readonly MentionSkill[] = [];
+const NO_REFERENCES: readonly MentionReference[] = [];
 
 /**
  * A skill or a connected app that the composer can name, as `@[name](skill:id)` or `@[name](mcp:id)`,
@@ -212,6 +218,28 @@ export interface MentionSkill {
   name: string;
   description: string;
 }
+
+/**
+ * A browser tab or a side thread of the chat's agent, as `@[name](tab:id)` or `@[name](thread:id)`,
+ * the tags the desktop composer writes. The host gives the agent its id and current state when it
+ * delivers the message. `detail` is the site of a tab. `search` is its address, which a query also
+ * matches, as on the desktop.
+ */
+export interface MentionReference {
+  kind: "tab" | "thread";
+  id: string;
+  name: string;
+  detail: string;
+  search: string;
+}
+
+/** The groups of the `@` list after the agents, in the desktop order: tabs and threads, then skills and apps. */
+const TAG_GROUPS = [
+  { kind: "tab", title: "mobile.chat.composer.browserTabs", label: "mobile.chat.composer.browserTab", Icon: Globe },
+  { kind: "thread", title: "mobile.chat.composer.threads", label: "mobile.chat.composer.thread", Icon: Link },
+  { kind: "skill", title: "mobile.chat.composer.skills", label: "mobile.chat.composer.useSkill", Icon: Sparkles },
+  { kind: "mcp", title: "mobile.chat.composer.apps", label: "mobile.chat.composer.useApp", Icon: Blocks },
+] as const;
 
 /** Bars that follow the microphone level, drawn in the listening voice button. */
 function VoiceLevelBars({ level, color }: { level: SharedValue<number>; color: string }) {
@@ -255,6 +283,7 @@ export const ChatComposer = memo(function ChatComposer({
   placeholder,
   mentionAgents,
   mentionSkills = NO_SKILLS,
+  mentionReferences = NO_REFERENCES,
   skillPickerVersion = 0,
   onSuggestionsVisibleChange,
   bottomInset,
@@ -313,6 +342,15 @@ export const ChatComposer = memo(function ChatComposer({
     : [];
   // The limit comes after the rank, so it never cuts an agent whose name matches.
   const suggestions = query && !skillsOnly ? rankAgentMentions(mentionAgents, query.query).slice(0, 8) : [];
+  const referenceSuggestions =
+    query && !skillsOnly
+      ? mentionReferences
+          .filter((reference) =>
+            `${reference.name} ${reference.search}`.toLocaleLowerCase().includes(query.query.trim()),
+          )
+          .slice(0, 8)
+      : [];
+  const tagSuggestions = [...referenceSuggestions, ...skillSuggestions];
   // What the bar has to stay open for. A send takes the text and the files out of
   // the composer at once, so a draft is always a new one.
   const hasDraft = Boolean(draft.trim()) || files.length > 0;
@@ -584,7 +622,7 @@ export const ChatComposer = memo(function ChatComposer({
       transform: [
         // The row scales about its centre, which the dictation mic moves left of the main control. This
         // keeps the main control where a row of the main control alone would put it.
-        { translateX: x + (VOICE_CONTROL_SHIFT_X - x) * voiced + micSlack * (1 - scale) },
+        { translateX: END_X * (x + (VOICE_CONTROL_SHIFT_X - x) * voiced + micSlack * (1 - scale)) },
         { translateY: y + (VOICE_CONTROL_SHIFT_Y - y) * voiced },
         { scale },
       ],
@@ -625,14 +663,14 @@ export const ChatComposer = memo(function ChatComposer({
     const open = voiceSplit.get();
     return {
       opacity: sideOpacity(open),
-      transform: [{ translateX: -VOICE_SIDE_OFFSET * open }, { scale: 0.5 + 0.5 * open }],
+      transform: [{ translateX: -END_X * VOICE_SIDE_OFFSET * open }, { scale: 0.5 + 0.5 * open }],
     };
   });
   const sendSideStyle = useAnimatedStyle(() => {
     const open = voiceSplit.get();
     return {
       opacity: sideOpacity(open),
-      transform: [{ translateX: VOICE_SIDE_OFFSET * open }, { scale: 0.5 + 0.5 * open }],
+      transform: [{ translateX: END_X * VOICE_SIDE_OFFSET * open }, { scale: 0.5 + 0.5 * open }],
     };
   });
   const plusStyle = useAnimatedStyle(() => {
@@ -646,7 +684,7 @@ export const ChatComposer = memo(function ChatComposer({
       transform: [
         // The card centres while it is narrow, so follow its left edge in, and
         // out to it by the same slack the control on the far side takes.
-        { translateX: (cardWidth - width) / 2 - interpolate(progress, [0, 1], [restControlShift, 0]) },
+        { translateX: END_X * ((cardWidth - width) / 2 - interpolate(progress, [0, 1], [restControlShift, 0])) },
         { translateY: interpolate(progress, [0, 1], [restControlOffset, 0]) },
         { scale: interpolate(progress, [0, 1], [REST_CONTROL_SCALE, 1]) },
       ],
@@ -695,15 +733,22 @@ export const ChatComposer = memo(function ChatComposer({
   // truncates instead of starting under a control.
   const openTextOffset = leadingInset - FIELD_INSET;
   const restTextOffset = placeholderWidth > 0 ? restLeadingInset - FIELD_INSET : openTextOffset;
+  // A draft that reads in the other direction than the layout, such as English in Arabic, aligns
+  // to the end of the field, where the controls are. Then the field slides away from the controls,
+  // not from the plus.
+  const fieldOpenOffset =
+    textDirection(displayText, layoutDirection()) === layoutDirection() ? openTextOffset : FIELD_INSET - trailingInset;
   const fieldSlideStyle = useAnimatedStyle(() => ({
     height: fieldHeightValue.get(),
     transform: [
       {
-        translateX: interpolate(
-          expansion.get(),
-          [0, 1],
-          [restTextOffset, interpolate(stackedValue.get(), [0, 1], [openTextOffset, 0])],
-        ),
+        translateX:
+          END_X *
+          interpolate(
+            expansion.get(),
+            [0, 1],
+            [restTextOffset, interpolate(stackedValue.get(), [0, 1], [fieldOpenOffset, 0])],
+          ),
       },
     ],
   }));
@@ -712,11 +757,13 @@ export const ChatComposer = memo(function ChatComposer({
   const placeholderStyle = useAnimatedStyle(() => ({
     transform: [
       {
-        translateX: interpolate(
-          expansion.get(),
-          [0, 1],
-          [restTextOffset, interpolate(stackedValue.get(), [0, 1], [openTextOffset, 0])],
-        ),
+        translateX:
+          END_X *
+          interpolate(
+            expansion.get(),
+            [0, 1],
+            [restTextOffset, interpolate(stackedValue.get(), [0, 1], [openTextOffset, 0])],
+          ),
       },
     ],
   }));
@@ -754,7 +801,7 @@ export const ChatComposer = memo(function ChatComposer({
     }
   }, [disabled, sendGate]);
 
-  const suggestionCount = suggestions.length + skillSuggestions.length;
+  const suggestionCount = suggestions.length + tagSuggestions.length;
   // Android takes the focus from the field when its keyboard hides, which a drag in this list does, and
   // when the plus menu that asks for the skills closes. There the list stays while an `@` query is in
   // the text, and closes with a choice or the end of the query. iOS keeps the field focused for both.
@@ -793,9 +840,10 @@ export const ChatComposer = memo(function ChatComposer({
   const restingPlus = resizes && !hasDraft && !focused && !replyActive;
   const plusDrawn = CONTROL_SIZE * (restingPlus ? REST_CONTROL_SCALE : 1);
   const plusInset = (CONTROL_SIZE - plusDrawn) / 2;
+  // `left` is from the start edge: React Native swaps it in a right-to-left layout.
   const attachmentAnchor = {
     left:
-      insets.left +
+      (END_X === 1 ? insets.left : insets.right) +
       BAR_INSET +
       TOOLBAR_PADDING +
       plusInset +
@@ -926,6 +974,7 @@ export const ChatComposer = memo(function ChatComposer({
                   agentId={agent.id}
                   serverId={agent.serverId}
                   hue={agent.avatarHue}
+                  color={agent.avatarColor}
                   seed={agent.avatarSeed}
                   size={28}
                 />
@@ -934,33 +983,33 @@ export const ChatComposer = memo(function ChatComposer({
                 </Typography.Paragraph>
               </Button>
             ))}
-            {(["skill", "mcp"] as const).map((kind) => {
-              const group = skillSuggestions.filter((tool) => tool.kind === kind);
+            {TAG_GROUPS.map(({ kind, title, label, Icon }, groupIndex) => {
+              const group = tagSuggestions.filter((tag) => tag.kind === kind);
               if (group.length === 0) return null;
               // A heading when the list shows another group above this one.
-              const titled = suggestions.length > 0 || (kind === "mcp" && group.length < skillSuggestions.length);
+              const titled =
+                suggestions.length > 0 ||
+                tagSuggestions.some((tag) => TAG_GROUPS.findIndex((other) => other.kind === tag.kind) < groupIndex);
               return (
                 <View key={kind}>
                   {titled ? (
                     <Typography type="body-xs" className="px-4 pt-2 pb-1 text-muted">
-                      {t(kind === "skill" ? "mobile.chat.composer.skills" : "mobile.chat.composer.apps")}
+                      {t(title)}
                     </Typography>
                   ) : null}
-                  {group.map((tool) => (
+                  {group.map((tag) => (
                     <Button
-                      key={tool.id}
+                      key={tag.id}
                       variant="ghost"
                       className="min-h-12 flex-row justify-start gap-3 rounded-none px-4"
-                      accessibilityLabel={t(
-                        kind === "skill" ? "mobile.chat.composer.useSkill" : "mobile.chat.composer.useApp",
-                        { name: tool.name },
-                      )}
+                      accessibilityLabel={t(label, { name: tag.name })}
                       onPress={() => {
                         void haptics.selection();
-                        const next = insertMention(latestTextRef.current, query, tool, kind);
+                        const next = insertMention(latestTextRef.current, query, tag, kind);
                         latestTextRef.current = next;
                         onChangeDraft(next);
-                        const position = query.start + tool.name.length + 2;
+                        // A tab or a thread reads as its name, with no `@` before it.
+                        const position = query.start + tag.name.length + (kind === "tab" || kind === "thread" ? 1 : 2);
                         setCursor(position);
                         pendingCursor.current = position;
                         setSkillsOnly(false);
@@ -968,15 +1017,16 @@ export const ChatComposer = memo(function ChatComposer({
                       }}
                     >
                       <View className="size-7 items-center justify-center rounded-lg bg-control">
-                        {kind === "skill" ? (
-                          <Sparkles color={String(foreground)} size={16} strokeWidth={1.9} />
-                        ) : (
-                          <Blocks color={String(foreground)} size={16} strokeWidth={1.9} />
-                        )}
+                        <Icon color={String(foreground)} size={16} strokeWidth={1.9} />
                       </View>
                       <Typography.Paragraph numberOfLines={1} className="flex-1">
-                        {tool.name}
+                        {tag.name}
                       </Typography.Paragraph>
+                      {"detail" in tag && tag.detail ? (
+                        <Typography type="body-xs" numberOfLines={1} className="max-w-[40%] text-muted">
+                          {tag.detail}
+                        </Typography>
+                      ) : null}
                     </Button>
                   ))}
                 </View>
@@ -1156,7 +1206,7 @@ export const ChatComposer = memo(function ChatComposer({
                   style={{ position: "absolute", top: 0, left: 0, right: 0 }}
                   onLayout={({ nativeEvent }) => replyRowHeight.set(nativeEvent.layout.height)}
                 >
-                  <Reply color={String(muted)} size={16} />
+                  <Reply color={String(muted)} size={16} style={MIRROR_IN_RTL} />
                   <Typography.Paragraph numberOfLines={1} type="body-sm" className="flex-1 text-text-secondary">
                     {mentionDraft(shownReply.body).text || t("mobile.chat.reply.attachment")}
                   </Typography.Paragraph>
@@ -1254,6 +1304,9 @@ export const ChatComposer = memo(function ChatComposer({
                         lineHeight: 22,
                         paddingVertical: FIELD_VERTICAL_PADDING / 2,
                         textAlignVertical: "top",
+                        // An Android field finds the direction of each paragraph from its text. An
+                        // iOS field reads in the direction of the draft, and of the app when it is empty.
+                        ...fieldDirectionStyle(displayText),
                       }}
                       onSelectionChange={({ nativeEvent }) =>
                         setCursor(

@@ -331,7 +331,7 @@ interface DesktopAnalyticsEvents {
     failure_code?: string;
   };
   connector_action: {
-    connector: "slack" | "discord" | "telegram" | "whatsapp" | "github" | "onepassword" | "bitwarden";
+    connector: "slack" | "discord" | "telegram" | "whatsapp" | "github" | "onepassword" | "bitwarden" | "protonpass";
     action: "connect_started" | "connected" | "disconnected" | "enabled" | "disabled";
     result: AnalyticsResult;
     failure_code?: string;
@@ -528,6 +528,7 @@ const SAFE_FAILURE_CODES = new Set([
   "unknown",
   "unpublish_failed",
   "update_failed",
+  "webhook_route_limit",
   "verification_failed",
   "hosted_site_failed",
   "cancelled",
@@ -679,7 +680,7 @@ const PROPERTY_ENUMS: Readonly<Record<string, readonly string[]>> = {
   outcome: ["completed", "cancelled"],
   step: ["choose", "plan", "computer", "language"],
   path: ["free", "plan"],
-  connector: ["slack", "discord", "telegram", "whatsapp", "github", "onepassword", "bitwarden"],
+  connector: ["slack", "discord", "telegram", "whatsapp", "github", "onepassword", "bitwarden", "protonpass"],
   permission: ["screen-recording", "accessibility"],
   method: ["browser", "code", "api_key"],
   destination: ["discord", "feedback", "guides", "changelog"],
