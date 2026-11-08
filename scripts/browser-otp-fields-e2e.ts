@@ -85,9 +85,11 @@ async function runHarness(): Promise<void> {
     );
     const launcher = join(fixture, "main.cjs");
     await writeFile(launcher, 'void import("./worker.mjs").catch(() => process.exit(1));\n');
+    // CI blocks unprivileged user namespaces. This isolated fixture checks behavior, not the OS sandbox.
+    const flags = process.platform === "linux" ? ["--no-sandbox"] : [];
     const child = spawn(
       electron,
-      [launcher, "--electron-worker", `--fixture-root=${fixture}`, ...(BASELINE ? ["--baseline"] : [])],
+      [...flags, launcher, "--electron-worker", `--fixture-root=${fixture}`, ...(BASELINE ? ["--baseline"] : [])],
       {
         env: withoutElectronRuntimeFlags(process.env),
         stdio: "ignore",
