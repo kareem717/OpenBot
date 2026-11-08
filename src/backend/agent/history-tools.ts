@@ -4,6 +4,7 @@ import { Effect } from "effect";
 import { z } from "zod";
 import type { AgentStore } from "../agent-store";
 import type { ProviderSession } from "../database/provider-sessions";
+import type { HistoryReviewReadInput, HistoryReviewReadPage } from "./history-review-tools";
 import { openBotToolResult } from "./routine-tools";
 import { type ToolOperationFailed, toolStep } from "./tool-operation";
 
@@ -13,14 +14,25 @@ const cursorText = z.string().min(1).max(4096);
 const SEARCH_SCAN_ROWS = 200;
 /** A side thread of the calling agent, in place of the current conversation. The router checks the owner. */
 const taskId = id.optional();
+const reviewSelection = {
+  threadId: id.describe("Owned thread id from history_list, including archived chats.").optional(),
+  includeBeforeReset: z
+    .boolean()
+    .describe("true includes retained messages before context resets for session review.")
+    .optional(),
+  after: z.iso.datetime().describe("Exclusive UTC lower time bound.").optional(),
+  through: z.iso.datetime().describe("Inclusive UTC upper time bound; keep fixed while paging.").optional(),
+};
 const searchShape = {
   taskId,
+  ...reviewSelection,
   query: z.string().trim().min(1).max(200),
   cursor: cursorText.optional(),
   limit: z.number().int().min(1).max(10).optional(),
 };
 const readShape = {
   taskId,
+  ...reviewSelection,
   messageId: id.optional(),
   before: cursorText.optional(),
   offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
@@ -34,6 +46,7 @@ const readSchema = z
   .refine(
     (value) =>
       !(value.messageId && value.before) &&
+      !(value.taskId && value.threadId) &&
       (value.offset === undefined || Boolean(value.messageId)) &&
       (value.workStepsOffset === undefined || Boolean(value.messageId && value.includeWorkSteps)),
   );
@@ -43,19 +56,22 @@ const cursorSchema = z.strictObject({
   resetMessageId: id.nullable(),
   anchorMessageId: id,
   query: z.string().nullable(),
+  includeBeforeReset: z.boolean().optional(),
+  after: z.string().nullable().optional(),
+  through: z.string().nullable().optional(),
 });
 
 export const HISTORY_TOOL_DEFINITIONS = [
   {
     name: "history_search",
     description:
-      "Search this conversation, or your thread by taskId, after its latest reset. Returns bounded excerpts and a cursor; history_read gives omitted text. No other chats or channels.",
+      "Search this conversation or an owned thread from history_list. Defaults to after its latest reset; includeBeforeReset reads retained older sessions. Optional after/through UTC bounds. Returns bounded excerpts and a cursor; history_read gives omitted text. Channels use history_read_channel.",
     shape: searchShape,
   },
   {
     name: "history_read",
     description:
-      "Read this chat, or your thread by taskId, after its latest reset. Read a messageId with offset for large text, or use before from an earlier response for older messages. Optional captured work steps contain no raw reasoning; continue them with workStepsOffset from nextWorkStepsOffset. Channels use channel_history.",
+      "Read this chat, an owned taskId, or a threadId from history_list, including archived chats. Defaults to after its latest reset; includeBeforeReset reads retained older sessions. Keep after/through UTC bounds fixed while paging with before=nextCursor. Read a messageId with offset for large text. Captured work steps contain no raw reasoning; continue them with nextWorkStepsOffset. Channels use history_read_channel.",
     shape: readShape,
   },
 ];
@@ -64,6 +80,7 @@ interface HistoryToolOptions {
   store: AgentStore;
   redact(text: string): string;
   capturedSteps(session: ProviderSession): Effect.Effect<Map<string, string> | null, ToolOperationFailed>;
+  reviewedPage?(agentId: string, threadId: string, input: HistoryReviewReadInput, page: HistoryReviewReadPage): void;
 }
 interface HistoryEntry {
   messageId: string;
@@ -99,12 +116,23 @@ export class HistoryTools {
     const store = this.#options.store;
     const redact = (text: string) => this.#options.redact(redactText(text));
     const query = search?.query;
+    const selected = search ?? read;
+    const includeBeforeReset = selected?.includeBeforeReset ?? false;
+    const after = selected?.after ? new Date(selected.after).toISOString() : null;
+    const through = selected?.through ? new Date(selected.through).toISOString() : null;
     const limit = search?.limit ?? read?.limit ?? (search ? 5 : 10);
     const suppliedCursor = search?.cursor ?? read?.before;
     const cursor = suppliedCursor
       ? yield* toolStep(() => cursorSchema.parse(JSON.parse(Buffer.from(suppliedCursor, "base64url").toString("utf8"))))
       : null;
-    if (cursor && (cursor.threadId !== threadId || cursor.query !== (query ?? null)))
+    if (
+      cursor &&
+      (cursor.threadId !== threadId ||
+        cursor.query !== (query ?? null) ||
+        (cursor.includeBeforeReset ?? false) !== includeBeforeReset ||
+        (cursor.after ?? null) !== after ||
+        (cursor.through ?? null) !== through)
+    )
       throw new Error(sourceText("error.agent.historyUnavailable"));
     // Search matches redacted text in fixed scan batches. A SQL match on stored text would let
     // hits and misses reveal a redacted secret one character at a time.
@@ -113,6 +141,9 @@ export class HistoryTools {
       limit: read?.messageId ? 1 : scanLimit + 1,
       ...(cursor ? { before: cursor.anchorMessageId } : {}),
       ...(read?.messageId ? { messageId: read.messageId } : {}),
+      includeBeforeReset,
+      ...(after ? { after } : {}),
+      ...(through ? { through } : {}),
     };
     const page = yield* toolStep(() => store.database.readAgentHistory(agentId, threadId, selection));
     if (cursor && cursor.resetMessageId !== page.resetMessageId)
@@ -125,6 +156,9 @@ export class HistoryTools {
           resetMessageId: page.resetMessageId,
           anchorMessageId: messageId,
           query: query ?? null,
+          includeBeforeReset,
+          after,
+          through,
         }),
       ).toString("base64url");
     const result: { messages: HistoryEntry[]; nextCursor: string | null; order: string } = {
@@ -215,7 +249,12 @@ export class HistoryTools {
     // File reads yield. Recheck reset and message existence before any content leaves the process.
     for (const entry of result.messages) {
       const checked = yield* toolStep(() =>
-        store.database.readAgentHistory(agentId, threadId, { messageId: entry.messageId, limit: 1 }),
+        store.database.readAgentHistory(agentId, threadId, {
+          ...selection,
+          before: undefined,
+          messageId: entry.messageId,
+          limit: 1,
+        }),
       );
       if (
         checked.resetMessageId !== page.resetMessageId ||
@@ -227,6 +266,7 @@ export class HistoryTools {
     }
     if (JSON.stringify(openBotToolResult(result)).length > maximum)
       throw new Error(sourceText("error.agent.historyUnavailable"));
+    if (read) yield* toolStep(() => this.#options.reviewedPage?.(agentId, threadId, read, result));
     return openBotToolResult(result);
   }).bind(this);
 }

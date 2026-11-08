@@ -88,6 +88,7 @@ import type { ConversationRuntime } from "./conversation-runtime";
 import { handleDataTool } from "./data-tools";
 import { responseAttachmentMessageId, visualReplyFileName, visualReplyMessageId } from "./delivery-content";
 import type { DrainScheduler } from "./drain-scheduler";
+import { HistoryReviewTools } from "./history-review-tools";
 import { HistoryTools } from "./history-tools";
 import type { HostedSiteCoordinator } from "./hosted-site-coordinator";
 import { isHostedSiteMutationTool } from "./hosted-site-events";
@@ -263,6 +264,7 @@ export interface OpenBotToolRouterOptions {
  */
 export class OpenBotToolRouter {
   readonly #history: HistoryTools;
+  readonly #historyReview: HistoryReviewTools;
   readonly #store: AgentStore;
   readonly #mailbox: MailboxStore;
   readonly #mailboxSync: MailboxSync;
@@ -295,10 +297,17 @@ export class OpenBotToolRouter {
   readonly #interruptTool: AgentInterruptTool;
 
   constructor(options: OpenBotToolRouterOptions) {
+    this.#historyReview = new HistoryReviewTools(
+      options.store.database,
+      options.channels.store,
+      options.hooks.redactMcp,
+    );
     this.#history = new HistoryTools({
       store: options.store,
       redact: options.hooks.redactMcp,
       capturedSteps: options.capturedSteps ?? (() => Effect.succeed(null)),
+      reviewedPage: (agentId, threadId, input, page) =>
+        this.#historyReview.recordRead(agentId, `thread:${threadId}`, input, page),
     });
     this.#store = options.store;
     this.#mailbox = options.mailbox;
@@ -416,6 +425,35 @@ export class OpenBotToolRouter {
               params = resolved;
             }
           }
+          if (
+            params.namespace === "openbot" &&
+            ["history_list", "history_read_channel", "history_review"].includes(params.tool)
+          ) {
+            const scope = this.#conversation.historyScope(params.threadId, client);
+            if (
+              !scope ||
+              this.#channels.store.channelForThread(scope.threadId) ||
+              this.#messaging.store.linkForThread(scope.threadId)
+            ) {
+              client.respond(request.id, openBotToolFailure(sourceText("error.agent.historyUnavailable")));
+              return;
+            }
+            const result = yield* this.#historyReview.call(scope.agentId, params.tool, params.arguments).pipe(
+              Effect.catch(() => Effect.succeed(openBotToolFailure(sourceText("error.agent.historyUnavailable")))),
+              Effect.catchDefect(() =>
+                Effect.succeed(openBotToolFailure(sourceText("error.agent.historyUnavailable"))),
+              ),
+            );
+            const currentScope = this.#conversation.historyScope(params.threadId, client);
+            if (!request.signal?.aborted && client.running)
+              client.respond(
+                request.id,
+                currentScope?.agentId === scope.agentId && currentScope.threadId === scope.threadId
+                  ? result
+                  : openBotToolFailure(sourceText("error.agent.historyUnavailable")),
+              );
+            return;
+          }
           if (params.namespace === "openbot" && (params.tool === "history_search" || params.tool === "history_read")) {
             const scope = this.#conversation.historyScope(params.threadId, client);
             if (!scope || this.#channels.store.channelForThread(scope.threadId)) {
@@ -424,12 +462,23 @@ export class OpenBotToolRouter {
             }
             // A taskId reads a side thread of the same agent. A thread of another agent reads as unknown.
             const taskId = isRecord(params.arguments) ? params.arguments.taskId : undefined;
-            const targetThreadId =
-              taskId === undefined
-                ? scope.threadId
-                : typeof taskId === "string" && this.#tasks.has(scope.agentId, taskId)
-                  ? this.#tasks.require(scope.agentId, taskId).threadId
-                  : null;
+            const explicitThread = isRecord(params.arguments) ? params.arguments.threadId : undefined;
+            const externalSelection =
+              (taskId !== undefined || explicitThread !== undefined) &&
+              this.#messaging.store.linkForThread(scope.threadId) !== null;
+            const targetThreadId = externalSelection
+              ? null
+              : explicitThread !== undefined
+                ? typeof explicitThread === "string" &&
+                  taskId === undefined &&
+                  this.#store.database.ownsReviewThread(scope.agentId, explicitThread)
+                  ? explicitThread
+                  : null
+                : taskId === undefined
+                  ? scope.threadId
+                  : typeof taskId === "string" && this.#tasks.has(scope.agentId, taskId)
+                    ? this.#tasks.require(scope.agentId, taskId).threadId
+                    : null;
             if (targetThreadId === null) {
               client.respond(request.id, openBotToolFailure(sourceText("error.backend.threadNotFound")));
               return;

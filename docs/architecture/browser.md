@@ -1,5 +1,36 @@
 # Browser
 
+## Native WebMCP in managed tabs
+
+`BrowserHost` enables the single Blink feature `WebMCP` through its shared managed-tab
+web preferences. Normal views, popup preferences, and restored views use this same
+configuration. The application renderer does not enable this feature. Pages retain
+their own WebMCP access settings. For example, OpenPencil registers tools only after
+the user selects Inspect or Edit in its settings.
+
+This uses Chromium's native `document.modelContext`; it does not install a polyfill,
+enable every experimental feature, disable the sandbox, or expose `window.openbot`
+to websites. Context isolation, web security, navigation policy, permissions, and
+the existing agent tool checks still apply. Page-provided tool metadata and results
+remain untrusted content. Chrome's API changes between versions, so verification uses
+the installed Electron runtime: register with an AbortSignal, discover with `getTools`,
+execute the registered tool, and abort the signal to remove it. Electron 44's Chromium
+152 consumer API accepts a JSON string for the input.
+
+`scripts/browser-agent-session-e2e.ts` runs the real BrowserHost in an isolated Electron
+process, with a temporary profile and loopback fixture. Its report records browser,
+popup, restored-tab, renderer isolation, and existing session-preservation checks.
+
+For authentication, the developer instructions and browser tool guidance distinguish
+codes available through the user's authorized connected mailbox from challenges that
+need the user. A local script reads the authorized source and registers the secret
+through the selected tab's `secretRegistrationUrl` before entry. Secret values remain
+out of script output, chat, shared tables, and literal provider arguments. `fill_fields`
+still rejects authentication fields. A payment confirmation is classified from its
+actual method; an email-code step does not itself require takeover or grant payment
+authorization. Saved-vault restrictions and human-presence challenges retain their
+existing handling.
+
 ## Browser client
 
 `apps/auth-api` serves `/app`. Its lazy route mounts the interactive client after browser startup.

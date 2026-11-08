@@ -82,10 +82,89 @@ history or handoff evidence. A new capture restores work-step access; saved chat
 
 The router requires an exact native-thread binding and the loaded client. It never falls back to
 the personal conversation. Database reads check thread ownership and canonical conversation order.
-The latest context-reset marker excludes earlier messages. Cursors name a stored anchor and the
-current reset; supplied ordering values are not trusted. File reads are followed by another check
-of reset, message existence, and message content. Channel history continues through `channel_history`
-and its assignment checks. Messaging history stays within the current link's execution thread.
+The latest context-reset marker excludes earlier messages by default. An explicit
+`includeBeforeReset: true` reads retained earlier messages for a session review. Cursors bind the
+thread, reset policy, query, and `after`/`through` UTC bounds; supplied ordering values are not trusted.
+File reads are followed by another check of reset, message existence, and message content.
+`threadId` from `history_list` can select another retained thread of the same agent, including an
+archived task. Channel and external-messaging execution threads cannot be selected this way.
+Messaging history stays within the current link's execution thread.
+
+### Paginated session review
+
+`agent/history-review-tools.ts` owns three deferred tools, available through the normal tool
+catalog in an agent's own chat or routine. Channel execution turns and external messaging turns
+cannot enumerate personal history or use the review checkpoint. External messaging turns also
+cannot select a personal thread through `history_read` or `history_search`:
+
+- `history_list` reads up to 25 source records, ordered by stable source key. It includes the
+  caller's retained personal and side threads, plus channels where the caller is currently a
+  member, including archived sources. `nextCursor` continues enumeration without an activity
+  change moving a source behind the cursor. Keep `through` fixed. A resumed review passes its
+  `sourceCursor` as `afterSource`, then uses the returned cursors.
+- `history_read_channel` reads up to ten messages, newest first, without starting a channel task.
+  It checks current membership on every call. Isolated channels appear as metadata with
+  `reviewable: false` and an exclusion reason; their transcript stays in assigned channel work.
+  `beforeSequence: nextCursor` reads the next page;
+  `messageId` and `offset: nextOffset` read the rest of long text. Whole text is redacted before
+  slicing. Output stays bounded and returns the last consumed sequence when a size limit cuts a
+  page. UTC bounds filter messages in SQL before pagination, so an empty time-window page cannot
+  silently skip matching older messages.
+- `history_review` stores one small atomic checkpoint per agent in `history-review-v1` beside the
+  database, without a schema migration. No transcript or proposed memory is stored there.
+  `status` reads progress. `start` begins one full backfill or resumes the active run. The fixed
+  `through` time prevents new messages from extending the backfill. After it completes, `daily`
+  starts at the previous successful `completedThrough` and ends at today's midnight in the
+  requested IANA timezone. A missed day extends the next window instead of losing it. Local
+  midnight uses the timezone offset at that boundary, including daylight saving changes.
+
+The review reads all pages and long-message offsets of a source and proposes useful memory
+changes before calling `checkpoint`. Actual successful, redacted text reads also save observed
+page cursors and unfinished text offsets. A source cannot be completed merely by claiming its
+last cursor is null: the observed read must have exhausted the pages and every long-text offset.
+This evidence survives a process restart. Only reads with the run's exact fixed bounds count;
+thread reads also require `includeBeforeReset: true`. Unread lookahead rows do not count.
+
+An unfinished source stores its acknowledged message cursor and text offset. Only
+`sourceComplete: true` with `nextCursor: null` and complete observed coverage advances the source
+cursor. The next source must match the database's next key, and `complete` refuses a run with
+remaining sources or an unfinished position. Known transition refusals return a safe status and
+resume instruction; parse and storage failures keep their generic failure boundary. Isolated
+channels require an explicit `exclude: true`, count as exclusions rather than reviewed sources,
+and remain listed as coverage gaps in completed state. A repeated backfill start after completion
+does not reset progress.
+
+A source that disappears or whose channel membership is revoked cannot trap the review on an
+old page cursor. State reads, starts, read receipts and checkpoints reconcile pending source ids
+against current eligibility. A vanished or revoked source records a `vanished-or-revoked`
+exclusion and clears only that source's stale acknowledged position and observed evidence. It
+does not advance the cursor or reviewed count, restore deleted text, or bypass membership.
+An unrelated source inserted earlier in the order does not erase still-eligible read evidence.
+Completion also checks observed state, so a vanished final source must be reconciled and recorded
+as an exclusion before the review can finish.
+
+When a message or page anchor is deleted or edited during a review, `restart_source` with the
+current `reviewId` and next eligible `sourceKey` clears that source's acknowledged and observed
+progress. It changes no transcript, source cursor, reviewed count, or completed watermark. The
+caller must read the full currently retained source again before it can be completed. This is a
+bounded recovery operation for stale references; it does not restart the full backfill.
+
+These checks prove returned text coverage, not model comprehension, behavioral improvement, or
+memory persistence. Automatic memory changes can remain staged until the turn ends; a routine
+must verify the committed memory ids on a later turn before reporting them as persisted. The
+existing memory tools still enforce their normal duplicate, user-controlled-memory, and budget
+rules. A read checkpoint must not be described as a successful memory improvement.
+
+The user request or scheduled routine starts the review; these tools do not create another
+scheduler. Existing automatic turn-count memory reviews remain separate. Permanently deleted
+thread and channel messages are purged by the existing deletion operations. They cannot be
+recovered, listed as reviewed, or reconstructed from deletion tombstones. A retained old primary
+thread can be reviewed if it still belongs to the same agent. Hidden or archived UI state does
+not erase its retained messages.
+
+Run `bun scripts/history-review-e2e.ts` for the focused SQLite and tool-handler check. Its report
+in `.openbot-build/history-review-e2e/report.json` records source and message coverage, ownership
+refusals, pre-reset retrieval, long text, restart checkpoints, one-time backfill, and daily bounds.
 
 Claude model and effort changes use its live setters at the next turn, without replacing the
 native session or restarting its query. Standing instruction or access changes retain the existing

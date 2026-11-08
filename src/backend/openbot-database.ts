@@ -213,6 +213,18 @@ export class OpenBotDatabase {
     return this.#agentHistory.read(agentId, threadId, selection);
   }
 
+  ownsReviewThread(agentId: string, threadId: string) {
+    return this.#agentHistory.ownsReviewThread(agentId, threadId);
+  }
+
+  listReviewSources(agentId: string, after: string, through: string, limit: number) {
+    return this.#agentHistory.listReviewSources(agentId, after, through, limit);
+  }
+
+  reviewSourceEligible(agentId: string, sourceKey: string, through: string): boolean {
+    return this.#agentHistory.listReviewSources(agentId, "", through, 1, sourceKey).length > 0;
+  }
+
   readConversationMessages(
     agentId: string,
     threadId: string | null,

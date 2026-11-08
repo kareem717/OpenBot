@@ -325,6 +325,9 @@ interface BrowserConsoleMessageDetails {
 
 const logger = createOpenBotLogger("browser-host");
 const BROWSER_WEB_PREFERENCES = {
+  // Enable only WebMCP in managed website tabs, including popups and restored tabs.
+  // The app renderer keeps its default features and receives no new page privileges.
+  enableBlinkFeatures: "WebMCP",
   sandbox: true,
   contextIsolation: true,
   nodeIntegration: false,

@@ -336,6 +336,13 @@ access, and the reason names the channel (`status.agent.screenCaptureChannel`). 
 still refuse these tools. `history_search`, `history_read` and `start_task` stay refused in a
 channel turn; `channel_history` gives the channel history.
 
+Read-only review of a current-member channel from a personal chat or routine uses
+`history_read_channel`, with a channel id from paginated `history_list`. It uses the same retained
+shared transcript, includes archived channels, and checks membership on each call. This does not
+create an assignment, wake channel members, grant management access, or reveal another agent's
+private execution context. An isolated channel is listed as an explicit coverage exclusion;
+its transcript must be reviewed inside assigned channel work and does not leave the channel.
+
 A hidden lead does not route. When the user hides an agent, `ChannelService.releaseAgent` gives its
 queued and starting assignments back to the channel. The task keeps its owner and gets a new
 revision, so the work continues after restore or after a reassign. When an agent that owns waiting

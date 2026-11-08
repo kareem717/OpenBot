@@ -100,6 +100,14 @@ async function main(): Promise<void> {
     const c = await runCauseEffect(first.open(page("c"), "thread-c", "agent-c"));
     const shared = await runCauseEffect(first.open(page("shared")));
     const side = await runCauseEffect(first.open(page("side-a"), "thread-a-side", "agent-a"));
+    phase("webmcp-check");
+    await checkWebMcp(contentsFor(a.url));
+    recordCases("managed-tab-exposes-native-webmcp-without-node-or-app-bridge");
+    const appWindow = newWindow();
+    await appWindow.loadURL(page("app-control"));
+    assert.equal(await appWindow.webContents.executeJavaScript("typeof document.modelContext"), "undefined");
+    appWindow.destroy();
+    recordCases("webmcp-is-not-enabled-in-app-windows");
     // The last write wins in a session that two tabs share.
     await writeValues(contentsFor(a.url), "a");
     await writeValues(contentsFor(b.url), "b");
@@ -136,8 +144,11 @@ async function main(): Promise<void> {
     const popupUrl = page("popup-a");
     const popupOpened = loadedContents(first, popupUrl);
     await contentsFor(a.url).executeJavaScript(`window.open(${JSON.stringify(popupUrl)}, "_blank"); true`, true);
-    assert.deepEqual(await readValues(await popupOpened), values("a"));
+    const popupContents = await popupOpened;
+    assert.deepEqual(await readValues(popupContents), values("a"));
     recordCases("popup-inherits-opener-session");
+    await checkWebMcp(popupContents);
+    recordCases("popup-exposes-native-webmcp");
 
     phase("restart");
     await runCauseEffect(first.destroy());
@@ -235,6 +246,8 @@ async function main(): Promise<void> {
       return loaded;
     };
     assert.deepEqual(await readValues(await reload(a.id, page("a-restored"))), values("a"));
+    await checkWebMcp(contentsFor(page("a-restored")));
+    recordCases("restored-tab-exposes-native-webmcp");
     assert.deepEqual(await readValues(await reload(b.id, page("b-restored"))), values("b"));
     assert.deepEqual(await readValues(await reload(shared.id, page("shared-restored"))), values("c"));
     recordCases("restored-tabs-keep-session-and-data");
@@ -310,6 +323,37 @@ function newWindow(): BrowserWindow {
     height: 768,
     focusable: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+}
+
+async function checkWebMcp(contents: WebContents): Promise<void> {
+  // Electron reports OS sandbox state on Mac and Windows. Linux has no metric for it.
+  if (process.platform === "darwin" || process.platform === "win32") {
+    const metric = app.getAppMetrics().find((item) => item.pid === contents.getOSProcessId());
+    assert.equal(metric?.sandboxed, true);
+  }
+  const result = await contents.executeJavaScript(`(async () => {
+    const api = document.modelContext;
+    if (!api) return { available: false };
+    const controller = new AbortController();
+    await api.registerTool({
+      name: "openbot_webmcp_fixture",
+      description: "Read the isolated fixture's title",
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ content: [{ type: "text", text: document.title }] })
+    }, { signal: controller.signal });
+    const tool = (await api.getTools()).find(item => item.name === "openbot_webmcp_fixture");
+    const executed = tool && await api.executeTool(tool, "{}");
+    controller.abort();
+    const removed = !(await api.getTools()).some(item => item.name === "openbot_webmcp_fixture");
+    return { available: true, executed: JSON.parse(executed), removed, node: typeof require, bridge: typeof window.openbot };
+  })()`);
+  assert.deepEqual(result, {
+    available: true,
+    executed: { content: [{ type: "text", text: "Fixture" }] },
+    removed: true,
+    node: "undefined",
+    bridge: "undefined",
   });
 }
 
