@@ -109,6 +109,13 @@ builder. Report merge, remote push, VPS deployment and Mac installation separate
 or a deployed repair alone does not complete this workflow. Keep private receipts and credentials
 out of Git. Upstream production deployments and announcements must stay scoped to upstream.
 
+**Upstream overlap check.** Each time you merge upstream, compare the upstream range with the fork's
+additions, including `docs/` and `scripts/hosting/`, and any patch that lives only on the VPS. If
+upstream now has an official version of a fork patch, tell Kareem. State what each version covers
+and what a switch would lose, then ask whether to use upstream's version. Report this in the merge
+result, also when you find no match. Keep the fork patch until Kareem answers. Do not remove it
+because the two look the same.
+
 Do not run broad checks locally. They overload the user's computer. This explicit user preference
 replaces the previous full lint and typecheck defaults. Leave repository-wide lint, aggregate
 `bun run typecheck`, full UI checks, builds, and full test suites to CI. Do not request these checks
