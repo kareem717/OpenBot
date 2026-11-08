@@ -592,6 +592,8 @@ export class BrowserHost {
   /** The last purge of each tainted origin, per session. False when it failed. A fill waits for it. */
   readonly #originPurges = new WeakMap<Session, Map<string, Promise<boolean>>>();
   #persistLock = Semaphore.makeUnsafe(1);
+  /** How far `restore` read the saved tabs. Until it ends, the tabs in memory are not all of them. */
+  #savedTabs: "unread" | "loading" | "loaded" = "unread";
   readonly #scope = Scope.makeUnsafe();
   #destroying: Deferred.Deferred<void, BrowserOperationError> | null = null;
   /** Whether the machine is too low on memory for one more tab. Only a server has a reading. */
@@ -689,8 +691,18 @@ export class BrowserHost {
     this: BrowserHost,
     agents: readonly BrowserTabOwner[] = [],
   ): Effect.fn.Return<void, BrowserOperationError> {
-    const state = yield* readBrowserState(this.#statePath);
-    if (state.tabs.length === 0) return;
+    this.#savedTabs = "loading";
+    const state = yield* readBrowserState(this.#statePath).pipe(
+      Effect.onError(() =>
+        Effect.sync(() => {
+          this.#savedTabs = "unread";
+        }),
+      ),
+    );
+    if (state.tabs.length === 0) {
+      this.#savedTabs = "loaded";
+      return;
+    }
 
     const tabs: BrowserHostTab[] = [];
     for (const saved of state.tabs) {
@@ -724,6 +736,7 @@ export class BrowserHost {
       this.#bindTabEvents(tab);
       tabs.push(tab);
     }
+    this.#savedTabs = "loaded";
     this.#activeTabId = this.#tabs.has(state.activeTabId ?? "") ? state.activeTabId : (tabs[0]?.id ?? null);
     this.#syncAttachedView();
     this.#emitChanged();
@@ -4543,6 +4556,8 @@ export class BrowserHost {
     const saved = [...this.#tabs.values()].filter(
       (tab) => !tab.closing && !tab.contents.isDestroyed() && !tab.privateSession,
     );
+    // A quit during the start must not write an empty or partial list over the saved tabs.
+    if (this.#savedTabs === "loading" || (this.#savedTabs === "unread" && saved.length === 0)) return;
     const state: StoredBrowserStateV2 = {
       version: 2,
       activeTabId: saved.some((tab) => tab.id === this.#activeTabId) ? this.#activeTabId : (saved[0]?.id ?? null),

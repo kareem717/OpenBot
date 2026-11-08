@@ -72,6 +72,7 @@ jobs:
         run: |
           xvfb-run -a bun run test:browser-cdp
           xvfb-run -a bun scripts/browser-smoke.ts --scenario=secret-handoff
+          xvfb-run -a bun scripts/browser-smoke.ts --scenario=saved-tabs
           xvfb-run -a bun scripts/browser-user-control-e2e.ts
       - name: Check connection refresh and cookie redaction
         run: |

@@ -495,7 +495,35 @@ const server = createServer((request, response) => {
     </script>`);
 });
 
+/** A quit during the start comes before the restore, and must keep the saved tabs. */
+async function runSavedTabsScenario(browser: BrowserHost, origin: string, downloadsRoot: string, statePath: string) {
+  const savedIds = async () => {
+    const state: { tabs: { id: string }[] } = JSON.parse(await readFile(statePath, "utf8"));
+    return state.tabs.map((tab) => tab.id);
+  };
+  const { tab } = await openTabWithContents(browser, `${origin}/v2`, "saved-thread", "saved-bot");
+  await runCauseEffect(browser.flushPersistentStorage());
+  if (!(await savedIds()).includes(tab.id)) throw new Error("The open tab was not saved.");
+  const interruptedWindow = new BrowserWindow({ show: false });
+  await runCauseEffect(new BrowserHost(interruptedWindow, downloadsRoot, statePath).destroy());
+  interruptedWindow.destroy();
+  if (!(await savedIds()).includes(tab.id)) throw new Error("A quit before the restore wrote over the saved tabs.");
+  const restoredWindow = new BrowserWindow({ show: false });
+  const restored = new BrowserHost(restoredWindow, downloadsRoot, statePath);
+  await runCauseEffect(restored.restore());
+  if (!restored.listTabs().some((candidate) => candidate.id === tab.id))
+    throw new Error("The saved tab did not come back after the interrupted start.");
+  // After a restore, a person who closes the last tab does save an empty list.
+  await runCauseEffect(restored.close(tab.id));
+  await runCauseEffect(restored.flushPersistentStorage());
+  if ((await savedIds()).length !== 0) throw new Error("The closed tab stayed in the saved list.");
+  await runCauseEffect(restored.destroy());
+  restoredWindow.destroy();
+  await runCauseEffect(browser.close(tab.id));
+}
+
 const SCENARIOS = [
+  "saved-tabs",
   "identity",
   "background",
   "focus",
@@ -604,6 +632,8 @@ async function main(): Promise<void> {
           await runTypingFocusScenario(browser, origin);
         } else if (scenario === "cookie-banner") {
           await runCookieBannerScenario(browser, origin);
+        } else if (scenario === "saved-tabs") {
+          await runSavedTabsScenario(browser, origin, downloadsRoot, statePath);
         } else {
           const { tab, contents } = await openTabWithContents(browser, `${origin}/v2`, "smoke-thread", "smoke-bot");
           try {
