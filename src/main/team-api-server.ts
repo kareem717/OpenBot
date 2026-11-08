@@ -1066,6 +1066,7 @@ export class TeamApiServer {
           mcpServers,
           this.#options.mcpSignIns,
           this.#options.mcpToolRuntimePreparation,
+          mcpServerOwners,
         )) === "handled"
       )
         return;
