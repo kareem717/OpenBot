@@ -98,6 +98,17 @@ Read [docs/i18n.md](docs/i18n.md) before adding a key or a language.
 
 ## Checks
 
+### Fork completion workflow
+
+`origin` is Kareem's fork, `https://github.com/kareem717/OpenBot.git`. `upstream` is
+`https://github.com/nightly-labs/openbot.git`. Confirm the URLs before a push.
+For requested OpenBot work, document the changes, run the focused checks, merge to the fork's
+`main`, push without force, and verify the remote commit. Then deploy the checked application code
+to the configured VPS and the installed Mac app and verify both. Kareem authorizes the Mac as a
+builder. Report merge, remote push, VPS deployment and Mac installation separately. A local commit
+or a deployed repair alone does not complete this workflow. Keep private receipts and credentials
+out of Git. Upstream production deployments and announcements must stay scoped to upstream.
+
 Do not run broad checks locally. They overload the user's computer. This explicit user preference
 replaces the previous full lint and typecheck defaults. Leave repository-wide lint, aggregate
 `bun run typecheck`, full UI checks, builds, and full test suites to CI. Do not request these checks
