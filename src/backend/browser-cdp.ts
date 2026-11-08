@@ -863,6 +863,8 @@ export class BrowserCdpEngine {
           Effect.ensuring(
             Effect.sync(() => {
               this.#switchingNative = false;
+              // A switch that failed before its detach leaves the debugger attached with no user.
+              this.#releaseIdleDebugger();
             }),
           ),
         );
@@ -2191,6 +2193,8 @@ export class BrowserCdpEngine {
 
   #debuggerIdle(): boolean {
     return (
+      // A mode switch sends its last commands after the preview stops, and then detaches by itself.
+      !this.#switchingNative &&
       this.#activeLeases === 0 &&
       this.#externalCdpLeases === 0 &&
       !this.#retainDebugger &&
