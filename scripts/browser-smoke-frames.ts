@@ -22,7 +22,15 @@ export async function waitForPresentedFrame(contents: WebContents, timeoutMs = 6
       )
         .split(" ")
         .map(Number);
-      const size = (await contents.capturePage()).getSize();
+      // A view with no window never answers, so the deadline covers the capture too.
+      const size = (
+        await Promise.race([
+          contents.capturePage(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("The capture did not finish.")), Math.max(0, deadline - Date.now())),
+          ),
+        ])
+      ).getSize();
       last = `${size.width}x${size.height} for a ${width}x${height} viewport at ${ratio}x`;
       if (Math.abs(size.width - width * ratio) <= 1 && Math.abs(size.height - height * ratio) <= 1) return;
     } catch (error) {

@@ -5,7 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserJsonValue } from "@openbot/contracts/ipc";
 import { Effect } from "effect";
-import { webContents } from "electron";
+import { BrowserWindow, webContents } from "electron";
 import { type RawData, WebSocket } from "ws";
 import { z } from "zod";
 import type { BrowserHost } from "../src/backend/browser-host";
@@ -104,10 +104,27 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
   await runCauseEffect(browser.close(seed.id));
   try {
     // The real host and Chromium navigation use an injected OS boundary. No OS input is needed.
+    // Like the real control, it lends the page view to a window: a view with no window has no frame.
+    const nativeWindows = new Map<string, BrowserWindow>();
     browser.setNativeControl({
       ready: () => true,
-      open: () => Effect.void,
-      close: () => Effect.void,
+      open: (tabId, view) =>
+        Effect.sync(() => {
+          const window = new BrowserWindow({ width: 800, height: 600, frame: false });
+          window.contentView.addChildView(view);
+          const { width, height } = window.getContentBounds();
+          view.setBounds({ x: 0, y: 0, width, height });
+          view.setVisible(true);
+          nativeWindows.set(tabId, window);
+        }),
+      close: (tabId) =>
+        Effect.sync(() => {
+          const window = nativeWindows.get(tabId);
+          nativeWindows.delete(tabId);
+          if (!window || window.isDestroyed()) return;
+          for (const child of [...window.contentView.children]) window.contentView.removeChildView(child);
+          window.destroy();
+        }),
       snapshot: () => Effect.die(new Error("This fixture must not capture the OS.")),
       input: () => Effect.die(new Error("This fixture must not send OS input.")),
     });
