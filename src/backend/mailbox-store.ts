@@ -1608,6 +1608,12 @@ export class MailboxStore {
     return delivery && this.#mayStart(delivery) ? this.#context(delivery, undefined, messages) : null;
   }
 
+  /** A background routine at the ready main-lane head yields to channel work; other heads keep their place. */
+  hasQueuedNonRoutine(agentId: string): boolean {
+    const next = this.nextQueued(agentId);
+    return next !== null && next.delivery.sender.kind !== "routine";
+  }
+
   /**
    * The teammate answers that start in the same turn as this delivery. For an answer, these are the
    * other answers to the same request. For a message from the person, these are the answers that

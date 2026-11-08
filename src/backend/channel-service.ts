@@ -2225,8 +2225,20 @@ export class ChannelService {
           task?.state === "queued" &&
           task.revision === assignment.taskRevision &&
           !archived.has(channelId)
-        )
+        ) {
+          // The assignment already holds the agent's main lane. Restore its delivery to the
+          // front as dispatch does, or a preceding normal message waits on this reservation
+          // while this delivery waits behind that message.
+          const queued = this.mailbox.queuedDeliveryIds(assignment.agentId);
+          if (queued[0] !== context.delivery.id)
+            yield* this.mailbox
+              .reorderQueue(assignment.agentId, [
+                context.delivery.id,
+                ...queued.filter((id) => id !== context.delivery.id),
+              ])
+              .pipe(Effect.mapError(channelFailure));
           continue;
+        }
         if (context?.delivery.status === "queued")
           yield* this.mailbox.cancel(assignment.agentId, context.delivery.id).pipe(Effect.mapError(channelFailure));
         if (

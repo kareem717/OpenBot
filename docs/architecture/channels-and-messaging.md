@@ -329,6 +329,22 @@ started with until it ends, and a task with an active assignment starts no secon
 still waits for channel work on all of the host (`hasActiveWork`). These controls do not restrict
 provider process privileges.
 
+A queued background routine does not make the main lane busy for channel dispatch. The ready
+head of the mailbox still holds the channel when it is a person or teammate message. Once an
+assignment reserves the lane, dispatch puts its delivery before queued background work. This
+matches the person-before-routine order of `TurnSlots`; it does not raise the host turn limit.
+A starting or running routine still holds the lane and is never preempted. Queue changes and
+ordinary turn completion wake the waiting channel. Recovery also restores a matching queued
+assignment's delivery to the front: its reservation must not hold a preceding normal message
+while its own delivery waits behind that message. Recovery keeps the existing request, task,
+assignment and delivery ids.
+
+`bun scripts/channel-routine-busy-e2e.ts` drives the real channel routine scheduler, channel
+commands, SQLite projections and mailbox on a temporary profile. It checks queued routine
+priority, active routine serialization, queue and turn-completion wake, durable request replay,
+and recovery of a misplaced reserved delivery. The provider start boundary is observed without
+starting a real account turn. Its report is `.openbot-build/channel-routine-busy-e2e/report.json`.
+
 A channel turn can use `ask_ui`, the plan card (`acknowledge_request`) and `html_render`. The
 question, the card and the visual reply are copied into the channel, so each member who reads the
 channel sees them and can answer. Screen capture in a channel turn always asks, also with Full

@@ -1245,8 +1245,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // resources. A channel turn runs beside the agent's tasks, unless its provider runs one turn
       // of the agent at a time. A delivery of its own chat that starts has no turn ID yet, and it
       // makes the agent busy too: otherwise the assignment waits as "starting" for that turn (#4761).
+      // A queued background routine yields to the channel's user delivery, as in TurnSlots. An
+      // active routine still owns this lane and is never preempted.
       busy: (agentId) =>
-        Boolean(this.#conversation.workingSnapshot(agentId)?.activeTurnId || this.#mailbox.nextQueued(agentId)) ||
+        Boolean(
+          this.#conversation.workingSnapshot(agentId)?.activeTurnId || this.#mailbox.hasQueuedNonRoutine(agentId),
+        ) ||
         this.#mailbox.laneActive(agentId, null) ||
         (this.#tasks.oneTurnAtATime(agentId) &&
           this.#conversation.workingTaskSnapshots(agentId).some((snapshot) => snapshot.activeTurnId)) ||
