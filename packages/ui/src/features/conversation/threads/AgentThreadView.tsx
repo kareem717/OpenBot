@@ -212,6 +212,11 @@ export interface AgentThreadViewProps {
   factsAbove?: ((messageId: string) => AgentStepsFacts | undefined) | undefined;
   /** The steps of the running turn, for its activity row. */
   activeSteps?: readonly AgentStep[] | undefined;
+  /**
+   * The agent's last words in the running turn. While the thread waits for an answer they show as a
+   * message above the card, because the question is often about them, and not in the steps.
+   */
+  activeNarration?: AgentMessage | null | undefined;
   /** The "Show agent steps" setting: the steps are open at first. */
   stepsOpenByDefault?: boolean | undefined;
   /** Receives the message list, where the app searches the thread. */
@@ -485,11 +490,15 @@ export function AgentThreadView(props: AgentThreadViewProps) {
   const failed = () => (props.task?.state === "idle" && props.task.outcome === "failed" ? props.task : undefined);
   const running = () =>
     props.task?.state === "running" && !props.approval && !props.waitsForAnswer ? props.task : undefined;
-  // A request stops the activity line, but its draft and earlier steps must stay available.
-  const waitingSteps = () =>
-    props.task?.state === "running" && (props.approval || props.waitsForAnswer) && props.activeSteps?.length
-      ? props.activeSteps
-      : undefined;
+  const questionContext = () =>
+    props.task?.state === "running" && props.waitsForAnswer ? props.activeNarration : undefined;
+  // A request stops the activity line, but its earlier steps must stay available.
+  const waitingSteps = () => {
+    if (props.task?.state !== "running" || !(props.approval || props.waitsForAnswer)) return undefined;
+    const contextId = questionContext()?.id;
+    const steps = (props.activeSteps ?? []).filter((step) => step.id !== contextId);
+    return steps.length > 0 ? steps : undefined;
+  };
   const queued = () => (props.task && props.task.queuedMessages.length > 0 ? props.task : undefined);
   const hold = () => (props.task ? agentThreadHoldText(props.task, props.limit, t) : null);
   const editingQueued = () => Boolean(props.queue?.editingDeliveryId);
@@ -665,6 +674,29 @@ export function AgentThreadView(props: AgentThreadViewProps) {
             {(steps) => (
               <div class="virtual-chat-row">
                 <AgentStepsDisclosure steps={steps()} defaultOpen={props.stepsOpenByDefault ?? false} />
+              </div>
+            )}
+          </Show>
+          {/* A step of the turn: it keeps no action row or menu, and goes back into the steps after the answer. */}
+          <Show when={questionContext()}>
+            {(context) => (
+              <div class="virtual-chat-row">
+                <ChatMessageRow
+                  message={context()}
+                  author={author(context())}
+                  agents={props.agents}
+                  skills={props.skills}
+                  onSelectAgent={() => undefined}
+                  onOpenTag={props.onOpenTag}
+                  onOpenLink={props.onOpenLink}
+                  onPreview={props.onPreview}
+                  onAttachmentAction={props.onAttachmentAction}
+                  mediaSource={props.mediaSource}
+                  downloads={props.downloads}
+                  onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
+                  macWindowControls={props.macWindowControls}
+                  data-chat-search-message={context().id}
+                />
               </div>
             )}
           </Show>

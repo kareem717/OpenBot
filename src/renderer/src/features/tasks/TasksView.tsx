@@ -782,6 +782,7 @@ export function TasksView(props: TasksViewProps) {
               stepsAbove={turnSteps.stepsAbove}
               factsAbove={turnSteps.factsAbove}
               activeSteps={turnSteps.activeSteps()}
+              activeNarration={turnSteps.activeNarration()}
               stepsOpenByDefault={showAgentSteps()}
               sendShortcut={props.sendShortcut}
             />

@@ -21,7 +21,6 @@ import {
 import { currentText } from "@openbot/ui/text";
 import type { VirtualItem } from "@tanstack/virtual-core";
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
-import { formatMessageTime } from "../../../app-message-projection";
 import { groupAgentMessageMarkers, markOpenAgentMessages } from "../agent-message-timeline";
 import type { ConversationProps, ConversationTarget } from "../conversation-types";
 import { summarizeHostedSiteMessages } from "../hosted-site-timeline";
@@ -34,7 +33,7 @@ import {
   routineRunTurnMessages,
   summarizeRoutineRunMessages,
 } from "../routine-run-timeline";
-import { isTurnAnswer } from "../turn-steps";
+import { isTurnAnswer, lastNarration } from "../turn-steps";
 import { conversationOwnerId } from "./composer-store";
 
 interface ScrollElements {
@@ -369,9 +368,6 @@ export function createScrollStore(deps: ScrollStoreDeps) {
   };
 }
 
-/** The ids Claude and the ACP agents give a turn's thinking, beside its narration, as `REASONING_ID` in the backend. */
-const THINKING_ITEM_ID = /:(?:reasoning|thought(?::\d+)?)$/u;
-
 /**
  * The rows, with the agent's last words before the question that waits as a message at the end of
  * its turn. Those words are narration, which the steps hold, but the question is often about them,
@@ -389,26 +385,4 @@ function withQuestionContext(
   const turnEnd = shown.findLastIndex((message) => message.turnId === turnId) + 1;
   const at = turnEnd > 0 ? turnEnd : shown.length;
   return [...shown.slice(0, at), context, ...shown.slice(at)];
-}
-
-function lastNarration(thinking: AgentMessage): AgentMessage | null {
-  const items = thinking.items ?? [];
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const id = thinking.itemIds?.[index];
-    const body = items[index] ?? "";
-    if (!id || !body.trim() || THINKING_ITEM_ID.test(id)) continue;
-    const createdAt = thinking.itemCreatedAt?.[index];
-    return {
-      id,
-      ...(thinking.turnId === undefined ? {} : { turnId: thinking.turnId }),
-      author: "agent",
-      body,
-      time: createdAt ? formatMessageTime(createdAt) : thinking.time,
-      ...(createdAt ? { createdAt } : {}),
-      // Still a step of the turn: the timeline gives it no stored-message actions.
-      itemType: "commentary",
-      kind: "text",
-    };
-  }
-  return null;
 }

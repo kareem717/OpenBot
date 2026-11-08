@@ -327,6 +327,7 @@ export function ConversationThread() {
             stepsAbove={turnSteps.stepsAbove}
             factsAbove={turnSteps.factsAbove}
             activeSteps={turnSteps.activeSteps()}
+            activeNarration={turnSteps.activeNarration()}
             stepsOpenByDefault={showAgentSteps()}
             sendShortcut={deviceSendShortcut(props.platform)}
             onCopyMessage={(message) => void copyMessage(message)}

@@ -210,6 +210,7 @@ export function ConversationSideThread(props: { threadId: string }) {
             stepsAbove={turnSteps.stepsAbove}
             factsAbove={turnSteps.factsAbove}
             activeSteps={turnSteps.activeSteps()}
+            activeNarration={turnSteps.activeNarration()}
             stepsOpenByDefault={showAgentSteps()}
             onCopyMessage={(message) => void copyMessage(message)}
             copiedMessageId={copiedMessageId()}

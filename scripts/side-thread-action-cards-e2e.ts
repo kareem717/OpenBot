@@ -2,7 +2,7 @@
 // one loopback fixture. No user account, provider, or external sign-in is used.
 // CI: xvfb-run -a bun scripts/side-thread-action-cards-e2e.ts dist/linux-unpacked/openbot
 // Mac: bun scripts/side-thread-action-cards-e2e.ts '/path/OpenBot.app/Contents/MacOS/OpenBot'
-// Also checks live plans, accepted steering, and steps while a side thread waits for input.
+// Also checks live plans, accepted steering, and the draft that shows while a side thread waits for input.
 // Writes .openbot-build/side-thread-action-cards-e2e/report.json and one screenshot.
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -682,16 +682,25 @@ try {
     exact: true,
   });
   await sideHistory.getByText(questionText, { exact: true }).waitFor();
-  const steps = sideHistory.getByRole("button", { name: english("chat.steps.count", { count: 1 }), exact: true });
-  await steps.waitFor();
-  assert.equal(await steps.getAttribute("aria-expanded"), "false", "Pending steps must keep the closed default.");
-  await steps.click();
-  await sideHistory.getByText(questionDraft, { exact: true }).waitFor();
+  // The question is about the draft, so the draft shows as a message: not behind a steps row or in a steps list.
+  const draftShown = sideHistory.getByText(questionDraft, { exact: true });
+  await draftShown.waitFor();
+  assert.equal(await draftShown.count(), 1, "The draft must show once.");
+  assert.equal(
+    await sideHistory.getByRole("region", { name: english("chat.steps.list"), exact: true }).count(),
+    0,
+    "The draft must not be in a steps list.",
+  );
+  assert.equal(
+    await sideHistory.getByRole("button", { name: english("chat.steps.count", { count: 1 }), exact: true }).count(),
+    0,
+    "A draft that shows as a message must not also count as a step.",
+  );
   assert.equal(
     await sideHistory.getByRole("region", { name: english("chat.activity.current"), exact: true }).count(),
     0,
   );
-  check("A pending side-thread question keeps its draft steps available without a working indicator");
+  check("A pending side-thread question shows its draft as a message, without a working indicator");
   await openThread(branchTitle);
   await page
     .getByRole("region", { name: english("conversation.threads.view.label", { title: branchTitle }), exact: true })
@@ -703,9 +712,7 @@ try {
   await waitingAgent.click();
   await sideHistory.getByText(questionText, { exact: true }).waitFor();
   check("The Needs you agent row opens the side thread that waits for input");
-  await steps.waitFor();
-  if ((await steps.getAttribute("aria-expanded")) === "false") await steps.click();
-  await sideHistory.getByText(questionDraft, { exact: true }).waitFor();
+  await draftShown.waitFor();
   const stillWaiting = await readWaitingSide();
   assert.equal(stillWaiting.activeTurnId, waiting.activeTurnId);
   const originalPrompt = waiting.messages.find((message) => message.questionPrompt?.resolution === null);

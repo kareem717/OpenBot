@@ -4,6 +4,7 @@ import type { AgentStep, AgentStepsFacts } from "@openbot/ui/features/conversati
 import { silentAgentAnswer } from "@openbot/ui/features/conversation/new-message-tally";
 import type { TraceSpan } from "@openbot/ui/features/conversation/TraceWaterfall";
 import { createMemo } from "solid-js";
+import { formatMessageTime } from "../../app-message-projection";
 import type { TurnStepLines } from "./turn-step-lines";
 
 const NO_STEPS: AgentStep[] = [];
@@ -161,6 +162,35 @@ export function isTurnAnswer(message: AgentMessage): boolean {
   return message.author === "agent" && message.kind === "text" && !silentAgentAnswer(message);
 }
 
+/** The ids Claude and the ACP agents give a turn's thinking, beside its narration, as `REASONING_ID` in the backend. */
+const THINKING_ITEM_ID = /:(?:reasoning|thought(?::\d+)?)$/u;
+
+/**
+ * The agent's last words of a turn, not its thinking, as a message. The question that waits is often
+ * about them, such as a draft to approve (#4897), so they show as a message while it waits.
+ */
+export function lastNarration(thinking: AgentMessage): AgentMessage | null {
+  const items = thinking.items ?? [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const id = thinking.itemIds?.[index];
+    const body = items[index] ?? "";
+    if (!id || !body.trim() || THINKING_ITEM_ID.test(id)) continue;
+    const createdAt = thinking.itemCreatedAt?.[index];
+    return {
+      id,
+      ...(thinking.turnId === undefined ? {} : { turnId: thinking.turnId }),
+      author: "agent",
+      body,
+      time: createdAt ? formatMessageTime(createdAt) : thinking.time,
+      ...(createdAt ? { createdAt } : {}),
+      // Still a step of the turn: the timeline gives it no stored-message actions.
+      itemType: "commentary",
+      kind: "text",
+    };
+  }
+  return null;
+}
+
 /**
  * The steps of each turn of a chat: its thoughts, the host's progress lines and its memory changes.
  * The thoughts and the memory changes are stored messages; the progress lines are in memory only.
@@ -306,6 +336,12 @@ export function createTurnSteps(deps: {
     activeSteps: createMemo(() => {
       const turnId = deps.activeTurnId();
       return turnId && sources().answers.has(turnId) ? NO_STEPS : stepsOf(turnId);
+    }),
+    /** The last words of the running turn, for a side thread to show while its question waits. */
+    activeNarration: createMemo(() => {
+      const turnId = deps.activeTurnId();
+      const thinking = turnId ? sources().thinking.get(turnId) : undefined;
+      return thinking ? lastNarration(thinking) : null;
     }),
     /**
      * The steps of the channel turns that run, while they have no answer. A channel runs several turns
