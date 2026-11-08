@@ -84,7 +84,7 @@ export const messages = {
   "agentSettings.backupModels.intro":
     "Als {model} de gebruikslimiet bereikt voordat {name} begint te schrijven, vraagt {name} je welk model het moet gebruiken.",
   "agentSettings.backupModels.introAutomatic":
-    "Als {model} de gebruikslimiet bereikt of een fout van de aanbieder geeft voordat {name} begint te schrijven, schakelt {name} over op het eerste beschikbare model in de volgorde.",
+    "Als {model} de gebruikslimiet bereikt, schakelt {name} over op het eerste beschikbare model in de volgorde. {name} schakelt ook over als {model} een fout van de aanbieder geeft voordat {name} begint te schrijven.",
   "agentSettings.backupModels.ask": "Vragen voor overschakelen",
   "agentSettings.backupModels.order": "Volgorde",
   "agentSettings.backupModels.listLabel": "Reservemodellen, op volgorde",
@@ -184,6 +184,15 @@ export const messages = {
     "De agent vergeet deze chat. De berichten blijven zichtbaar boven een scheidingslijn. De instructies, het model, de tools, het geheugen, de werkruimte en de browser veranderen niet.",
   "agentSettings.newChat.confirm": "Nieuwe chat starten",
   "agentSettings.newChat.failed": "Kan geen nieuwe chat starten.",
+  "agentSettings.deleteHistory.title": "Geschiedenis wissen",
+  "agentSettings.deleteHistory.description":
+    "De berichten van deze chat worden gewist en de agent vergeet ze. De instellingen blijven.",
+  "agentSettings.deleteHistory.button": "Wissen",
+  "agentSettings.deleteHistory.confirmTitle": "Chatgeschiedenis met {name} wissen?",
+  "agentSettings.deleteHistory.confirmDescription":
+    "Alle berichten en bestanden van deze chat worden uit OpenBot gewist en de agent vergeet ze. Dit kun je niet ongedaan maken. Zijthreads, instructies, model, tools, herinneringen, werkruimte en browser veranderen niet.",
+  "agentSettings.deleteHistory.confirm": "Geschiedenis wissen",
+  "agentSettings.deleteHistory.failed": "Kan de geschiedenis niet wissen.",
   "agentSettings.fullAccess.title": "Deze agent volledige toegang geven?",
   "agentSettings.fullAccess.askTitle": "Deze agent buiten zijn werkruimte laten werken?",
   "agentSettings.fullAccess.description":

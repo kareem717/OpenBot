@@ -173,6 +173,7 @@ try {
     store,
     redact: (text) => text,
     capturedSteps: () => Effect.succeed(null),
+    recentThreads: () => [],
     reviewedPage: (owner, threadId, input, page) => review.recordRead(owner, `thread:${threadId}`, input, page),
   });
   const call = async <T>(tool: string, args: unknown): Promise<T> =>

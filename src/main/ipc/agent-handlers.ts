@@ -78,6 +78,10 @@ import {
   AGENT_THREAD_FILES_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-thread-files-v1";
 import {
+  AGENT_THREAD_PAGES_CAPABILITY,
+  AGENT_THREAD_PAGES_ROUTES,
+} from "@openbot/contracts/team-protocol/agent-thread-pages-v1";
+import {
   AGENT_THREAD_READS_CAPABILITY,
   AGENT_THREAD_READS_ROUTES,
 } from "@openbot/contracts/team-protocol/agent-thread-reads-v1";
@@ -136,6 +140,7 @@ import {
   decodeRemoteAgentTasks,
   decodeRemoteAgentThreadBranches,
   decodeRemoteTaskConversation,
+  decodeRemoteTaskPage,
   decodeRemoteTaskReadState,
   decodeRemoteTaskReadStates,
   decodeSidebarLayoutSnapshot,
@@ -170,6 +175,7 @@ import {
   parsePasteMessageLink,
   parsePromptResponse,
   parseQueueEdit,
+  parseReadAgentTaskPage,
   parseReadConversationPage,
   parseRenameAgentTask,
   parseReorderQueue,
@@ -554,6 +560,26 @@ export function agentIpcHandlers({
         // The channel editor offers an image only for this computer, so only a programming error gets here.
         remote: () => {
           throw new Error(sourceText("error.team.channelPictureUnsupported"));
+        },
+      }),
+      // Team API has no route for these yet; the channel editor offers them only for this computer.
+      clearChannelContext: scopedHandler(parseChannelId, {
+        local: (channelId) => runCauseEffect(service.clearChannelContext(channelId, host.channelActor())),
+        remote: () => {
+          throw new Error(sourceText("error.team.channelContextUnsupported"));
+        },
+      }),
+      // Only this computer deletes a channel history. Team API has no route for it.
+      deleteChannelHistory: scopedHandler(parseChannelId, {
+        local: (channelId) => runCauseEffect(service.deleteChannelHistory(channelId)),
+        remote: () => {
+          throw new Error(sourceText("error.team.historyDeleteUnsupported"));
+        },
+      }),
+      compactChannelContext: scopedHandler(parseChannelId, {
+        local: (channelId) => runCauseEffect(service.compactChannelContext(channelId)),
+        remote: () => {
+          throw new Error(sourceText("error.team.channelContextUnsupported"));
         },
       }),
       getSidebarLayout: scopedQueryHandler({
@@ -971,6 +997,23 @@ export function agentIpcHandlers({
         remote: (parsed, serverId) =>
           remoteTaskRequest(serverId, AGENT_TASKS_ROUTES.read, decodeRemoteTaskConversation, agentTaskBody(parsed)),
       }),
+      readTaskPage: scopedHandler(parseReadAgentTaskPage, {
+        local: (parsed) => service.readTaskPage(parsed),
+        remote: (parsed, serverId) => {
+          if (!remoteServers.supportsCapability(serverId, AGENT_THREAD_PAGES_CAPABILITY)) taskRemoteUnsupported();
+          return runCauseEffect(
+            remoteServers.request(serverId, AGENT_THREAD_PAGES_ROUTES.readOlder, decodeRemoteTaskPage, {
+              method: "POST",
+              body: {
+                agentId: parsed.agentId,
+                taskId: parsed.taskId,
+                beforeMessageId: parsed.beforeMessageId,
+                limit: parsed.limit,
+              },
+            }),
+          );
+        },
+      }),
       startTask: scopedHandler(parseStartAgentTask, {
         local: (input) => runCauseEffect(service.startTask(input, host.conversationSender())),
         remote: (input, serverId) => {
@@ -1158,6 +1201,13 @@ export function agentIpcHandlers({
               body: { agentId },
             }),
           );
+        },
+      }),
+      // Only this computer deletes an agent's history. Team API has no route for it.
+      deleteHistory: scopedHandler(parseAgentId, {
+        local: (agentId) => runCauseEffect(service.deleteAgentHistory(agentId)),
+        remote: () => {
+          throw new Error(sourceText("error.team.historyDeleteUnsupported"));
         },
       }),
       // A joined server compacts with `context-compact-v1`.

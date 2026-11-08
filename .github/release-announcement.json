@@ -1,10 +1,10 @@
 {
-  "version": "0.63.0",
+  "version": "0.65.0",
   "highlights": [
-    "Claude stays signed in after a restart or an update, and Claude agents use less of the 5-hour usage window.",
-    "Choose when the plan card starts a long task by itself, or let it start only when you press Start.",
-    "Choose the provider account when you create an agent.",
-    "The Usage page shows how often your agents load each skill and what it costs.",
-    "Connect Higgsfield in the Marketplace to make images, videos and audio."
+    "A new Library page shows every picture and file from your chats, with search and filters.",
+    "Agents now use logins that you save in a password manager or the Vault, also after their chat started.",
+    "Read replies aloud with ElevenLabs or xAI, dictate with Groq, and add Mistral as a provider.",
+    "Agents use fewer tokens on most providers, and OpenBot uses less memory for tabs and idle agents.",
+    "Delete the history of a chat or a channel, and open an agent's page as a side panel tab."
   ]
 }

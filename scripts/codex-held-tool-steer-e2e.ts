@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CODEX_DIRECT_ONLY_NAMESPACES, CODEX_FEATURES_CONFIG } from "../src/backend/agent/thread-lifecycle";
-import { VISIBLE_DYNAMIC_TOOLS } from "../src/backend/agent/tool-catalog";
+import { visibleDynamicTools } from "../src/backend/agent/tool-catalog";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { resolveCodexCli } from "../src/backend/cli";
 import { runCauseEffect } from "../src/backend/effect-boundary";
@@ -178,7 +178,7 @@ try {
           ...CODEX_FEATURES_CONFIG,
           "features.code_mode.direct_only_tool_namespaces": CODEX_DIRECT_ONLY_NAMESPACES,
         },
-        dynamicTools: VISIBLE_DYNAMIC_TOOLS,
+        dynamicTools: visibleDynamicTools("codex"),
       },
       decodeRecordResponse,
     ),

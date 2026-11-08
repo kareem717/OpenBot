@@ -45,7 +45,13 @@ import { ComposerReplyPreview } from "@openbot/ui/features/conversation/Composer
 import { ComposerSendControl } from "@openbot/ui/features/conversation/ComposerSendControl";
 import { ContextUsageMeter, type ContextUsageView } from "@openbot/ui/features/conversation/ContextUsage";
 import { ApprovalCard } from "@openbot/ui/features/conversation/ConversationPrompts";
-import { DeleteMessageDialog, MessageActions, MessageMenu } from "@openbot/ui/features/conversation/MessageRendering";
+import {
+  DeleteMessageDialog,
+  MessageActions,
+  MessageMenu,
+  MessageMenuItems,
+  type MessageMenuItemsProps,
+} from "@openbot/ui/features/conversation/MessageRendering";
 import { QueuePanel } from "@openbot/ui/features/conversation/QueuePanel";
 import {
   MessageSelectionActions,
@@ -113,6 +119,13 @@ export interface AgentThreadVoice {
   onFinish: () => void;
   /** Stops the recording and sends the message with its text. */
   onSend: () => void;
+}
+
+/** A thread's messages before the loaded ones, which it reads page by page. */
+export interface AgentThreadOlderMessages {
+  /** A page read is in progress. */
+  loading: boolean;
+  onLoad: () => void;
 }
 
 /** The queue of a thread, with the actions of the queue in the agent's own chat. */
@@ -204,9 +217,17 @@ export interface AgentThreadViewProps {
   waitsForAnswer?: boolean | undefined;
   /** Another card that the thread shows, such as a question or a browser takeover. The app builds it. */
   attention?: JSX.Element | undefined;
+  /**
+   * The thread has messages before the loaded ones. Missing when it has none, when it is not known yet,
+   * or when the server cannot read them.
+   */
+  olderMessages?: AgentThreadOlderMessages | undefined;
   /** The card that the app draws in the place of a message row, such as an MCP sign-in. Undefined keeps the row. */
   messageCard?: ((message: AgentMessage) => JSX.Element | undefined) | undefined;
-  /** The steps of the finished turn above an answer, or undefined for a message that has none. */
+  /**
+   * The steps of the finished turn above an answer, or on the thinking row of a finished turn with no
+   * answer. Undefined for a message that has none.
+   */
   stepsAbove?: ((messageId: string) => AgentStep[] | undefined) | undefined;
   /** The time that the turn of an answer took, and how many of its steps failed. */
   factsAbove?: ((messageId: string) => AgentStepsFacts | undefined) | undefined;
@@ -221,12 +242,19 @@ export interface AgentThreadViewProps {
   stepsOpenByDefault?: boolean | undefined;
   /** Receives the message list, where the app searches the thread. */
   scrollRef?: ((element: HTMLElement) => void) | undefined;
+  /** Whether a long message draws in full, with no fold: the app searches the drawn text of the thread. */
+  showFullMessage?: ((message: AgentMessage) => boolean) | undefined;
   /** The user's send shortcut. Enter when absent. */
   sendShortcut?: SendShortcut | undefined;
   /** Copies a message. Without it, the messages have no action row and no right-click menu. */
   onCopyMessage?: ((message: AgentMessage) => void) | undefined;
-  /** The message that the copy action copied a moment ago. */
+  /** The message that the copy action copied a moment ago. The full action row shows it. */
   copiedMessageId?: string | null | undefined;
+  /**
+   * True (the default) shows Reply and a More button in the action row. False shows Reply, Copy and
+   * Branch in the row, as before.
+   */
+  compactMessageActions?: boolean | undefined;
   /**
    * Copies the thread through an answer into a new thread. Only the last answer of each finished turn
    * offers it. Missing where the host cannot branch.
@@ -288,6 +316,24 @@ export function AgentThreadView(props: AgentThreadViewProps) {
   const otherThreads = createMemo(() => props.threads?.filter((thread) => thread.id !== props.task?.id));
   let scroller: HTMLElement | undefined;
   let atEnd = true;
+  /**
+   * The place of the reader when they asked for older messages: the first message then, and where its
+   * row was. The page goes in above, and the view keeps that row in its place.
+   */
+  let olderAnchor: { firstId: string | undefined; row: Element; top: number } | undefined;
+  function loadOlder(older: AgentThreadOlderMessages): void {
+    const row = scroller?.querySelector(".virtual-chat-row");
+    if (row) olderAnchor = { firstId: props.messages[0]?.id, row, top: row.getBoundingClientRect().top };
+    older.onLoad();
+  }
+  // A read that ends with no new messages leaves no place to keep.
+  createEffect(
+    () => props.olderMessages?.loading === true,
+    (loading) => {
+      if (!loading && olderAnchor && untrack(() => props.messages[0]?.id) === olderAnchor.firstId)
+        olderAnchor = undefined;
+    },
+  );
   let shownTaskId = untrack(() => props.task?.id);
   const activityLabel = nextAgentActivityLabel();
   const fades = createScrollFades();
@@ -318,6 +364,12 @@ export function AgentThreadView(props: AgentThreadViewProps) {
       lastHeight = scrollHeight;
     };
     const follow = new ResizeObserver(() => {
+      const anchor = olderAnchor;
+      if (anchor && untrack(() => props.messages[0]?.id) !== anchor.firstId) {
+        olderAnchor = undefined;
+        element.scrollTop += anchor.row.getBoundingClientRect().top - anchor.top;
+        return;
+      }
       if (atEnd) element.scrollTop = element.scrollHeight;
     });
     follow.observe(list);
@@ -429,46 +481,71 @@ export function AgentThreadView(props: AgentThreadViewProps) {
       avatarSeed: senderId,
     };
   };
-  /** The action row of a message: Reply, Copy, and Branch on the last answer of a finished turn. */
+  /** The items of a message's menu: Reply, Copy, Branch on the last answer of a finished turn, and Delete. */
+  function menuItems(message: AgentMessage, onCopy: (message: AgentMessage) => void): MessageMenuItemsProps {
+    return {
+      message,
+      reactions: false,
+      onReact: () => undefined,
+      onReply: replyAction(message),
+      onCopy: () => onCopy(message),
+      onBranch: branchAction(message),
+      branchDisabled: branchBusy(),
+      onDelete: deleteAction(message),
+    };
+  }
+  /**
+   * The action row of a message. The compact row has Reply, and More with the items of the right-click
+   * menu. The full row has Reply, Copy, and Branch on the last answer of a finished turn.
+   */
   function messageActions(message: AgentMessage): JSX.Element | undefined {
     const onCopy = props.onCopyMessage;
     if (!onCopy || message.streaming) return undefined;
     return (
-      <MessageActions
-        message={message}
-        authorName={author(message).name}
-        reactions={false}
-        pickerOpen={false}
-        expandedEmoji={false}
-        copied={props.copiedMessageId === message.id}
-        onTogglePicker={() => undefined}
-        onExpandEmoji={() => undefined}
-        onReact={() => undefined}
-        onReply={replyAction(message)}
-        onCopy={() => onCopy(message)}
-        onBranch={branchAction(message)}
-        branchDisabled={branchBusy()}
-      />
+      <Show
+        when={props.compactMessageActions !== false}
+        fallback={
+          <MessageActions
+            message={message}
+            authorName={author(message).name}
+            reactions={false}
+            pickerOpen={false}
+            expandedEmoji={false}
+            copied={props.copiedMessageId === message.id}
+            onTogglePicker={() => undefined}
+            onExpandEmoji={() => undefined}
+            onReact={() => undefined}
+            onReply={replyAction(message)}
+            onCopy={() => onCopy(message)}
+            onBranch={branchAction(message)}
+            branchDisabled={branchBusy()}
+          />
+        }
+      >
+        <MessageActions
+          message={message}
+          authorName={author(message).name}
+          reactions={false}
+          pickerOpen={false}
+          expandedEmoji={false}
+          onTogglePicker={() => undefined}
+          onExpandEmoji={() => undefined}
+          onReact={() => undefined}
+          onReply={replyAction(message)}
+          menu={() => <MessageMenuItems {...menuItems(message, onCopy)} />}
+        />
+      </Show>
     );
   }
-  /** The right-click menu of a message, with the actions of its action row. */
+  /** The right-click menu of a message, with the items of its More button. */
   function messageMenu(message: AgentMessage): (() => JSX.Element) | undefined {
     const onCopy = props.onCopyMessage;
     if (!onCopy || message.streaming) return undefined;
-    return () => (
-      <MessageMenu
-        message={message}
-        authorName={author(message).name}
-        reactions={false}
-        onReact={() => undefined}
-        onReply={replyAction(message)}
-        onCopy={() => onCopy(message)}
-        onBranch={branchAction(message)}
-        branchDisabled={branchBusy()}
-        onDelete={deleteAction(message)}
-      />
-    );
+    return () => <MessageMenu {...menuItems(message, onCopy)} authorName={author(message).name} />;
   }
+  /** A finished turn with no answer shows its steps on its thinking row, with no message under them. */
+  const shownRow = (message: AgentMessage) =>
+    shownInThread(message) || (message.kind === "thinking" && props.stepsAbove?.(message.id) !== undefined);
   /**
    * The row that the branch line follows: the last message that the branch copied. That message can be
    * one that the thread does not show as a row, such as a thought in the steps of a turn. Then the line
@@ -477,7 +554,7 @@ export function AgentThreadView(props: AgentThreadViewProps) {
   const branchDividerId = createMemo(() => {
     const source = props.branchSource;
     if (!source) return undefined;
-    const shown = props.messages.filter(shownInThread);
+    const shown = props.messages.filter(shownRow);
     if (shown.some((message) => message.id === source.throughMessageId)) return source.throughMessageId;
     const branchedAt = props.task ? Date.parse(props.task.createdAt) : Number.NaN;
     if (Number.isNaN(branchedAt)) return undefined;
@@ -505,8 +582,9 @@ export function AgentThreadView(props: AgentThreadViewProps) {
   const sendLabel = () =>
     t(recording() ? "composer.send.voice" : editingQueued() ? "composer.send.saveQueued" : "composer.send.message");
   /*
-   * The rows that the queue panel shows. The last row leaves with its animation before the panel
-   * closes, as in the agent's own chat. Another thread does not get the rows of the one before.
+   * The rows that the queue panel shows. When the last message goes, the slot closes at once and keeps
+   * these rows, so the whole panel goes down behind the input in one move, as in the agent's own chat.
+   * Another thread does not get the rows of the one before.
    */
   const [queueRows, setQueueRows] = createSignal<{ taskId: string | undefined; deliveries: QueueDelivery[] }>({
     taskId: undefined,
@@ -516,10 +594,10 @@ export function AgentThreadView(props: AgentThreadViewProps) {
   createEffect(
     () => ({ taskId: props.task?.id, deliveries: props.queue?.deliveries ?? [] }),
     (next) => {
-      if (queueExitTimer !== undefined) window.clearTimeout(queueExitTimer);
-      queueExitTimer = undefined;
       const shown = untrack(queueRows);
       if (next.deliveries.length > 0 || next.taskId !== shown.taskId) {
+        if (queueExitTimer !== undefined) window.clearTimeout(queueExitTimer);
+        queueExitTimer = undefined;
         // Each change of the thread sends its queue again. A row that did not change keeps its object,
         // so the panel does not draw it again and the pointer and the focus stay on it.
         const previous = new Map(shown.deliveries.map((delivery) => [delivery.id, delivery]));
@@ -530,7 +608,9 @@ export function AgentThreadView(props: AgentThreadViewProps) {
         setQueueRows({ taskId: next.taskId, deliveries });
         return;
       }
-      if (shown.deliveries.length === 0) return;
+      // Each change of the thread sends the empty queue again. The panel closes at the end of its
+      // first exit, not after the thread is quiet.
+      if (shown.deliveries.length === 0 || queueExitTimer !== undefined) return;
       queueExitTimer = window.setTimeout(() => {
         queueExitTimer = undefined;
         setQueueRows(next);
@@ -541,6 +621,7 @@ export function AgentThreadView(props: AgentThreadViewProps) {
     if (queueExitTimer !== undefined) window.clearTimeout(queueExitTimer);
   });
   const queuePanelOwner = () => (queueRows().deliveries.length > 0 ? queueRows().taskId : undefined);
+  const queueOpen = () => (props.queue?.deliveries.length ?? 0) > 0 && queueRows().taskId === props.task?.id;
   const hasRow = () =>
     Boolean(props.onRemoveAttachment) &&
     ((props.rowAttachments?.length ?? 0) > 0 || (props.pendingImages?.length ?? 0) > 0);
@@ -583,12 +664,28 @@ export function AgentThreadView(props: AgentThreadViewProps) {
         onScroll={fades.measure}
       >
         <div class="virtual-chat-list virtual-chat-list-static" ref={fades.watch}>
-          <Show when={props.task?.origin === "agent"}>
+          <Show when={props.olderMessages}>
+            {(older) => (
+              <div class="conversation-history-status">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  disabled={older().loading}
+                  onClick={() => loadOlder(older())}
+                >
+                  {older().loading ? t("chat.history.loadingOlder") : t("conversation.threads.view.loadOlder")}
+                </Button>
+              </div>
+            )}
+          </Show>
+          {/* The start of the thread shows once its first message is loaded. */}
+          <Show when={props.task?.origin === "agent" && !props.olderMessages}>
             <p class="agent-thread-origin">
               {t("conversation.threads.view.startedByAgent", { name: props.agent.name })}
             </p>
           </Show>
-          <For each={props.messages.filter(shownInThread)} keyed={(message) => message.id}>
+          <For each={props.messages.filter(shownRow)} keyed={(message) => message.id}>
             {(message) => {
               const card = createMemo(() => props.messageCard?.(message()));
               return (
@@ -602,55 +699,58 @@ export function AgentThreadView(props: AgentThreadViewProps) {
                       />
                     )}
                   </Show>
-                  <Show
-                    when={card()}
-                    fallback={
-                      <Show
-                        when={message().kind === "plan" && message().plan}
-                        fallback={
-                          <Show
-                            when={message().actionMarker && props.actionMarker}
-                            fallback={
-                              <ChatMessageRow
-                                message={message()}
-                                author={author(message())}
-                                agents={props.agents}
-                                skills={props.skills}
-                                onSelectAgent={() => undefined}
-                                onOpenTag={props.onOpenTag}
-                                onOpenLink={props.onOpenLink}
-                                onPreview={props.onPreview}
-                                onAttachmentAction={props.onAttachmentAction}
-                                mediaSource={props.mediaSource}
-                                downloads={props.downloads}
-                                onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
-                                macWindowControls={props.macWindowControls}
-                                referencedMessage={referenced(message())}
-                                onOpenReference={() => {
-                                  const id = message().replyToMessageId;
-                                  if (id) showMessage(id);
-                                }}
-                                actions={messageActions(message())}
-                                menu={messageMenu(message())}
-                                data-chat-search-message={message().id}
-                              />
-                            }
-                          >
-                            {(render) => (
-                              <article data-chat-search-message={message().id}>{render()(message())}</article>
-                            )}
-                          </Show>
-                        }
-                      >
-                        {(plan) => (
-                          <article data-chat-search-message={message().id}>
-                            <ConversationPlan plan={plan()} streaming={message().streaming === true} />
-                          </article>
-                        )}
-                      </Show>
-                    }
-                  >
-                    {card()}
+                  <Show when={message().kind !== "thinking"}>
+                    <Show
+                      when={card()}
+                      fallback={
+                        <Show
+                          when={message().kind === "plan" && message().plan}
+                          fallback={
+                            <Show
+                              when={message().actionMarker && props.actionMarker}
+                              fallback={
+                                <ChatMessageRow
+                                  message={message()}
+                                  author={author(message())}
+                                  showFull={props.showFullMessage?.(message())}
+                                  agents={props.agents}
+                                  skills={props.skills}
+                                  onSelectAgent={() => undefined}
+                                  onOpenTag={props.onOpenTag}
+                                  onOpenLink={props.onOpenLink}
+                                  onPreview={props.onPreview}
+                                  onAttachmentAction={props.onAttachmentAction}
+                                  mediaSource={props.mediaSource}
+                                  downloads={props.downloads}
+                                  onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
+                                  macWindowControls={props.macWindowControls}
+                                  referencedMessage={referenced(message())}
+                                  onOpenReference={() => {
+                                    const id = message().replyToMessageId;
+                                    if (id) showMessage(id);
+                                  }}
+                                  actions={messageActions(message())}
+                                  menu={messageMenu(message())}
+                                  data-chat-search-message={message().id}
+                                />
+                              }
+                            >
+                              {(render) => (
+                                <article data-chat-search-message={message().id}>{render()(message())}</article>
+                              )}
+                            </Show>
+                          }
+                        >
+                          {(plan) => (
+                            <article data-chat-search-message={message().id}>
+                              <ConversationPlan plan={plan()} streaming={message().streaming === true} />
+                            </article>
+                          )}
+                        </Show>
+                      }
+                    >
+                      {card()}
+                    </Show>
                   </Show>
                   <Show when={branchDividerAfter(message().id)}>{(source) => <BranchDivider source={source()} />}</Show>
                 </div>
@@ -761,9 +861,9 @@ export function AgentThreadView(props: AgentThreadViewProps) {
             <div class="composer-stack">
               <div
                 class="agent-queue-slot"
-                data-open={queuePanelOwner() ? "true" : "false"}
-                aria-hidden={queuePanelOwner() ? undefined : "true"}
-                inert={queuePanelOwner() ? undefined : true}
+                data-open={queueOpen() ? "true" : "false"}
+                aria-hidden={queueOpen() ? undefined : "true"}
+                inert={queueOpen() ? undefined : true}
               >
                 <div class="agent-queue-slot-inner">
                   {/* Each thread gets its own panel, so its rows do not animate in from the thread before. */}

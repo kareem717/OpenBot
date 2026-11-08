@@ -1,5 +1,6 @@
 import {
   type AgentEvent,
+  type AgentStepActivity,
   type AgentSummary,
   agentProviderDescriptor,
   type BrowserControlState,
@@ -80,7 +81,9 @@ import {
   isToolItem,
   refusedSessionFailure,
   type ToolUsageSignal,
+  toolActivity,
   toolFailed,
+  toolFailureText,
   toolProgressText,
   toolTraceDetail,
   toolUsage,
@@ -117,6 +120,19 @@ interface HeldProviderError {
   context: FailureContext & { causeCode: CauseCode };
   /** A spent balance or quota: the usage notice explains it, so a turn that does not move shows no banner. */
   quiet?: boolean;
+  /** The Google page where the user fixes the account that failed the turn. */
+  link?: string;
+}
+
+/**
+ * The page that an ACP client names for an account the user must fix (#2419). Only a Google sign-in
+ * page: the error banner opens it, and the other clients pass their provider's fields through.
+ */
+function accountLink(params: unknown): string | undefined {
+  const link = getString(params, "link");
+  if (!link || !URL.canParse(link)) return undefined;
+  const url = new URL(link);
+  return url.protocol === "https:" && url.hostname === "accounts.google.com" ? link : undefined;
 }
 
 export interface AgentBrowserHost extends AttentionBrowserHost, BrowserUploadTarget {
@@ -153,7 +169,8 @@ export interface AgentBrowserHost extends AttentionBrowserHost, BrowserUploadTar
 export interface TurnHooks {
   emitFailure?(failure: FailureSignal): void;
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, agentId?: string, context?: FailureContext): void;
+  /** `link` is a page that the error banner opens. It is not part of the failure report. */
+  emitError(code: string, error: unknown, agentId?: string, context?: FailureContext, link?: string): void;
   emitRuntimeSnapshot(): void;
   scheduleDrain(agentId: string): void;
   /**
@@ -336,6 +353,8 @@ export class TurnLifecycle {
       firstOutputAt: number | null;
       produced: boolean;
       acted: boolean;
+      /** The tool steps that started and did not end yet. While one is open, the turn works, it does not wait. */
+      openTools: Set<string>;
     }
   >();
   /** The drain's start of each starting delivery, until its turn starts. */
@@ -621,12 +640,36 @@ export class TurnLifecycle {
   #showFailoverError(agentId: string, threadId: string, failover: HeldProviderError): void {
     const taskId = this.#taskForThread(agentId, threadId);
     if (taskId === null && !failover.quiet) {
-      this.#hooks.emitError("agent_error", failover.message, agentId, failover.context);
+      this.#hooks.emitError("agent_error", failover.message, agentId, failover.context, failover.link);
       return;
     }
     this.#hooks.emitFailure?.({ code: "agent_error", agentId, ...failover.context });
     // A thread shows no usage notice, so its failed turn keeps the provider's text (#5220).
     if (taskId !== null) this.#hooks.taskFailed(taskId, failover.message);
+  }
+
+  /**
+   * Whether a provider error waits for the end of its turn, which can move the turn to a backup
+   * model. A spent quota after work started waits also when the agent is set to ask.
+   */
+  #mayHoldError(agentId: string, turnId: string, causeCode: CauseCode): boolean {
+    return (
+      this.#hooks.mayFailOver(agentId) ||
+      (causeCode === "usage_limit" &&
+        this.#carriesWork(agentId, turnId, this.#runningTurns.get(turnId)) &&
+        this.#hooks.mayContinueOnBackup(agentId))
+    );
+  }
+
+  /** The turn did work, or continues work that an earlier provider started before its usage limit. */
+  #carriesWork(agentId: string, turnId: string, running: { acted: boolean } | undefined): boolean {
+    return (
+      running !== undefined &&
+      (running.acted ||
+        this.#mailbox
+          .findDeliveriesByTurn(agentId, turnId)
+          .some((context) => context.resumeAfterUsageLimit !== undefined))
+    );
   }
 
   /** Passes over the model that a held provider error failed. A spent balance names no reset (#5220). */
@@ -692,6 +735,7 @@ export class TurnLifecycle {
           firstOutputAt: null,
           produced: false,
           acted: false,
+          openTools: new Set(),
         });
         this.#traces.begin(turnId, new Date().toISOString());
         const publicThreadId = this.#conversation.publicThreadId(agentId, threadId);
@@ -1000,7 +1044,7 @@ export class TurnLifecycle {
             errorTurnId !== null &&
             this.#runningTurns.has(errorTurnId) &&
             !this.#limitedTurns.has(errorTurnId) &&
-            this.#hooks.mayFailOver(agentId)
+            this.#mayHoldError(agentId, errorTurnId, causeCode)
           ) {
             this.#failoverTurns.set(errorTurnId, { message, context, quiet: true });
             return;
@@ -1023,6 +1067,7 @@ export class TurnLifecycle {
           turnId: errorTurnId,
           severity: notification.method === "warning" ? ("warning" as const) : ("error" as const),
         };
+        const link = notification.method === "error" ? accountLink(params) : undefined;
         // A provider error moves an agent set to switch without asking to its next backup model. The
         // error waits for the end of the turn: a turn that did nothing yet runs again there instead.
         if (
@@ -1031,9 +1076,9 @@ export class TurnLifecycle {
           errorTurnId !== null &&
           this.#runningTurns.has(errorTurnId) &&
           FAILOVER_CAUSES.has(context.causeCode) &&
-          this.#hooks.mayFailOver(agentId)
+          this.#mayHoldError(agentId, errorTurnId, context.causeCode)
         ) {
-          this.#failoverTurns.set(errorTurnId, { message, context });
+          this.#failoverTurns.set(errorTurnId, { message, context, ...(link ? { link } : {}) });
           return;
         }
         const taskId =
@@ -1041,7 +1086,7 @@ export class TurnLifecycle {
         if (taskId !== null) {
           this.#hooks.emitFailure?.({ code: "agent_error", ...(agentId ? { agentId } : {}), ...context });
           this.#hooks.taskFailed(taskId, message);
-        } else this.#hooks.emitError(`agent_${notification.method}`, message, agentId, context);
+        } else this.#hooks.emitError(`agent_${notification.method}`, message, agentId, context, link);
       }
     }
   }).bind(this);
@@ -1178,14 +1223,18 @@ export class TurnLifecycle {
       // A refused session is closed below, and a spent plan would refuse the summary turn too, so
       // neither is compacted.
       // A routine run's own session closes after this turn, so it is not compacted either. Nor is a
-      // turn that a provider error ended before it did work: it can run again on a backup model.
+      // turn that a provider error ended before it did work: it can run again on a backup model. Nor
+      // is a turn that a spent quota ended after work started: a backup model can continue it.
       const routineSession = this.#conversation.isRoutineSession(threadId);
-      const mayRunAgain =
-        failover !== undefined && !limited && status === "failed" && running !== undefined && !running.acted;
+      const failedOnProvider = failover !== undefined && !limited && status === "failed" && running !== undefined;
+      const mayRunAgain = failedOnProvider && !running.acted;
+      const mayContinue =
+        failedOnProvider && failover.context.causeCode === "usage_limit" && this.#carriesWork(agentId, turnId, running);
       const shouldCompact =
         !refused &&
         !limited &&
         !mayRunAgain &&
+        !mayContinue &&
         !routineSession &&
         this.#compaction.reserve(agentId, threadId, false, turnId);
       this.#browser.endControl(this.#conversation.publicThreadId(agentId, threadId), turnId);
@@ -1209,9 +1258,7 @@ export class TurnLifecycle {
       // After work started, only a ready backup in the agent's order continues it. A turn refused before
       // work still waits for the reset when no backup is ready. A continuation that a backup refused
       // before work keeps the earlier provider's work.
-      const carriesWork =
-        running !== undefined &&
-        (running.acted || deliveries.some((context) => context.resumeAfterUsageLimit !== undefined));
+      const carriesWork = this.#carriesWork(agentId, turnId, running);
       let continuing = limited && carriesWork && deliveries.length > 0 && this.#hooks.mayContinueOnBackup(agentId);
       if (continuing) {
         for (const { delivery, channelId } of deliveries) {
@@ -1228,16 +1275,50 @@ export class TurnLifecycle {
       // The same for a provider error, when the agent moves to a backup model. Only the agent's own
       // chat moves it: a task or a channel task fails as before. A message runs again once for each
       // provider account and model that failed it, so a move that does not happen cannot run it on
-      // the same one again.
+      // the same one again. A turn that a spent quota ended after work started continues on a backup,
+      // as after a plan limit, also when the agent is set to ask: there is no moment to ask.
       const failedKey = this.#usageLimits.failureKey(agentId, model);
       const failedOver =
-        mayRunAgain &&
+        (mayRunAgain || mayContinue) &&
         failedKey !== null &&
         deliveries.length > 0 &&
         !taskTurn &&
         !channelTurn &&
         deliveries.every(({ delivery }) => !this.#failoverRetries.get(delivery.id)?.has(failedKey)) &&
-        this.#hooks.mayFailOver(agentId);
+        ((mayRunAgain && this.#hooks.mayFailOver(agentId)) ||
+          (mayContinue && this.#hooks.mayContinueOnBackup(agentId)));
+      // The work that this turn did, so that the backup model continues it and does not do it again.
+      const continuedWork = Effect.gen({ self: this }, function* () {
+        const workSteps = running
+          ? yield* readCapturedSteps(running.client, threadId, turnId).pipe(
+              Effect.timeout("2 seconds"),
+              Effect.map((steps) => steps.get(turnId) ?? ""),
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  logger.warn("Could not read the interrupted turn's work steps.", { error });
+                  return "";
+                }),
+              ),
+            )
+          : "";
+        if (trace) this.#attachTrace(snapshot.messages, agentId, turnId, trace);
+        const traceSteps = trace
+          ? trace.steps
+              .filter((step) => step.kind === "tool")
+              .map(
+                (step) =>
+                  `${step.command ?? step.text ?? "tool"} (${step.endedAt === null ? "interrupted" : step.failed ? "failed" : "completed"})`,
+              )
+              .join("\n")
+          : "";
+        return {
+          turnId,
+          previousTurnIds: [turnId],
+          workSteps: this.#hooks.redactMcp(
+            workSteps || (traceSteps ? `Full tool results are unavailable. Verify the saved work.\n${traceSteps}` : ""),
+          ),
+        };
+      });
       // A foreground subagent ends with its turn. A background one works on and reports later.
       const subagents = snapshot.messages.find((message) => message.id === `${turnId}:subagents`);
       stopRunningSubagents(subagents?.subagents, new Date().toISOString(), { background: false });
@@ -1252,46 +1333,13 @@ export class TurnLifecycle {
       // Only this loop reads the map, so the finished turn's items go, or it holds every item ever seen.
       for (const [itemId, itemTurnId] of this.#itemTurns) if (itemTurnId === turnId) this.#itemTurns.delete(itemId);
       if (requeue) {
-        const workSteps =
-          continuing && running
-            ? yield* readCapturedSteps(running.client, threadId, turnId).pipe(
-                Effect.timeout("2 seconds"),
-                Effect.map((steps) => steps.get(turnId) ?? ""),
-                Effect.catch((error) =>
-                  Effect.sync(() => {
-                    logger.warn("Could not read the interrupted turn's work steps.", { error });
-                    return "";
-                  }),
-                ),
-              )
-            : "";
-        if (continuing && trace) this.#attachTrace(snapshot.messages, agentId, turnId, trace);
-        const traceSteps =
-          continuing && trace
-            ? trace.steps
-                .filter((step) => step.kind === "tool")
-                .map(
-                  (step) =>
-                    `${step.command ?? step.text ?? "tool"} (${step.endedAt === null ? "interrupted" : step.failed ? "failed" : "completed"})`,
-                )
-                .join("\n")
-            : "";
         yield* this.#requeueTurn(
           agentId,
           threadId,
           turnId,
           snapshot,
           deliveries,
-          continuing
-            ? {
-                turnId,
-                previousTurnIds: [turnId],
-                workSteps: this.#hooks.redactMcp(
-                  workSteps ||
-                    (traceSteps ? `Full tool results are unavailable. Verify the saved work.\n${traceSteps}` : ""),
-                ),
-              }
-            : undefined,
+          continuing ? yield* continuedWork : undefined,
         );
         // After the requeue, so a routine set to skip finds its run back in the queue.
         yield* this.#usageLimits.reached(agentId, resetsAt, model);
@@ -1304,7 +1352,14 @@ export class TurnLifecycle {
           const failed = this.#failoverRetries.get(delivery.id) ?? new Set<string>();
           this.#failoverRetries.set(delivery.id, failed.add(failedKey));
         }
-        yield* this.#requeueTurn(agentId, threadId, turnId, snapshot, deliveries);
+        yield* this.#requeueTurn(
+          agentId,
+          threadId,
+          turnId,
+          snapshot,
+          deliveries,
+          mayContinue ? yield* continuedWork : undefined,
+        );
         this.#markFailed(agentId, model, failover);
         this.#hooks.scheduleDrain(agentId);
         return;
@@ -1312,7 +1367,8 @@ export class TurnLifecycle {
       // A thread turn does not run again, but the agent leaves the failing model before its next turn (#5220).
       if (failover && mayRunAgain && taskTurn && failedKey !== null && this.#hooks.mayFailOver(agentId))
         this.#markFailed(agentId, model, failover);
-      // The turn did work, or nothing waits to run again: the error shows as it does with no backup.
+      // The turn did work that no backup continues, or nothing waits to run again: the error shows as
+      // it does with no backup.
       if (failover) this.#showFailoverError(agentId, threadId, failover);
       if (limited) yield* this.#usageLimits.reached(agentId, resetsAt, model);
       else if (status === "completed") yield* this.#usageLimits.completed(agentId, model);
@@ -1883,9 +1939,37 @@ export class TurnLifecycle {
     if (usage) this.#hooks.emitToolUsage({ ...usage, agentId, turnId });
     if (yield* this.#images.handleItem(agentId, threadId, turnId, item, completed)) return;
     const toolProgress = toolProgressText(item, completed);
-    this.#observeTraceStep(turnId, item, completed, toolProgress);
+    const openTools = this.#runningTurns.get(turnId)?.openTools;
+    let lastToolClosed = false;
+    if (openTools && isToolItem(item) && isString(item.id)) {
+      if (completed) lastToolClosed = openTools.delete(item.id) && openTools.size === 0;
+      else openTools.add(item.id);
+    }
+    // MCP credentials and the shared secret patterns come out before the text leaves the agent service.
+    const failure = completed ? toolFailureText(item, (text) => this.#hooks.redactMcp(text)) : null;
+    this.#observeTraceStep(turnId, item, completed, toolProgress, failure);
     if (toolProgress) {
-      this.#emitTurnProgress(agentId, this.#conversation.publicThreadId(agentId, threadId), turnId, toolProgress);
+      const activity = toolActivity(item, completed);
+      this.#emitTurnProgress(
+        agentId,
+        this.#conversation.publicThreadId(agentId, threadId),
+        turnId,
+        toolProgress,
+        activity,
+        failure,
+      );
+      return;
+    }
+    // A tool whose end adds no line, such as a memory search, still ends its step. Without this the
+    // client keeps `running` and the face of that step until the next line.
+    if (lastToolClosed) {
+      this.#emitTurnProgress(
+        agentId,
+        this.#conversation.publicThreadId(agentId, threadId),
+        turnId,
+        sourceText("status.agent.toolResultReviewing"),
+        "reviewing",
+      );
       return;
     }
     if (item.type !== "agentMessage" || !isString(item.id)) return;
@@ -2024,7 +2108,13 @@ export class TurnLifecycle {
   }
 
   /** Records a step for the trace: a tool step, a thought or an answer. Other items have no step. */
-  #observeTraceStep(turnId: string, item: ThreadItem, completed: boolean, toolProgress: string | null): void {
+  #observeTraceStep(
+    turnId: string,
+    item: ThreadItem,
+    completed: boolean,
+    toolProgress: string | null,
+    failure: string | null,
+  ): void {
     if (!isString(item.id)) return;
     if (isToolItem(item)) {
       const failed = completed && toolFailed(item);
@@ -2032,6 +2122,7 @@ export class TurnLifecycle {
         completed,
         failed,
         text: toolProgress,
+        error: failure,
         ...toolTraceDetail(item),
       });
     } else if (item.type === "agentMessage")
@@ -2062,13 +2153,24 @@ export class TurnLifecycle {
     return message;
   }
 
-  #emitTurnProgress(agentId: string, threadId: string, turnId: string, text: string): void {
+  #emitTurnProgress(
+    agentId: string,
+    threadId: string,
+    turnId: string,
+    text: string,
+    activity: AgentStepActivity | null = null,
+    error: string | null = null,
+  ): void {
+    const running = (this.#runningTurns.get(turnId)?.openTools.size ?? 0) > 0;
     this.#hooks.emit({
       type: "turn-progress",
       agentId,
       threadId,
       turnId,
       detail: text,
+      ...(running ? { running } : {}),
+      ...(activity ? { activity } : {}),
+      ...(error ? { error } : {}),
     });
   }
 }

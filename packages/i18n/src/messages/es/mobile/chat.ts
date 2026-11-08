@@ -33,6 +33,18 @@ export const messages = {
   "mobile.chat.routine.created": "Rutina creada",
   "mobile.chat.routine.updated": "Rutina actualizada",
   "mobile.chat.routine.deleted": "Rutina eliminada",
+  "mobile.chat.routine.runGroup.count": {
+    one: "{count} ejecución",
+    other: "{count} ejecuciones",
+  },
+  "mobile.chat.routine.runGroup.show": {
+    one: "Mostrar {count} ejecución de {name}",
+    other: "Mostrar {count} ejecuciones de {name}",
+  },
+  "mobile.chat.routine.runGroup.hide": {
+    one: "Ocultar {count} ejecución de {name}",
+    other: "Ocultar {count} ejecuciones de {name}",
+  },
   "mobile.chat.contextReset": "Nuevo chat iniciado",
   "mobile.chat.plan.title": "Tareas",
   "mobile.chat.plan.stopped": "Detenido",
@@ -212,6 +224,8 @@ export const messages = {
   "mobile.chat.markdown.linkFailedTitle": "No se pudo abrir el enlace",
   "mobile.chat.markdown.linkFailedMessage": "En su lugar, puedes seleccionar y copiar el enlace.",
   "mobile.chat.markdown.openBrowserTab": "Mostrar la pestaña del navegador {name}",
+  "mobile.chat.markdown.openFile": "Abrir el archivo {name}",
+  "mobile.chat.markdown.openFileFailed": "No se pudo abrir el archivo",
   "mobile.chat.message.reply": "Responder",
   "mobile.chat.message.branch": "Ramificar desde aquí",
   "mobile.chat.message.branchFailed": "No se pudo ramificar el chat.",

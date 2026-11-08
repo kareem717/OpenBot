@@ -1,4 +1,3 @@
-import { supportedAttachmentExtensions } from "@openbot/contracts/attachment-files";
 import { canPreviewAttachment } from "@openbot/contracts/ipc";
 import type { AppTextKey } from "@openbot/i18n";
 import { classifyFailure } from "@openbot/telemetry";
@@ -13,27 +12,18 @@ import { createEffect, createMemo, createProjection, createSignal, Show, untrack
 import { actionToast } from "../../action-toast";
 import { useShowAgentSteps } from "../../agent-steps-preference";
 import { toAgentMessages } from "../../app-message-projection";
+import { useCompactMessageActions } from "../../compact-message-actions-preference";
 import { usePlatform } from "../../platform";
 import { deviceQuoteShortcut, deviceSendShortcut } from "../../send-shortcut-preference";
 import { ConversationBrowserTakeover } from "./ConversationBrowserTakeover";
 import { ConversationQuestionPrompt } from "./ConversationQuestionPrompt";
+import { chatSearchOpensMessage } from "./chat-search";
 import { latestVisibleAgentMessageId } from "./conversation-read-state";
 import { useConversationViewScope } from "./conversation-scope";
 import type { ConversationThreads } from "./conversation-types";
 import { useThreadMcpSignInCard } from "./McpSignInChatCard";
 import { createThreadActionCards } from "./thread-action-cards";
 import { createTurnSteps } from "./turn-steps";
-
-/** A thread takes files only from this computer, which reads every supported type. */
-const THREAD_ATTACHMENT_ACCEPT = supportedAttachmentExtensions({
-  eml: true,
-  media: true,
-  zip: true,
-  mp4: true,
-  svg: true,
-})
-  .map((extension) => `.${extension}`)
-  .join(",");
 
 /** The open side thread of the agent, in the place of the agent's own chat and its message box. */
 export function ConversationThread() {
@@ -114,6 +104,7 @@ export function ConversationThread() {
     activeTurnId: () => props.threads?.open?.activeTurnId,
   });
   const showAgentSteps = useShowAgentSteps();
+  const compactMessageActions = useCompactMessageActions();
   const { appFocused } = usePlatform();
   // The person reads the open thread while the window has focus. The mark is the member's, so the
   // phone no longer shows the thread as unread.
@@ -247,15 +238,7 @@ export function ConversationThread() {
       {(current) => (
         <>
           <Show when={current().threads.acceptsFiles}>
-            <Input
-              ref={setPicker}
-              type="file"
-              accept={THREAD_ATTACHMENT_ACCEPT}
-              multiple
-              hidden
-              tabindex={-1}
-              data-openbot-attachment-picker="true"
-            />
+            <Input ref={setPicker} type="file" multiple hidden tabindex={-1} data-openbot-attachment-picker="true" />
           </Show>
           <Show when={threadSearchOpen()}>
             <ChatSearch
@@ -271,6 +254,9 @@ export function ConversationThread() {
           </Show>
           <AgentThreadView
             scrollRef={setThreadScrollElement}
+            showFullMessage={(message) =>
+              threadSearchOpen() && chatSearchOpensMessage(message.body, threadSearchQuery())
+            }
             task={current().threads.open ?? null}
             limit={current().threads.limit}
             agent={current().agent}
@@ -324,6 +310,7 @@ export function ConversationThread() {
             waitsForAnswer={props.prompt !== undefined || props.browserTakeover !== undefined}
             attention={attention()}
             messageCard={mcpSignInCard}
+            olderMessages={current().threads.olderMessages}
             stepsAbove={turnSteps.stepsAbove}
             factsAbove={turnSteps.factsAbove}
             activeSteps={turnSteps.activeSteps()}
@@ -332,6 +319,7 @@ export function ConversationThread() {
             sendShortcut={deviceSendShortcut(props.platform)}
             onCopyMessage={(message) => void copyMessage(message)}
             copiedMessageId={copiedMessageId()}
+            compactMessageActions={compactMessageActions()}
             onBranch={branch(current().threads)}
             onDeleteMessage={deleteMessage(current().threads)}
             canDeleteMessage={props.canDeleteMessage}

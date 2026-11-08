@@ -22,6 +22,7 @@ import type {
   FilePreview,
   ProviderRuntimeStatus,
   QueueSnapshot,
+  ResponseStyle,
   RoutineFields,
   ServerSummary,
   TeamPresenceSnapshot,
@@ -37,6 +38,8 @@ import type { AwaitingReplyItem } from "@openbot/ui/features/conversation/Awaiti
 import type { UsageLimitAskCardProps } from "@openbot/ui/features/conversation/BackupModels";
 import type { ChatMessageAuthor } from "@openbot/ui/features/conversation/ChatMessageRow";
 import type { UnloadedHistory } from "@openbot/ui/features/conversation/ChatScrollRail";
+import type { SidePanelPane } from "@openbot/ui/features/conversation/SidePanel";
+import type { AgentThreadOlderMessages } from "@openbot/ui/features/conversation/threads/AgentThreadView";
 import type { ThreadHeaderProps, ThreadItem } from "@openbot/ui/features/conversation/threads/thread-types";
 import type { SidebarAgentWait } from "@openbot/ui/features/sidebar/sidebar-agent-states";
 import type { JSX } from "@solidjs/web";
@@ -218,6 +221,10 @@ export interface ConversationProps {
   olderError?: string | null | undefined;
   activeTurnId: string | null | undefined;
   activityDetail?: string | undefined;
+  /** A tool step of the running turn still runs, so a long silence is work, not a wait for the provider. */
+  activityRunning?: boolean | undefined;
+  /** What the running tool step does, as the host's `turn-progress` names it, for the agent's avatar. */
+  activityKind?: string | undefined;
   /** The host's progress lines of the newest turns, by turn, for the steps of each turn. */
   turnStepLines?: TurnStepLines | undefined;
   skillsMarketplaceOpen?: boolean | undefined;
@@ -249,6 +256,11 @@ export interface ConversationProps {
   /** Optional browser stream adapter for a non-Electron client. */
   browserRuntime?: BrowserViewRuntime | undefined;
   server: ServerSummary | undefined;
+  /**
+   * The response style of the server (Server settings → Personality). A "natural" server shows what
+   * the agent says between its steps as messages of their own. Undefined until the host answers.
+   */
+  responseStyle?: ResponseStyle | undefined;
   presence: TeamPresenceSnapshot;
   currentUserEmail: string;
   /**
@@ -275,7 +287,8 @@ export interface ConversationProps {
   usageLimited?: ((choice: AgentModelChoice) => boolean) | undefined;
   /** The takeover of the open thread: of a side thread while one is open, else of the agent's own chat. */
   browserTakeover: BrowserTakeoverRequest | undefined;
-  onSelectAgent: (agentId: string) => void;
+  /** Opens an agent. With `tabId`, the agent opens at that thread tab, not at the tab it showed last. */
+  onSelectAgent: (agentId: string, tabId?: string) => void;
   /**
    * What stops each agent in its own chat: a question, an approval, a browser takeover or a usage
    * limit. The waiting block names it for each agent that this agent asked.
@@ -356,6 +369,8 @@ export interface ConversationProps {
   onUpdateAgentPermissions?: ((input: UpdateAgentAdminSettingsInput) => Promise<void>) | undefined;
   /** Starts a new chat with the agent. Absent when its host does not serve `context-reset-v1`. */
   onClearAgentContext?: (() => Promise<void>) | undefined;
+  /** "Delete history" of the agent's own chat. Only this computer has it. */
+  onDeleteAgentHistory?: (() => Promise<void>) | undefined;
   /** Compacts the agent's context now. The context ring offers it only where OpenBot compacts. */
   onCompactAgentContext?: (() => Promise<void>) | undefined;
   /** Answers `browserTakeover`. */
@@ -363,6 +378,11 @@ export interface ConversationProps {
   onCancelQueuedMessage: (deliveryId: string) => void;
   onCancelWait?: ((waitId: string) => void) | undefined;
   onSteerQueuedMessage: (deliveryId: string) => void;
+  /**
+   * Puts a queued message first and stops the turn, for an agent whose provider cannot steer.
+   * Absent where the host does not offer it.
+   */
+  onSendQueuedMessageNow?: ((deliveryId: string) => void) | undefined;
   onUpdateQueuedMessage: (
     deliveryId: string,
     text: string,
@@ -410,23 +430,24 @@ export type SidebarFilePreview =
       directory: WorkspaceDirectory;
     };
 
+/**
+ * What the right side of a chat shows. Each side panel pane is a mode with the same name, so a new
+ * pane in `SIDE_PANEL_PANES` is a mode too.
+ */
 export type RightPanelMode =
   | "none"
   /** The side panel with no open pane. It lists the panes it can open. */
   | "side-panel"
-  | "browser"
+  | SidePanelPane
+  /** The browser over the window, outside the side panel. */
   | "browser-expanded"
+  /** The browser in picture in picture, outside the side panel. */
   | "browser-pip"
-  | "settings"
   | "file-preview"
-  | "files"
-  | "question"
-  | "voice"
-  | "subagent"
   /** A side thread in the side panel, beside the agent's own chat. */
   | "thread";
 
-export type { SidePanelPane } from "@openbot/ui/features/conversation/SidePanel";
+export type { SidePanelPane };
 
 /**
  * The threads of the active agent. A side thread is a task of the host; the agent's own chat is the
@@ -446,6 +467,8 @@ export interface ConversationThreads {
   running: number;
   /** The conversation of the open side thread, when it loaded. */
   conversation: ConversationSnapshot | undefined;
+  /** The open side thread has messages before the loaded ones. */
+  olderMessages: AgentThreadOlderMessages | undefined;
   /** The approval that the open side thread's turn waits for. */
   approval: AgentApproval | undefined;
   /** The thread takes files. Only this computer sends them: `agent-tasks-v1` carries text only. */
@@ -536,6 +559,8 @@ interface SideThreads {
 export interface SideThread {
   task: AgentTask;
   conversation: ConversationSnapshot | undefined;
+  /** The thread has messages before the loaded ones. */
+  olderMessages: AgentThreadOlderMessages | undefined;
   approval: AgentApproval | undefined;
   onSend: (text: string, attachmentDraftIds: string[], replyToMessageId?: string | null) => Promise<boolean>;
   onStop: () => void;

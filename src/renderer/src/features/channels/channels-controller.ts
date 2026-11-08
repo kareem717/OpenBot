@@ -63,10 +63,21 @@ export interface ChannelsEnvironment {
   /** Whether the host takes `cancel` (`channel-task-cancel-v1`); `supported()` is checked as well. */
   taskCancelSupported: () => boolean;
   /**
+   * Whether the host reads and keeps "Keep memories in this channel" (`channel-isolation-v1`);
+   * `supported()` is checked as well. An older joined server drops the setting on the wire, so its
+   * switch would always show off and never save.
+   */
+  isolationSupported: () => boolean;
+  /**
    * Whether this reader can change the picture of a channel. Only this computer keeps a channel
    * picture: the Team API does not carry it, so a joined server and the browser client cannot.
    */
   pictureSupported: () => boolean;
+  /**
+   * Whether this reader can start a new conversation in a channel or compact it. Only this computer
+   * can: the Team API has no route for them yet.
+   */
+  contextActionsSupported: () => boolean;
   /** Clears whatever else covers the workspace, because a channel is about to cover it. */
   beforeOpen: () => void;
   /** Whether a message that arrives now is in front of the reader. */
@@ -476,6 +487,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
     supported,
     deletionSupported: () => supported() && env.deletionSupported(),
     taskCancelSupported: () => supported() && env.taskCancelSupported(),
+    isolationSupported: () => supported() && env.isolationSupported(),
     messageDeletionSupported,
     deletesAnyMessage: env.deletesAnyMessage,
     deleteMessage,
@@ -487,6 +499,34 @@ export function createChannelsController(env: ChannelsEnvironment) {
         if (!setChannelImage) throw new Error(currentText().t("channel.error.update"));
         await setChannelImage({ channelId, image });
       }),
+    contextActionsSupported: () =>
+      supported() &&
+      env.contextActionsSupported() &&
+      env.port().agent.clearChannelContext !== undefined &&
+      env.port().agent.compactChannelContext !== undefined,
+    /** "New conversation": the members forget the earlier messages. A failure rejects, for the dialog to show. */
+    clearContext: async (channelId: string) => {
+      const clearChannelContext = env.port().agent.clearChannelContext;
+      if (!clearChannelContext) throw new Error(currentText().t("channel.error.action"));
+      await clearChannelContext(channelId);
+      await refreshAfter();
+    },
+    /** Whether the host deletes a channel history: as the context actions, from this computer only. */
+    historyDeletionSupported: () =>
+      supported() && env.contextActionsSupported() && env.port().agent.deleteChannelHistory !== undefined,
+    /** "Delete history": the messages go, and the members forget them. A failure rejects, for the dialog to show. */
+    deleteHistory: async (channelId: string) => {
+      const deleteChannelHistory = env.port().agent.deleteChannelHistory;
+      if (!deleteChannelHistory) throw new Error(currentText().t("channel.error.action"));
+      await deleteChannelHistory(channelId);
+      await refreshAfter();
+    },
+    /** Compacts the channel session of each member now. A failure rejects, for the row to show. */
+    compactContext: async (channelId: string) => {
+      const compactChannelContext = env.port().agent.compactChannelContext;
+      if (!compactChannelContext) throw new Error(currentText().t("channel.error.action"));
+      await compactChannelContext(channelId);
+    },
     refresh,
     retry: async (onAccepted?: (accepted: ChannelCommand) => void) => {
       const previous = failedCommand;

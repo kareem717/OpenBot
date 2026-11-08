@@ -14,7 +14,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import type { McpServerConfig } from "@openbot/contracts/ipc";
 import { readCodexMcpConfig } from "../src/backend/agent/codex-mcp-config";
 import { CODEX_DIRECT_ONLY_NAMESPACES, CODEX_FEATURES_CONFIG } from "../src/backend/agent/thread-lifecycle";
-import { VISIBLE_DYNAMIC_TOOLS } from "../src/backend/agent/tool-catalog";
+import { visibleDynamicTools } from "../src/backend/agent/tool-catalog";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { resolveCodexCli } from "../src/backend/cli";
 import { runCauseEffect } from "../src/backend/effect-boundary";
@@ -450,7 +450,7 @@ async function run(test: Case): Promise<Outcome> {
         mcp_optional_startup_grace_ms: 10000,
         "features.code_mode.direct_only_tool_namespaces": directOnly,
       },
-      dynamicTools: VISIBLE_DYNAMIC_TOOLS,
+      dynamicTools: visibleDynamicTools("codex"),
     });
     const started = await runCauseEffect(
       session.client.request("thread/start", params(directOnly), decodeRecordResponse),

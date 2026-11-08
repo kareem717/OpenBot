@@ -68,6 +68,7 @@ import type { CUSTOM_PROVIDER_HARNESS_ROUTES } from "@openbot/contracts/team-pro
 import { DISCORD_ACCESS_ROUTES } from "@openbot/contracts/team-protocol/discord-access-v1";
 import { HOST_KEY_ROTATION_ROUTES } from "@openbot/contracts/team-protocol/host-key-rotation-v1";
 import { HOST_MEMBER_UPDATE_ROUTES } from "@openbot/contracts/team-protocol/host-member-update-v1";
+import { HOST_PERSONALITY_ROUTES } from "@openbot/contracts/team-protocol/host-personality-v1";
 import { HOST_RELEASE_ROUTES } from "@openbot/contracts/team-protocol/host-release-v1";
 import { HOST_TIMEZONE_ROUTES } from "@openbot/contracts/team-protocol/host-timezone-v1";
 import { LOCAL_SERVERS_ROUTES } from "@openbot/contracts/team-protocol/local-servers-v1";
@@ -108,6 +109,8 @@ import {
   type BitwardenHostConnectInput,
   type BrowserProfileList,
   type BrowserProfileSummary,
+  type BrowserProxyList,
+  type BrowserProxySummary,
   type CancelMcpSignInInput,
   type ClearBrowserDataInput,
   type ClearStorageInput,
@@ -116,12 +119,15 @@ import {
   type CustomAgentSummary,
   type CustomProviderResult,
   type CustomProviderSummary,
+  type DeleteBrowserProxyInput,
   type DeleteCustomProviderInput,
   type DeleteStoredFileInput,
   decodeAgentAdminSettings,
   decodeAgentBrowserProfile,
   decodeBrowserProfileList,
   decodeBrowserProfileSummary,
+  decodeBrowserProxyList,
+  decodeBrowserProxySummary,
   decodeCustomAgentResult,
   decodeCustomAgentSummaries,
   decodeCustomProviderResult,
@@ -138,6 +144,7 @@ import {
   decodeHostOnePasswordConnectorStatus,
   decodeHostPasswordManagerList,
   decodeHostPasswordManagerStatus,
+  decodeHostPersonality,
   decodeHostProviderAccounts,
   decodeHostProviderAccountUsage,
   decodeHostReleaseStatus,
@@ -175,6 +182,7 @@ import {
   type HostMessagingConnectInput,
   type HostMessagingPlatformInput,
   type HostMessagingWorkspaceInput,
+  type HostPersonality,
   type HostProviderAccounts,
   type HostReleaseStatus,
   type HostSetMessagingEnabledInput,
@@ -218,11 +226,13 @@ import {
   type RoutineResultConnectionOption,
   type RoutineResultDestination,
   type RoutineResultRoutineInput,
+  type SaveBrowserProxyInput,
   type SaveCustomAgentInput,
   type SaveCustomProviderInput,
   type SaveMcpServerInput,
   type SaveMcpSignInAppInput,
   type SetAgentProviderAccountInput,
+  type SetBrowserProfileProxyInput,
   type SetEnabledSkillInput,
   type SetMcpServerEnabledInput,
   type SetProviderApiKeyInput,
@@ -278,6 +288,7 @@ import { AGENT_PUBLISH_IMAGE_BYTES, AGENT_PUBLISH_ROUTES } from "@openbot/contra
 import { AGENT_UPDATE_ROUTES } from "@openbot/contracts/team-protocol/agent-update-v1";
 import { BITWARDEN_CONNECTOR_ROUTES } from "@openbot/contracts/team-protocol/bitwarden-connector-v1";
 import { BROWSER_PROFILES_ROUTES } from "@openbot/contracts/team-protocol/browser-profiles-v1";
+import { BROWSER_PROXIES_ROUTES } from "@openbot/contracts/team-protocol/browser-proxies-v1";
 import { CONNECTORS_ROUTES } from "@openbot/contracts/team-protocol/connectors-v1";
 import { EVENTS_ROUTES } from "@openbot/contracts/team-protocol/events-v1";
 import { HOST_ADMIN_ROUTES } from "@openbot/contracts/team-protocol/host-admin-v1";
@@ -307,6 +318,11 @@ import { PROVIDERS_SIGN_IN_V3_ROUTES } from "@openbot/contracts/team-protocol/pr
 import type { PROVIDERS_V4_ROUTES } from "@openbot/contracts/team-protocol/providers-v4";
 import { ROUTINE_RECOVERY_ROUTES } from "@openbot/contracts/team-protocol/routine-recovery-v1";
 import { ROUTINE_RESULTS_ROUTES } from "@openbot/contracts/team-protocol/routine-results-v1";
+import {
+  decodeRoutineRunPlace,
+  decodeRoutineRunPlaces,
+  ROUTINE_RUN_PLACE_ROUTES,
+} from "@openbot/contracts/team-protocol/routine-run-place-v1";
 import { SERVER_AUDIT_ROUTES } from "@openbot/contracts/team-protocol/server-audit-v1";
 import { SHARED_TABLES_ROUTES } from "@openbot/contracts/team-protocol/shared-tables-v1";
 import { type SIGN_IN_RELAY_PROVIDERS, SIGN_IN_RELAY_ROUTES } from "@openbot/contracts/team-protocol/sign-in-relay-v1";
@@ -321,8 +337,7 @@ import { WEBHOOK_SENDER_SECRET_ROUTES } from "@openbot/contracts/team-protocol/w
 import { WEBHOOK_TESTS_ROUTES } from "@openbot/contracts/team-protocol/webhook-tests-v1";
 import { Effect, Schema } from "effect";
 import { bytesToBase64 } from "./base64";
-import type { TeamApiRequest } from "./team-api-requests";
-import { readInstalledSkillPages } from "./team-api-requests";
+import { readInstalledSkillPages, type TeamApiRequest, withRoutineRunPlaces } from "./team-api-requests";
 
 export class TeamAdminRequestError extends Schema.TaggedError<TeamAdminRequestError>()("TeamAdminRequestError", {
   cause: Schema.Defect(),
@@ -497,27 +512,61 @@ export function getEventStatus(request: TeamApiRequest): Effect.Effect<EventStat
   return adminCall(() => request("POST", EVENTS_ROUTES.status, decodeEventStatus, {}));
 }
 
-/** With `recovery`, for a host with `routine-recovery-v1`, the routines carry `missedPolicy`. */
+/**
+ * With `recovery`, for a host with `routine-recovery-v1`, the routines carry `missedPolicy`. With
+ * `runPlaces`, for a host with `routine-run-place-v1`, the routines of an agent carry `runIn`.
+ */
 export function listEventRoutines(
   request: TeamApiRequest,
   input: ListEventRoutinesInput,
   recovery = false,
+  runPlaces = false,
 ): Effect.Effect<EventRoutine[], TeamAdminRequestError> {
   const path = recovery ? ROUTINE_RECOVERY_ROUTES.listRoutines : EVENTS_ROUTES.listRoutines;
-  return adminCall(() => request("POST", path, decodeEventRoutines, eventBody(input)));
+  const routines = adminCall(() => request("POST", path, decodeEventRoutines, eventBody(input)));
+  const { owner } = input;
+  if (!runPlaces || owner.kind !== "agent") return routines;
+  const places = adminCall(() =>
+    request("POST", ROUTINE_RUN_PLACE_ROUTES.list, decodeRoutineRunPlaces, { agentId: owner.id }),
+  );
+  return Effect.all([routines, places], { concurrency: "unbounded" }).pipe(
+    Effect.map(([list, entries]) => withRoutineRunPlaces(list, entries)),
+  );
 }
 
 /**
  * The result has the new signing secret only when the routine became a webhook routine. With
- * `recovery`, for a host with `routine-recovery-v1`, the host saves `missedPolicy`.
+ * `recovery`, for a host with `routine-recovery-v1`, the host saves `missedPolicy`. With `runPlaces`,
+ * for a host with `routine-run-place-v1`, the place of an agent routine goes on its own route after
+ * the save.
  */
 export function saveEventRoutine(
   request: TeamApiRequest,
   input: SaveEventRoutineInput,
   recovery = false,
+  runPlaces = false,
 ): Effect.Effect<SaveEventRoutineResult, TeamAdminRequestError> {
   const path = recovery ? ROUTINE_RECOVERY_ROUTES.saveRoutine : EVENTS_ROUTES.saveRoutine;
-  return adminCall(() => request("POST", path, decodeSaveEventRoutineResult, eventBody(input)));
+  const saved = adminCall(() => request("POST", path, decodeSaveEventRoutineResult, eventBody(input)));
+  const { owner, runIn } = input;
+  if (!runPlaces || owner.kind !== "agent" || runIn === undefined) return saved;
+  return Effect.gen(function* () {
+    const result = yield* saved;
+    const placed = adminCall(() =>
+      request("POST", ROUTINE_RUN_PLACE_ROUTES.set, decodeRoutineRunPlace, {
+        agentId: owner.id,
+        routineId: result.routine.id,
+        runIn,
+      }),
+    );
+    // The new routine exists, so a failed place does not fail the create: it runs in the chat, and a
+    // second save does not make a second routine.
+    const place =
+      input.id === undefined
+        ? yield* placed.pipe(Effect.orElseSucceed(() => ({ runIn: "chat" as const })))
+        : yield* placed;
+    return { ...result, routine: { ...result.routine, runIn: place.runIn } };
+  });
 }
 
 /** A routine's newest runs with its missed occurrences. Only a host with `routine-recovery-v1` answers it. */
@@ -650,6 +699,23 @@ export function setHostTimezone(
   timezone: string | null,
 ): Effect.Effect<HostTimezoneSettings, TeamAdminRequestError> {
   return adminCall(() => request("POST", HOST_TIMEZONE_ROUTES.update, decodeHostTimezoneSettings, { timezone }));
+}
+
+/** Any member can read the server personality (`host-personality-v1`). */
+export function getHostPersonality(request: TeamApiRequest): Effect.Effect<HostPersonality, TeamAdminRequestError> {
+  return adminCall(() => request("POST", HOST_PERSONALITY_ROUTES.settings, decodeHostPersonality, {}));
+}
+
+/** Only an owner or admin can set it. */
+export function setHostPersonality(
+  request: TeamApiRequest,
+  personality: HostPersonality,
+): Effect.Effect<HostPersonality, TeamAdminRequestError> {
+  return adminCall(() =>
+    request("POST", HOST_PERSONALITY_ROUTES.update, decodeHostPersonality, {
+      responseStyle: personality.responseStyle,
+    }),
+  );
 }
 
 /**
@@ -1836,6 +1902,45 @@ export function updateHostAgentBrowserProfile(
       profile: { ...input.profile },
     }),
   );
+}
+
+/**
+ * The saved proxies of the host's named profiles, and the computers of members (`browser-proxies-v1`).
+ * No proxy carries its password.
+ */
+export function listHostBrowserProxies(
+  request: TeamApiRequest,
+): Effect.Effect<BrowserProxyList, TeamAdminRequestError> {
+  return adminCall(() => request("POST", BROWSER_PROXIES_ROUTES.list, decodeBrowserProxyList, {}));
+}
+
+/** A new proxy, or a change to one. The host refuses a change when the proxy is not at `previousAddress` now. */
+export function saveHostBrowserProxy(
+  request: TeamApiRequest,
+  input: SaveBrowserProxyInput,
+): Effect.Effect<BrowserProxySummary, TeamAdminRequestError> {
+  return adminCall(() => request("POST", BROWSER_PROXIES_ROUTES.save, decodeBrowserProxySummary, { ...input }));
+}
+
+/** Its profiles change to Automatic. The host refuses the delete when other profiles use it now. Takes a computer id too. */
+export function deleteHostBrowserProxy(
+  request: TeamApiRequest,
+  input: DeleteBrowserProxyInput,
+): Effect.Effect<void, TeamAdminRequestError> {
+  return adminCall(() =>
+    request("POST", BROWSER_PROXIES_ROUTES.delete, ignoreResponse, {
+      proxyId: input.proxyId,
+      profileIds: [...input.profileIds],
+    }),
+  );
+}
+
+/** The proxy of one named profile, or null for Automatic. The host closes the tabs of the profile. */
+export function setHostBrowserProfileProxy(
+  request: TeamApiRequest,
+  input: SetBrowserProfileProxyInput,
+): Effect.Effect<void, TeamAdminRequestError> {
+  return adminCall(() => request("POST", BROWSER_PROXIES_ROUTES.profile, ignoreResponse, { ...input }));
 }
 
 /** The host's Slack workspaces, Discord servers or Telegram chats (`connectors-v1`). */

@@ -7,7 +7,7 @@ OpenBot is a local-first desktop workspace for persistent AI teammates. It suppo
 [Codex App Server](https://learn.chatgpt.com/docs/app-server) and
 [Claude Code](https://code.claude.com/docs/en/overview), plus [Grok CLI](https://docs.x.ai/build/overview),
 OpenCode, Gemini, [Cursor CLI](https://cursor.com/cli), [Cline CLI](https://cline.bot/cli), [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli),
-[Devin CLI](https://cli.devin.ai), [GitHub Copilot CLI](https://github.com/github/copilot-cli), and [Hermes Agent](https://hermes-agent.nousresearch.com) through ACP. It gives every agent its own workspace and
+[Devin CLI](https://cli.devin.ai), [GitHub Copilot CLI](https://github.com/github/copilot-cli), [Mistral Vibe](https://github.com/mistralai/mistral-vibe), and [Hermes Agent](https://hermes-agent.nousresearch.com) through ACP. It gives every agent its own workspace and
 conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
 messaging in one desktop app.
 
@@ -22,7 +22,7 @@ OpenBot is ready for production use. A new release ships almost every day.
 ## What works
 
 - Prompt-driven agent creation and editing on desktop and mobile, with editable instructions, avatar, and section review before saving.
-- Persistent agents backed by independent Codex, Claude, Grok, OpenCode, Gemini, Cursor, Cline, Kimi, Devin, GitHub Copilot, or Hermes sessions and local workspaces.
+- Persistent agents backed by independent Codex, Claude, Grok, OpenCode, Gemini, Cursor, Cline, Kimi, Devin, GitHub Copilot, Mistral, or Hermes sessions and local workspaces.
 - Custom OpenAI-compatible endpoints and custom ACP agents, with detection of local model servers (Ollama, LM Studio) and installed agents.
 - Per-agent context monitoring with automatic compaction before long threads exhaust the model window.
 - FIFO message queues with pause, resume, cancellation, and crash-safe persistence.
@@ -36,7 +36,7 @@ OpenBot is ready for production use. A new release ships almost every day.
 
 OpenBot is local-first, not offline-only. Codex connects to OpenAI, Claude connects to Anthropic,
 Grok connects to xAI, Gemini connects to Google, Cursor connects to Cursor, Cline connects to Cline,
-Kimi connects to Moonshot AI, Devin connects to Cognition, GitHub Copilot connects to GitHub, Hermes connects to Nous Portal and to the providers you set up in Hermes,
+Kimi connects to Moonshot AI, Devin connects to Cognition, GitHub Copilot connects to GitHub, Mistral connects to Mistral AI, Hermes connects to Nous Portal and to the providers you set up in Hermes,
 visited pages use the network, and installed plugins may connect to their own services.
 
 ## Install
@@ -260,6 +260,16 @@ for OpenBot, the CLI uses that token instead, and Disconnect cannot remove it. I
 `copilot` yourself, OpenBot uses it until a download exists. Set `OPENBOT_COPILOT_PATH` to select
 an executable yourself. Copilot agents run on this computer. Team members see them when their app
 supports GitHub Copilot.
+
+Mistral uses a Mistral account or a Mistral API key. OpenBot downloads and pins Mistral Vibe's ACP
+server (`vibe-acp`) when you select Download on the Mistral row in More providers. Sign in opens
+Mistral's sign-in page in your browser. Vibe saves an API key in the system keychain, or in
+`~/.vibe/.env` when there is no keychain. If `MISTRAL_API_KEY` is set for OpenBot, Vibe uses that key,
+and Disconnect cannot remove it. OpenBot turns off Vibe's telemetry. If you installed `vibe-acp`
+yourself, OpenBot uses it until a download exists. Set `OPENBOT_MISTRAL_PATH` to select an executable
+yourself. When a Full access Mistral agent changes its model or thinking level, Vibe saves it as its
+default in `~/.vibe/config.toml`. Mistral agents run on this computer. Team members see them when
+their app supports Mistral.
 
 Hermes uses the Hermes Agent (`hermes`) that you install yourself, with your own `~/.hermes` (or
 `$HERMES_HOME`): its memories, skills, sign-ins and `SOUL.md` apply to OpenBot agents too. OpenBot
@@ -589,7 +599,7 @@ Cloudflare Workers
 - `apps/auth-api` contains the TanStack Start account API, one-time email codes, rate limits, and D1 migrations. It also serves the public site: the landing page, `/news`, `/guides`, and the Marketplace pages at `/marketplace` (Agents, Skills, and Apps), `/marketplace/agents/<id>`, `/marketplace/skills/<slug>`, and `/plugins/<slug>`. `/plugins` redirects to `/marketplace/apps`.
 - `apps/status` contains the public status page at `status.openbot.run`, the script that the `status-page` workflow runs to check the services, and the script that sends the [status webhooks](docs/status-webhooks.md) of the team. GitHub hosts it, so it stays up when Cloudflare does not.
 - `packages/contracts` contains process-boundary contracts, shared limits, and pure validation.
-- `packages/i18n` contains the interface text in English, French, Japanese, Brazilian Portuguese and Turkish for desktop, web and mobile. See [docs/i18n.md](docs/i18n.md) to add text or a language.
+- `packages/i18n` contains the interface text in English and 14 other languages, Arabic and Hebrew with a right-to-left layout, for desktop, web and mobile. See [docs/i18n.md](docs/i18n.md) to add text or a language.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for dependency direction, state ownership, and
 rules for new modules.
@@ -599,8 +609,8 @@ rules for new modules.
 Attach MP3 audio and MOV video through the file picker or drag and drop. The limits are 100 MB per
 file, 250 MB per message, and 10 files per message. OpenBot gives the agent the original file; it does
 not play, decode, transcribe, or validate the recording during import. Damaged recordings can be
-attached for inspection. Analysis depends on the tools available to the agent. For other audio or
-video formats, export as MP3, MOV, or MP4, or attach a text transcript. Remote hosts must advertise the
+attached for inspection. Analysis depends on the tools available to the agent. Other audio or video
+formats attach as files of other types do (see below). Remote hosts must advertise the
 `media-attachments` capability; update the host if this feature is unavailable.
 
 MP4 video uses the same limits and rules as MOV. Remote hosts must also advertise the
@@ -615,6 +625,12 @@ capability.
 SVG images use the same limits. The chat shows an SVG as an image, but the agent gets it as a file,
 not as an image: providers take only raster images, so the agent reads the SVG text. Open shows an SVG
 in the file manager. Remote hosts must advertise the `svg-attachments` capability.
+
+Files of all other types use the same limits, for example VPN profiles, certificates, and
+infrastructure configuration. OpenBot stores the file unchanged, with no preview, and the agent gets
+its path and reads it with its own tools. Open shows the file in the file manager. Remote hosts must
+advertise the `any-file-attachments` capability. An older host takes only the types above and its
+list of documents, text, data, and source files.
 
 ## Local data and network boundaries
 
@@ -646,6 +662,9 @@ in the file manager. Remote hosts must advertise the `svg-attachments` capabilit
   session history managed exclusively by the Devin CLI.
 - `~/.copilot` (or `$COPILOT_HOME`) — settings and session history managed exclusively by the GitHub
   Copilot CLI. Its sign-in is in the system keychain.
+- `~/.vibe` (or `$VIBE_HOME`) — settings, logs and session history managed exclusively by Mistral
+  Vibe. OpenBot makes an empty `trusted_folders.toml` there when it is missing. The sign-in is in the
+  system keychain, or in `.env`.
 - `~/.hermes` (or `$HERMES_HOME`) — your own Hermes Agent settings, memories, skills, sign-ins and
   session history. OpenBot reads only the change time of `auth.json`, `.env` and `config.yaml`, to
   see a sign-in.

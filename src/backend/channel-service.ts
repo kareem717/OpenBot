@@ -18,6 +18,7 @@ import {
   type ChannelMessage,
   type ChannelRoutingConversationEventAction,
   type ChannelTask,
+  CONTEXT_RESET_ITEM_TYPE,
   type ConversationSnapshot,
   type CreateChannelMemoryInput,
   channelRoutingConversationEventItemType,
@@ -25,6 +26,7 @@ import {
   type DeleteChannelMessageInput,
   isAgentAnswer,
   isChannelChangeMarker,
+  isContextResetMarker,
   type QueueHold,
   type UpdateChannelMemoryInput,
 } from "@openbot/contracts/ipc";
@@ -39,6 +41,7 @@ import {
   ChannelHistory,
   type ChannelTextModel,
   type DeliveredChannelContext,
+  type DeliveredChannelText,
   historyMessagePart,
   isMemberThinking,
   sameRequest,
@@ -238,14 +241,14 @@ export class ChannelService {
   readonly #deltas = new Map<string, { sessionId: string; text: string }>();
   /**
    * The cursors that this process accepted, by channel, agent and session, with the channel facts
-   * that the session got. A cursor from an earlier run is not used: an earlier version did not reset
-   * it at a compaction.
+   * and memories that the session got. A cursor from an earlier run is not used: an earlier version
+   * did not reset it at a compaction.
    */
-  readonly #acceptedContexts = new Map<string, string>();
+  readonly #acceptedContexts = new Map<string, DeliveredChannelText>();
   /** By delivery: the count of in-place message changes when its packet was built. */
   readonly #preparedChanges = new Map<string, number>();
-  /** By delivery: the channel facts in its packet. */
-  readonly #preparedFacts = new Map<string, string>();
+  /** By delivery: the channel facts and memories in its packet. */
+  readonly #preparedFacts = new Map<string, DeliveredChannelText>();
 
   constructor(
     database: OpenBotDatabase,
@@ -392,6 +395,145 @@ export class ChannelService {
       }).pipe(Effect.uninterruptible),
     ),
   );
+
+  /**
+   * "New conversation": the members forget the earlier messages of the channel. A marker message
+   * starts the history that a model reads, and the summary starts again after it. The messages stay
+   * for the reader, and the members, instructions, memories and routines do not change. It waits
+   * for the commands queued before it, and work that still runs or waits refuses it, because that
+   * work belongs to the old conversation. `members.busy` refuses it while a member session still
+   * runs a turn or compacts, and `members.end` ends the provider session of each member's execution
+   * thread before the next command of the channel runs, so no turn starts on an old session. A second
+   * request after the marker only repairs a summary that a failed first request left.
+   */
+  readonly clearContext = Effect.fn("ChannelService.clearContext")(function* (
+    this: ChannelService,
+    channelId: string,
+    person: { id: string; name: string },
+    members: {
+      busy: (contexts: ReadonlyArray<{ agentId: string; threadId: string }>) => boolean;
+      end: (threadIds: readonly string[]) => Effect.Effect<void>;
+    },
+  ) {
+    yield* this.#serialize(
+      channelId,
+      Effect.gen({ self: this }, function* () {
+        const channel = yield* channelSync(() => this.store.get(channelId));
+        if (channel.archived) return yield* channelFailure(new Error(sourceText("error.backend.channelArchived")));
+        yield* this.#requireIdle(channelId, "error.backend.channelWaitBeforeNewConversation");
+        const contexts = yield* channelSync(() => this.store.contexts(channelId));
+        if (members.busy(contexts))
+          return yield* channelFailure(new Error(sourceText("error.backend.channelWaitBeforeNewConversation")));
+        const threads = contexts.map((context) => context.threadId);
+        const last = (yield* channelSync(() => this.store.messages(channelId, undefined, 1)))[0];
+        if (!last) return;
+        if (isContextResetMarker(last.message)) {
+          // The marker and the summary are two writes. A request after a failure between them repairs the summary.
+          yield* channelSync(() => {
+            const summary = this.store.summary(channelId);
+            if (summary.throughSequence < last.sequence)
+              this.store.saveSummary(channelId, {
+                version: summary.version + 1,
+                throughSequence: last.sequence,
+                text: "",
+              });
+          });
+          return yield* members.end(threads);
+        }
+        const id = `context-reset-${randomUUID()}`;
+        const marker: ChannelMessage = {
+          id,
+          channelId,
+          taskId: null,
+          author: { kind: "member", id: person.id, name: person.name },
+          sequence: 0,
+          superseded: false,
+          message: {
+            id,
+            text: sourceText("status.agent.contextCleared"),
+            author: "system",
+            source: "system",
+            createdAt: new Date().toISOString(),
+            status: "completed",
+            itemType: CONTEXT_RESET_ITEM_TYPE,
+          },
+        };
+        yield* channelSync(() => {
+          this.store.update(channel, { messages: [marker] }, `context-reset:${channelId}:${id}`);
+          const sequence = this.store.message(channelId, id)?.sequence ?? 0;
+          const summary = this.store.summary(channelId);
+          this.store.saveSummary(channelId, { version: summary.version + 1, throughSequence: sequence, text: "" });
+        });
+        yield* members.end(threads);
+      }).pipe(Effect.uninterruptible),
+    );
+    this.publish(channelId);
+  });
+
+  /**
+   * "Delete history": every message of the channel leaves the view and the stored history, with its
+   * files, and the members forget the channel as after "New conversation". The members,
+   * instructions, memories, routines and tasks stay. Work that still runs or waits refuses it, and
+   * `members.busy` and `members.end` work as for `clearContext`.
+   */
+  readonly deleteHistory = Effect.fn("ChannelService.deleteHistory")(function* (
+    this: ChannelService,
+    channelId: string,
+    members: {
+      busy: (contexts: ReadonlyArray<{ agentId: string; threadId: string }>) => boolean;
+      end: (threadIds: readonly string[]) => Effect.Effect<void>;
+    },
+  ) {
+    yield* this.#serialize(
+      channelId,
+      Effect.gen({ self: this }, function* () {
+        if (this.#deletedChannels.has(channelId))
+          return yield* channelFailure(new Error(sourceText("error.backend.channelNotFound")));
+        const channel = yield* channelSync(() => this.store.get(channelId));
+        if (channel.archived) return yield* channelFailure(new Error(sourceText("error.backend.channelArchived")));
+        yield* this.#requireIdle(channelId, "error.backend.channelWaitBeforeDeleteHistory");
+        const contexts = yield* channelSync(() => this.store.contexts(channelId));
+        if (members.busy(contexts))
+          return yield* channelFailure(new Error(sourceText("error.backend.channelWaitBeforeDeleteHistory")));
+        yield* channelSync(() => this.store.deleteHistory(channel));
+        // A failure here leaves copies that no message shows; a second request removes them.
+        yield* this.mailbox.deleteChannelMessageCopies(channelId, "all").pipe(Effect.mapError(channelFailure));
+        yield* members.end(contexts.map((context) => context.threadId));
+      }).pipe(Effect.uninterruptible),
+    );
+    this.publish(channelId);
+  });
+
+  /**
+   * The member sessions that "Compact now" compacts: the execution thread of each member with an
+   * active provider session. Work that still runs or waits refuses it, as for a new conversation.
+   */
+  readonly compactTargets = Effect.fn("ChannelService.compactTargets")(function* (
+    this: ChannelService,
+    channelId: string,
+  ) {
+    const channel = yield* channelSync(() => this.store.get(channelId));
+    if (channel.archived) return yield* channelFailure(new Error(sourceText("error.backend.channelArchived")));
+    yield* this.#requireIdle(channelId, "error.backend.channelWaitBeforeCompact");
+    return yield* channelSync(() => this.store.contexts(channelId));
+  });
+
+  /** Refuses while a task of the channel is queued, running, or waits for other work. */
+  #requireIdle(
+    channelId: string,
+    key:
+      | "error.backend.channelWaitBeforeNewConversation"
+      | "error.backend.channelWaitBeforeCompact"
+      | "error.backend.channelWaitBeforeDeleteHistory",
+  ): Effect.Effect<void, ChannelOperationError> {
+    return channelSync(() => this.store.tasks(channelId)).pipe(
+      Effect.flatMap((tasks) =>
+        tasks.some((task) => task.state === "queued" || task.state === "running" || task.state === "waiting")
+          ? channelFailure(new Error(sourceText(key)))
+          : Effect.void,
+      ),
+    );
+  }
 
   /**
    * A channel that an agent creates or changes from its own chat (`create_channel`, `update_channel`).
@@ -1383,6 +1525,10 @@ export class ChannelService {
           // The channel summary that member turns already maintain stands in for the transcript.
           // Only the messages it does not yet cover are sent whole, and only the last few of those.
           const summary = channelResult(yield* Effect.result(channelSync(() => this.store.summary(channelId))));
+          // After "New conversation", routing reads only the messages after its marker, as the members do.
+          const reset = channelResult(
+            yield* Effect.result(channelSync(() => this.store.contextResetSequence(channelId))),
+          );
           const agents = this.hooks
             .agents()
             .filter(
@@ -1397,7 +1543,7 @@ export class ChannelService {
             .filter(
               (item) =>
                 item.id !== task?.requestMessageId &&
-                item.sequence > summary.throughSequence &&
+                item.sequence > Math.max(summary.throughSequence, reset) &&
                 !isMemberThinking(item),
             )
             .slice(-ROUTING_RECENT_MESSAGES)
@@ -2323,7 +2469,10 @@ export class ChannelService {
     if (delivered && history.delta !== null)
       this.#deltas.set(delivery.delivery.id, { sessionId: delivered.sessionId, text: history.delta });
     else this.#deltas.delete(delivery.delivery.id);
-    this.#preparedFacts.set(delivery.delivery.id, history.channelFacts);
+    this.#preparedFacts.set(delivery.delivery.id, {
+      channelFacts: history.channelFacts,
+      channelMemories: history.channelMemories,
+    });
     const current = (yield* channelSync(() => this.store.tasks(channel.id))).find((item) => item.id === task.id);
     if (
       !current ||
@@ -2359,11 +2508,13 @@ export class ChannelService {
     )
       return null;
     const session = this.store.database.activeProviderSession(context.threadId, agent.provider);
+    const delivered = this.#acceptedContexts.get(JSON.stringify([channelId, agent.id, context.sessionId]));
     return session?.externalSessionId === context.sessionId
       ? {
           sessionId: context.sessionId,
           throughSequence: context.throughSequence,
-          channelFacts: this.#acceptedContexts.get(JSON.stringify([channelId, agent.id, context.sessionId])) ?? null,
+          channelFacts: delivered?.channelFacts ?? null,
+          channelMemories: delivered?.channelMemories ?? null,
         }
       : null;
   }
@@ -2374,10 +2525,10 @@ export class ChannelService {
     sessionId: string,
     throughSequence: number,
     summaryVersion: number,
-    channelFacts: string,
+    delivered: DeliveredChannelText,
   ): void {
     this.store.acceptContext(channelId, agentId, sessionId, throughSequence, summaryVersion);
-    this.#acceptedContexts.set(JSON.stringify([channelId, agentId, sessionId]), channelFacts);
+    this.#acceptedContexts.set(JSON.stringify([channelId, agentId, sessionId]), delivered);
   }
 
   /** The packet of a delivery with only the unread messages, and the session that read the others. */
@@ -2437,8 +2588,8 @@ export class ChannelService {
             sessionId,
             cursor.throughSequence,
             cursor.summaryVersion,
-            // Unknown facts never match, so the next delta gives them again.
-            facts ?? "",
+            // Unknown text never matches, so the next delta gives the facts and memories again.
+            facts ?? { channelFacts: null, channelMemories: null },
           ),
         );
       }
@@ -2657,14 +2808,15 @@ export class ChannelService {
         !message.questionPrompt
       )
         continue;
-      // OpenCode's text before a tool call streams as the answer and becomes a step only at that
-      // call. Copied while it streamed, each such note showed as the member's message and then
-      // folded (#4844). The agent's own chat still streams it; the channel gets it when it completes.
+      // OpenCode's text before a tool call streams as the answer, and Pi's streams with no phase. Each
+      // becomes a step only at that call. Copied while it streamed, each such note showed as the
+      // member's message and then folded (#4844). The agent's own chat still streams it; the channel
+      // gets it when it completes.
       if (
         !original &&
         message.author === "assistant" &&
         message.status === "streaming" &&
-        message.itemType === "final_answer" &&
+        (message.itemType === "final_answer" || message.itemType === "agentMessage") &&
         provisionalAnswers()
       )
         continue;
@@ -2729,7 +2881,10 @@ export class ChannelService {
         messages.push(value);
     }
     if (messages.length) {
-      this.store.update(this.store.get(channelId), { messages });
+      const channel = this.store.get(channelId);
+      const [only] = messages;
+      if (messages.length === 1 && only) this.store.captureMessage(channel, only);
+      else this.store.update(channel, { messages });
       this.publish(channelId);
     }
     return true;
@@ -3128,10 +3283,14 @@ export class ChannelService {
       return yield* this.#manage(channelId, task.id, agentId, turnId, `tool:${turnId}:${callId}`, person, tool, args);
     }
     if (tool === "channel_history") {
+      // After "New conversation", the history starts after its marker, as the packet does.
+      const reset = yield* channelSync(() => this.store.contextResetSequence(channelId));
       if (isString(args.attachmentId)) {
         if (
-          !(yield* channelSync(() => this.store.messages(channelId))).some((entry) =>
-            entry.message.attachments?.some((attachment) => attachment.id === args.attachmentId),
+          !(yield* channelSync(() => this.store.messages(channelId))).some(
+            (entry) =>
+              entry.sequence > reset &&
+              entry.message.attachments?.some((attachment) => attachment.id === args.attachmentId),
           )
         )
           return yield* channelFailure(new Error("Attachment not found in this channel."));
@@ -3143,7 +3302,7 @@ export class ChannelService {
       if (isString(args.messageId)) {
         const messageId = args.messageId;
         const message = yield* channelSync(() => this.store.message(channelId, messageId));
-        if (!message || isMemberThinking(message))
+        if (!message || message.sequence <= reset || isMemberThinking(message))
           return yield* channelFailure(new Error("Message not found in this channel."));
         const offset =
           typeof args.offset === "number" && Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
@@ -3160,9 +3319,11 @@ export class ChannelService {
         ),
       );
       // The cursors still count every row, so the next page starts where this one ended.
+      const shown = page.messages.filter((message) => message.sequence > reset);
       return boundedHistoryPage({
         ...page,
-        messages: page.messages.filter((message) => !isMemberThinking(message)),
+        messages: shown.filter((message) => !isMemberThinking(message)),
+        olderCursor: shown.length < page.messages.length ? null : page.olderCursor,
       });
     }
     const operationId = `tool:${turnId}:${callId}`;
@@ -3539,7 +3700,7 @@ export class ChannelService {
             session.externalSessionId,
             cursor.throughSequence,
             cursor.summaryVersion,
-            history.channelFacts,
+            { channelFacts: history.channelFacts, channelMemories: history.channelMemories },
           ),
         );
     }

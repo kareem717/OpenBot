@@ -43,6 +43,7 @@ import {
   isAvatarColor,
   isCustomProviderContextWindow,
   isCustomProviderHarness,
+  isCustomProviderInputs,
   isCustomProviderMaxOutput,
   isCustomProviderReasoningEfforts,
   type McpServerConfig,
@@ -688,12 +689,13 @@ export class InstanceTransferService {
           name: provider.name,
           baseUrl: provider.baseUrl,
           apiKey: null,
-          models: provider.models.map(({ id, name, contextWindow, maxOutput, reasoningEfforts }) => ({
+          models: provider.models.map(({ id, name, contextWindow, maxOutput, reasoningEfforts, inputs }) => ({
             id,
             name,
             ...(isCustomProviderContextWindow(contextWindow) ? { contextWindow } : {}),
             ...(isCustomProviderMaxOutput(maxOutput) ? { maxOutput } : {}),
             ...(isCustomProviderReasoningEfforts(reasoningEfforts) ? { reasoningEfforts: [...reasoningEfforts] } : {}),
+            ...(isCustomProviderInputs(inputs) ? { inputs: [...inputs] } : {}),
           })),
           headers: [],
           ...(isCustomProviderHarness(provider.harness) ? { harness: provider.harness } : {}),

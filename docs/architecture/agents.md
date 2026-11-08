@@ -105,8 +105,15 @@ the marker it skips the turn's thinking too, so a later import does not bring a 
 
 An agent routine runs in the agent's own chat, unless its `runIn` is `thread` (migration 57; existing
 routines got `chat`, the place of runs before 0.61). Then it runs in its own side thread, the routine
-thread. The routine settings show a switch for it on this computer's host only: the Team API admin wire
-does not carry `runIn`, and a remote save without it keeps the saved place. The `create_routine`,
+thread. The routine settings show a switch for it on this computer's host, and on a joined host with
+the optional `routine-run-place-v1` capability (`packages/contracts/src/team-protocol/routine-run-place-v1.ts`,
+host route `routeRoutineRunPlace` in `src/main/team-api/route-routine-run-place.ts`). The released
+routine routes and the `events-v1` and `routine-recovery-v1` routes do not carry `runIn`, so the remote
+adapters (main IPC for desktop, `@openbot/team-client` for `/app`) read the places on their own list
+route and send a change to the set route after the save. Any member reads the places of an agent that
+they can see; a change needs manage access. The host saves the stored record again with only the new
+place, for schedule and webhook routines. A save without `runIn`, or to a host without the capability,
+keeps the saved place. The `create_routine`,
 `update_routine`, `create_webhook_routine` and `update_webhook_routine` tools take `runIn` too. A routine set back to `chat` keeps its thread, but new runs,
 the run marker's "Open thread" link, a test run and the routine's reply digest do not use it.
 `AgentTasks.routineThread` makes the thread on the first run in a thread, with the routine's name as its title and `routine_id` set
@@ -470,6 +477,21 @@ at once and shows an Undo toast; when the toast ends, `AgentService.deleteTask` 
 messages and deletes the thread with its conversation, attachments, event history and provider
 session. It refuses a thread with a running turn. The main thread has no archive, rename or delete.
 
+An agent reads its other conversations with `openbot.history_search` and `openbot.history_read`
+(`src/backend/agent/history-tools.ts`). Memory keeps facts, not a log of work, so these tools answer
+"what did we do today?". `history_search` without `query` lists the own chat (`taskId` `main`) and the
+side threads, open and archived, with activity since `after` (`24h`, `7d`, a date or an ISO time),
+the newest first, each with its last request and reply as redacted excerpts. With `query` and no
+`taskId`, it searches the current conversation first, then the own chat and the 8 newest side
+threads, and gives each match from another conversation its `taskId` (`searchAll`). Its `nextCursor`
+continues only the current conversation. With `query` or with `history_read`, a `taskId` names one
+conversation; a `taskId` without `query` reads that conversation's newest messages. Models often skip the tool
+description, so the search of all conversations makes their first call work. Each conversation is
+readable only after its latest context reset. The router (`openbot-tool-router.ts`) allows a
+`taskId`, the list and the search of all conversations only from the own chat or a side thread of the
+same agent: a messaging chat, where other people write, searches only itself, and a channel gets no
+history.
+
 "Branch from here" (`AgentService.branchTask`, `AgentTasks.branch`, `AgentThreadStore.branch`) makes a
 new side thread of the same agent from the last agent message of a finished turn, in the main thread
 or in a side thread. The button and the message menu item are off while the source has a running
@@ -552,7 +574,19 @@ the links among the listed tasks. `sourceTitle` is null for the agent's own chat
 list can leave out an archived source, so the divider takes its title from the link. The `agent-tasks-v1` task and its events stay without the link: a joined desktop and
 the web read `branches` after the task list and add the links, and read the list again when an event names a task
 that they do not know. A server without the capability does not show "Branch from here", and a joined desktop
-refuses a branch with `error.backend.branchRemoteUnsupported`. The phone does not branch. A server without either shows only
+refuses a branch with `error.backend.branchRemoteUnsupported`. The phone does not branch. A thread read has the
+newest 100 messages of the thread. The optional `agent-thread-pages-v1` capability
+(`packages/contracts/src/team-protocol/agent-thread-pages-v1.ts`, host route `routeAgentThreadPages` in
+`src/main/team-api/route-agent-threads.ts`) adds `POST /v1/agent-threads/read-older` with
+`{agentId, taskId, beforeMessageId, limit}`. It answers `{conversation, hasOlder}`: the messages from before that message, oldest first, in the
+frozen `agent-tasks-v1` conversation shape. The page has whole turns: the host adds turns until it has
+`limit` (0 to 100) messages or the next turn does not fit, so it can have more or fewer than `limit`, and
+never more than 100. A turn of more than 100 messages is split over pages. A limit of 0
+asks only for `hasOlder`, and a message that the thread does not hold has none. The host makes a page smaller
+until it fits one WebRTC frame. A thread tab on desktop and the web asks once after its read, and shows "Load older
+messages" when the thread has more; a new conversation of the thread keeps the pages that it read
+(`src/renderer/src/features/agent-tasks/agent-tasks-state.ts`). A server without the capability shows only the
+newest messages. The Tasks rail page and the phone do not read older pages. A server without either shows only
 the main thread, and a task control there fails with `error.backend.taskRemoteUnsupported`. Prompts, approvals and warnings of a task turn show in the main chat. On desktop and the web, the
 approval of a side thread turn also shows in that thread. A provider
 error of a task turn goes to the task: `AgentTasks` stores the redacted text in the task's `error`
@@ -790,7 +824,8 @@ to ungroup an agent; deleting a section also ungroups its agents without deletin
 use the same `SidebarLayoutStore` as manual sidebar edits, including persistence, validation,
 and change events delivered to desktop and connected clients.
 
-`html_render` publishes a visual reply: an HTML page that shows above the agent's reply. The router
+`html_render` publishes a visual reply: an HTML page that shows above the agent's reply. On desktop
+and in the web client, a button on the page opens it as a file tab of the side panel too. The router
 stores the page as a generated `text/html` attachment and adds an assistant message with the item
 type `visual-reply:<height>` and the page title as its text (`@openbot/contracts/chat-visual`). A
 client that does not know the item type shows the title and the file. A visual message is not
@@ -800,14 +835,17 @@ the page on `openbot-visual:` (`openbot-remote-visual:` for a remote host) with
 the same sandbox without `allow-same-origin`. The page runs its scripts and can load files from the
 network, but it has an opaque origin, gets no permission, and talks to the app only with the checked
 messages of `parseChatVisualMessage`: its height, its theme, its display mode, a link, a message, its
-context, an image and an app shortcut. The frame script gives the page `window.openbotPage`
+context, the selected text, an image and an app shortcut. The frame script gives the page `window.openbotPage`
 (`sendMessage`, `setContext`, `requestFullscreen`, `exitFullscreen`, `displayMode`) over the MCP Apps
 methods `ui/message`, `ui/update-model-context` and `ui/request-display-mode`. A link, a message, the
 context, an image, full screen and a shortcut need the frame to have the focus and the user's
 activation, so a page acts only after a click or a key in it. A message goes at the end of the draft,
-and the user sends it. The context is a quote tag of the visual message
-at the start of the draft, so it shows as a quote chip and is saved and sent with the draft; the
-page's next context replaces it. Full screen puts the frame's
+and the user sends it. The context is a quote tag of the visual message (in the side panel, of the
+message that holds the page) at the start of the draft, so it shows as a quote chip and is saved and sent with the draft; the
+page's next context replaces it. The frame script reports the text that the user selects in the
+page, and the chat or the panel shows the Quote action of a chat selection over it. Quote, or the
+quote shortcut in the page, adds the text as a quote of the page file, so the chip opens the page in
+the side panel. In the chat, full screen puts the frame's
 box in the top layer with the Popover API, so the frame does not load again; it exits before the app
 opens a dialog for the page. Only the renderer's allowlist of shortcuts (`chat-visual-shortcuts.ts`)
 leaves the page, as a key event on the frame element. Mobile runs the
@@ -971,8 +1009,8 @@ in `.agents/skills` and `.claude/skills` that OpenBot does not manage. Workspace
 and leave out `.openbot/`, the skill folders, links, and every path `isUnsafeArchivePath` refuses
 (`.git`, `node_modules`, `.env*`, private keys, nested archives). Server settings are optional: MCP servers,
 custom model providers, custom ACP agents (as a warning, see below), sidebar sections and routine flows
-between exported agents. A custom provider model keeps its optional `contextWindow`, `maxOutput`
-and `reasoningEfforts`; an app that does not know a field ignores it.
+between exported agents. A custom provider model keeps its optional `contextWindow`, `maxOutput`,
+`reasoningEfforts` and `inputs`; an app that does not know a field ignores it.
 
 No secret is in the file: MCP variable and header values are empty, custom providers have no key or
 headers, custom agents keep only the names of their variables, and `signedIn` lists provider ids,

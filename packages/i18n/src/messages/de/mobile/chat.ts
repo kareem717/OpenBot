@@ -33,6 +33,18 @@ export const messages = {
   "mobile.chat.routine.created": "Routine erstellt",
   "mobile.chat.routine.updated": "Routine aktualisiert",
   "mobile.chat.routine.deleted": "Routine gelöscht",
+  "mobile.chat.routine.runGroup.count": {
+    one: "{count} Ausführung",
+    other: "{count} Ausführungen",
+  },
+  "mobile.chat.routine.runGroup.show": {
+    one: "{count} Ausführung von {name} anzeigen",
+    other: "{count} Ausführungen von {name} anzeigen",
+  },
+  "mobile.chat.routine.runGroup.hide": {
+    one: "{count} Ausführung von {name} ausblenden",
+    other: "{count} Ausführungen von {name} ausblenden",
+  },
   "mobile.chat.contextReset": "Neuer Chat gestartet",
   "mobile.chat.plan.title": "Aufgaben",
   "mobile.chat.plan.stopped": "Gestoppt",
@@ -214,6 +226,8 @@ export const messages = {
   "mobile.chat.markdown.linkFailedTitle": "Link konnte nicht geöffnet werden",
   "mobile.chat.markdown.linkFailedMessage": "Du kannst den Link stattdessen auswählen und kopieren.",
   "mobile.chat.markdown.openBrowserTab": "Browser-Tab {name} anzeigen",
+  "mobile.chat.markdown.openFile": "Datei {name} öffnen",
+  "mobile.chat.markdown.openFileFailed": "Datei konnte nicht geöffnet werden",
   "mobile.chat.message.reply": "Antworten",
   "mobile.chat.message.branch": "Hier abzweigen",
   "mobile.chat.message.branchFailed": "Der Chat konnte nicht abgezweigt werden.",

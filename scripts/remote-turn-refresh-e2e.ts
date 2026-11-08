@@ -8,6 +8,12 @@ import { SIGNAL_TURN_REFRESH_INTERVAL_MS } from "@openbot/contracts/signal-proto
 import { build, serve } from "bun";
 import { chromium } from "playwright-core";
 
+declare global {
+  interface Window {
+    framesReceived: number;
+  }
+}
+
 const output = resolve(import.meta.dirname, "../.openbot-build/remote-turn-refresh-e2e");
 const entry = resolve(import.meta.dirname, "../src/renderer/src/features/team/team-webrtc.ts");
 const baseline = process.argv.includes("--baseline");
@@ -41,6 +47,7 @@ const report: { passed: boolean; baseline: boolean; checks: string[]; refreshes:
   refreshes: 0,
 };
 let answerRefresh = false;
+let signalSocket: { send(data: string): unknown } | undefined;
 const ready = JSON.stringify({
   type: "ready",
   version: 1,
@@ -63,7 +70,10 @@ const service = serve({
   websocket: {
     message(socket, data) {
       const frame = JSON.parse(String(data));
-      if (frame.type === "hello" || frame.type === "resume") socket.send(ready);
+      if (frame.type === "hello" || frame.type === "resume") {
+        signalSocket = socket;
+        socket.send(ready);
+      }
       if (frame.type === "turn-refresh") {
         assert.equal(frame.connectionId, null);
         report.refreshes++;
@@ -76,6 +86,19 @@ const browser = await chromium.launch({ channel: "chrome" });
 try {
   const page = await browser.newPage();
   await page.clock.install();
+  // Counts the frames that reach the page, so the fixture waits for delivery and not for time.
+  await page.addInitScript(() => {
+    const Native = window.WebSocket;
+    window.framesReceived = 0;
+    window.WebSocket = class extends Native {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        this.addEventListener("message", () => {
+          window.framesReceived++;
+        });
+      }
+    };
+  });
   await page.goto(`http://127.0.0.1:${service.port}`);
   await page.evaluate((port) => {
     const channel = new MessageChannel();
@@ -99,8 +122,18 @@ try {
     window.postMessage("openbot-team-webrtc-port", "*", [channel.port2]);
   }, service.port);
   await page.waitForFunction("window.refreshFixture.ready === 1");
-  await page.clock.runFor(SIGNAL_TURN_REFRESH_INTERVAL_MS);
-  await page.evaluate(() => fetch("/barrier"));
+  // A socket with traffic is not probed, so the frames leave the 45-minute refresh as the only request.
+  // This build ignores a frame type that it does not know.
+  const step = 3 * 60_000;
+  for (let elapsed = 0; elapsed < SIGNAL_TURN_REFRESH_INTERVAL_MS; elapsed += step) {
+    const received = await page.evaluate(() => window.framesReceived);
+    signalSocket?.send(JSON.stringify({ type: "fixture-traffic", version: 1 }));
+    await page.waitForFunction((count) => window.framesReceived > count, received);
+    await page.clock.runFor(step);
+    await page.evaluate(() => fetch("/barrier"));
+    if (elapsed + step < SIGNAL_TURN_REFRESH_INTERVAL_MS)
+      assert.equal(report.refreshes, 0, "A socket with traffic was probed before the refresh deadline.");
+  }
   assert.equal(report.refreshes, 1, "The host did not request credentials at the refresh deadline.");
   report.checks.push("The host requests credentials at 45 minutes.");
   answerRefresh = true;
