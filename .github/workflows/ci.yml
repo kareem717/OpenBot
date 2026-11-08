@@ -481,6 +481,7 @@ jobs:
         run: |
           bun scripts/channel-parent-request-e2e.ts
           bun scripts/channel-routine-busy-e2e.ts
+          bun scripts/channel-routing-clarification-e2e.ts
           bun scripts/channel-empty-result-e2e.ts
           bun scripts/channel-notifications-e2e.ts
           bun scripts/live-activity-ice-away-e2e.ts
@@ -656,6 +657,7 @@ jobs:
             .openbot-build/agent-channel-manage-e2e/
             .openbot-build/channel-parent-request-e2e/
             .openbot-build/channel-routine-busy-e2e/
+            .openbot-build/channel-routing-clarification-e2e/
             .openbot-build/channel-empty-result-e2e/
             .openbot-build/channel-notifications-e2e/
             .openbot-build/live-activity-ice-away-e2e/

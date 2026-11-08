@@ -345,6 +345,17 @@ priority, active routine serialization, queue and turn-completion wake, durable 
 and recovery of a misplaced reserved delivery. The provider start boundary is observed without
 starting a real account turn. Its report is `.openbot-build/channel-routine-busy-e2e/report.json`.
 
+A reply to a coordinator question reuses the task and keeps its original instruction. Routing
+also receives the current request text as a bounded `followUp` when the request differs from
+the original source. The prompt identifies that text as the latest direction for the task.
+This is required because the current request is omitted from `recent`: without the explicit
+follow-up, a reply could route only the old unclear instruction and ask the same question again.
+The existing request-byte and total routing-prompt limits still apply. The change does not replace
+the stored instruction, create another task, or select a member without a routing decision.
+`bun scripts/channel-routing-clarification-e2e.ts` checks the actual question, linked reply,
+updated request id and member assignment through real channel commands, SQLite and mailbox state.
+Its report is `.openbot-build/channel-routing-clarification-e2e/report.json`.
+
 A channel turn can use `ask_ui`, the plan card (`acknowledge_request`) and `html_render`. The
 question, the card and the visual reply are copied into the channel, so each member who reads the
 channel sees them and can answer. Screen capture in a channel turn always asks, also with Full
