@@ -179,6 +179,7 @@ export async function routeBrowser(
       201,
       browserView.createSession({
         memberId: member.id,
+        owner: member.role === "owner",
         teamSessionId: sessionId,
         tabId: tabId(body),
       }),

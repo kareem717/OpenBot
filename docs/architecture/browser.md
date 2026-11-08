@@ -559,3 +559,11 @@ URL with GET to replace the document without replaying a form POST. Failure reta
 clears navigation history; manual takeover
 completion alone cannot release it. Secrets are not retried. Authentication inside unsupported frames,
 unclear OAuth account selection, CAPTCHA, passkeys, and payment confirmation use takeover.
+
+After a saved card is filled, the authenticated server owner can open the live browser view during
+an active takeover to finish bank verification. The Team API derives this permission from the
+authenticated membership, not the request body. Ending takeover revokes the view. Card capture
+protection still blocks agent images, previews, recordings, and other members' views until navigation.
+
+Restoring a tab preserves its task thread. The historical agent-id repair renames only a matching
+legacy primary thread; it does not move task tabs into the agent's main chat.

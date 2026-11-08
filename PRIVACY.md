@@ -1907,6 +1907,11 @@ the sensitive document. The destination site receives the value and controls its
 This protection does not isolate credentials from the operating system or agents with unrestricted
 machine access. Values pasted into ordinary chat are not covered by secure handoff.
 
+After OpenBot fills a saved payment card, the authenticated server owner can see the page through
+the live browser connection during an active takeover, including bank verification. Ending takeover
+revokes this view. Agent images, previews, recordings, and other members' views stay blocked until
+the document navigates.
+
 Native browser control uses a local OS driver and a window that contains only the selected tab.
 The driver runs on the computer that hosts the browser. It does not add a cloud service or send
 screen data to a new destination. Requested browser snapshots use the agent's existing provider

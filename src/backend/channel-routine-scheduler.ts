@@ -289,6 +289,22 @@ export class ChannelRoutineScheduler implements RoutineDueSource {
         });
         // A routine set to skip drops the occurrence while a spent plan would only make it wait.
         if (due.routine.limitPolicy === "skip" && this.#hooks.usageLimited(due.routine.channelId)) continue;
+        // Billing needs a person, not another scheduled attempt. Keep its original stopped task
+        // available to resume; later ticks advance the schedule without making duplicate alerts.
+        if (
+          yield* channelRoutineStep(() =>
+            this.#channels.store
+              .tasks(due.routine.channelId)
+              .some(
+                (task) =>
+                  task.state === "paused" &&
+                  task.error === sourceText("error.backend.providerPaymentMethodRequired") &&
+                  this.#channels.store.message(due.routine.channelId, task.requestMessageId)?.author.id ===
+                    `routine:${due.routine.id}`,
+              ),
+          )
+        )
+          continue;
         yield* this.#fireEffect(due.routine, due.triggerId, scheduledFor);
       }
     }).pipe(

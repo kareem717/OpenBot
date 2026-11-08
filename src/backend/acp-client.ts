@@ -2266,6 +2266,14 @@ export class AcpAgentClient extends EventEmitter<ClientEvents> {
           turn.text = failure ? turn.text.slice(0, failureAt) : "";
         }
       }
+      if (!turn.providerError && !turn.stopped && response.stopReason === "end_turn") {
+        const failure = this.#flavor.answerFailure?.(turn.text);
+        if (failure) {
+          turn.failureCause = failure.causeCode;
+          turn.providerError = failure.message;
+          turn.text = "";
+        }
+      }
       const status =
         turn.stopped || response.stopReason === "cancelled"
           ? "interrupted"

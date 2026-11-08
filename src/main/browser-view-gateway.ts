@@ -103,6 +103,8 @@ interface ManagedViewSession {
   id: string;
   tabId: string;
   memberId: string;
+  /** The server authenticated this member as the owner. A client cannot request this permission. */
+  owner: boolean;
   teamSessionId: string;
   socket: Ws.WebSocket | null;
   stopView: (() => Effect.Effect<void>) | null;
@@ -153,7 +155,12 @@ export class BrowserViewGateway {
     this.#layer = BrowserViewPort.layer(options.browser);
   }
 
-  createSession(input: { memberId: string; teamSessionId: string; tabId: string }): BrowserViewSessionResponse {
+  createSession(input: {
+    memberId: string;
+    teamSessionId: string;
+    tabId: string;
+    owner?: boolean;
+  }): BrowserViewSessionResponse {
     if (this.#sessions.size >= (this.#options.maxSessions ?? MAX_SESSIONS)) {
       throw new Error(sourceText("error.backend.browserViewLimit"));
     }
@@ -162,6 +169,7 @@ export class BrowserViewGateway {
       id,
       tabId: input.tabId,
       memberId: input.memberId,
+      owner: input.owner === true,
       teamSessionId: input.teamSessionId,
       socket: null,
       stopView: null,
@@ -329,6 +337,7 @@ export class BrowserViewGateway {
           this.#dispatch(this.#closeSession(session, reason));
         },
         {
+          owner: session.owner,
           // A cursor message is not dropped with frames: a lost frame is replaced by the next one,
           // and a lost cursor stays wrong until the page changes it again.
           ...(session.reportCursor

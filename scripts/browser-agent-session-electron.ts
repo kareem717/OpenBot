@@ -52,6 +52,8 @@ const server = createServer((_request, response) => {
 const CLIENT_ONE = "11111111111111111111111111111111";
 const CLIENT_TWO = "22222222222222222222222222222222";
 const MISSING_PROFILE = "33333333333333333333333333333333";
+const MIGRATED_AGENT = "agent-12345678-1234-4234-8234-123456789abc";
+const OLD_AGENT = "bot-12345678-1234-4234-8234-123456789abc";
 const profiles = new Set([CLIENT_ONE, CLIENT_TWO]);
 const AGENT_PROFILES: Record<string, AgentBrowserProfile> = {
   "agent-a": { kind: "agent" },
@@ -97,6 +99,7 @@ async function main(): Promise<void> {
     const b = await runCauseEffect(first.open(page("b"), "thread-b", "agent-b"));
     const c = await runCauseEffect(first.open(page("c"), "thread-c", "agent-c"));
     const shared = await runCauseEffect(first.open(page("shared")));
+    const side = await runCauseEffect(first.open(page("side-a"), "thread-a-side", "agent-a"));
     // The last write wins in a session that two tabs share.
     await writeValues(contentsFor(a.url), "a");
     await writeValues(contentsFor(b.url), "b");
@@ -159,6 +162,18 @@ async function main(): Promise<void> {
     saved.tabs.push(
       { id: "legacy-tab", url: page("legacy"), ownerThreadId: "thread-a", ownerAgentId: "agent-a" },
       {
+        id: "renamed-primary-tab",
+        url: page("renamed-primary"),
+        ownerThreadId: `openbot-thread-${OLD_AGENT}`,
+        ownerAgentId: OLD_AGENT,
+      },
+      {
+        id: "renamed-task-tab",
+        url: page("renamed-task"),
+        ownerThreadId: "thread-migrated-side",
+        ownerAgentId: OLD_AGENT,
+      },
+      {
         id: "malformed-tab",
         url: page("malformed"),
         ownerThreadId: "thread-a",
@@ -170,7 +185,43 @@ async function main(): Promise<void> {
 
     browser = new BrowserHost(newWindow(), join(fixtureRoot, "downloads"), statePath, hostOptions);
     const second = browser;
-    await runCauseEffect(second.restore());
+    await runCauseEffect(
+      second.restore([
+        { id: "agent-a", threadId: "thread-a" },
+        { id: "agent-b", threadId: "thread-b" },
+        { id: MIGRATED_AGENT, threadId: `openbot-thread-${MIGRATED_AGENT}` },
+      ]),
+    );
+    const sideRestored = second.listTabs().find((tab) => tab.id === side.id);
+    assert.equal(sideRestored?.ownerThreadId, "thread-a-side", "Restore moved a task tab to the primary chat.");
+    assert.equal(sideRestored?.ownerAgentId, "agent-a");
+    const toolTabs = async (threadId: string, ownerAgentId = "agent-a") => {
+      const result = await runCauseEffect(
+        second.handleDynamicTool({
+          namespace: "openbot_browser",
+          tool: "list_tabs",
+          arguments: {},
+          ownerAgentId,
+          threadId,
+          turnId: "restore-check",
+          callId: `restore-${threadId}`,
+        }),
+      );
+      assert(result.success);
+      return result.contentItems.flatMap((item) => (item.type === "inputText" ? [item.text] : [])).join("\n");
+    };
+    assert((await toolTabs("thread-a-side")).includes(side.id), "The task cannot find its restored tab.");
+    assert(!(await toolTabs("thread-a")).includes(side.id), "The primary chat gained a task's tab.");
+    assert(!(await toolTabs("thread-a-side", "agent-b")).includes(side.id), "Another agent gained the task's tab.");
+    recordCases("restored-task-tab-keeps-thread-and-tool-access");
+    const renamedPrimary = second.listTabs().find((tab) => tab.id === "renamed-primary-tab");
+    assert.equal(renamedPrimary?.ownerAgentId, MIGRATED_AGENT);
+    assert.equal(renamedPrimary?.ownerThreadId, `openbot-thread-${MIGRATED_AGENT}`);
+    const renamedTask = second.listTabs().find((tab) => tab.id === "renamed-task-tab");
+    assert.equal(renamedTask?.ownerAgentId, MIGRATED_AGENT);
+    assert.equal(renamedTask?.ownerThreadId, "thread-migrated-side");
+    assert((await toolTabs("thread-migrated-side", MIGRATED_AGENT)).includes("renamed-task-tab"));
+    recordCases("legacy-owner-rename-preserves-primary-and-task-threads");
     const restoredIds = second.listTabs().map((tab) => tab.id);
     assert(restoredIds.includes("legacy-tab"), "The legacy tab was not restored.");
     assert(!restoredIds.includes("malformed-tab"), "The tab with a malformed session key was restored.");

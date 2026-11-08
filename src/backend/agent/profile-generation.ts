@@ -369,7 +369,12 @@ const profileCompletion = Effect.fnUntraced(function* (
               }),
             ),
           );
-        else reject(sourceText("error.agent.profileFailed"));
+        else
+          reject(
+            provider.last === sourceText("error.backend.providerPaymentMethodRequired")
+              ? provider.last
+              : sourceText("error.agent.profileFailed"),
+          );
       }
       if (answer().length > 32_000) reject(sourceText("error.agent.profileTooLarge"));
     };

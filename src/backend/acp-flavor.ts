@@ -1,6 +1,7 @@
 import { win32 } from "node:path";
 import type { LoadSessionResponse, NewSessionRequest, PromptResponse, RequestError } from "@agentclientprotocol/sdk";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
+import { sourceText } from "@openbot/i18n/source";
 import type { CauseCode } from "@openbot/telemetry";
 import { enableCursorMcpServers } from "./cursor-mcp-disabled";
 import { isRecord } from "./protocol";
@@ -46,6 +47,8 @@ export interface AcpFlavor {
   failureCause?(error: unknown): CauseCode | null;
   /** The message of a turn that ended with no answer text. Absent: such a turn succeeds. */
   emptyAnswerFailure?(reasoned: boolean): string;
+  /** A complete answer that is the provider's own refusal, although the prompt reports success. */
+  answerFailure?(text: string): { causeCode: CauseCode; message: string } | null;
   /**
    * What to do when `session/load` or `session/resume` fails: wait once for a process that still
    * starts, or list the sessions to find out whether this one exists. `null` reports the failure.
@@ -185,6 +188,12 @@ export const HERMES_ACP_FLAVOR: AcpFlavor = {
  * Other invalid parameters must not cause a provider session to be replaced.
  */
 export const CURSOR_ACP_FLAVOR: AcpFlavor = {
+  // Cursor 2026.11.05-86047df sends this billing refusal as answer text and returns end_turn.
+  // Match the complete answer, including its transport prefix; quoted text and JSON stay answers.
+  answerFailure: (text) =>
+    text === "\n\nAdd a payment method to continue"
+      ? { causeCode: "billing", message: sourceText("error.backend.providerPaymentMethodRequired") }
+      : null,
   sessionNotFound: (error, sessionId) =>
     error.code === -32602 ? isRecord(error.data) && error.data.message === `Session "${sessionId}" not found` : null,
   // Cursor 2026.10.22-27dcf5f sends "\n\nError: RetriableError: WritableIterable is closed" as one

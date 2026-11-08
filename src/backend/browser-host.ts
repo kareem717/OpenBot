@@ -231,6 +231,8 @@ const MAX_ACTIVE_DOWNLOADS = 4;
 const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
 export interface BrowserViewOptions {
+  /** Set by the authenticated Team API, never by the request body. Only for the owner's takeover. */
+  owner?: boolean;
   /** Hears the page's mouse cursor when it changes. Not called while a secret is on the page. */
   onCursor?: (cursor: BrowserViewCursor) => void;
   /** The page size, in CSS pixels, that the page keeps while the view is open. */
@@ -1551,9 +1553,12 @@ export class BrowserHost {
     for (const connected of this.#connectedTabs(tab)) connected.externalCdp?.revoke();
   }
 
-  /** A filled card shows on the page, so no image of the tab leaves the host until it navigates. */
-  #requireNoFilledCard(tab: BrowserHostTab, action: string): void {
-    if (tab.filledCard || [...this.#connectedTabs(tab)].some((connected) => connected.sourceSecretDocument))
+  /** Filled-card images stay private, except in the authenticated owner's active takeover view. */
+  #requireNoFilledCard(tab: BrowserHostTab, action: string, ownerTakeover = false): void {
+    if (
+      (!ownerTakeover && tab.filledCard) ||
+      [...this.#connectedTabs(tab)].some((connected) => connected.sourceSecretDocument)
+    )
       throw new Error(`${action} is unavailable while the page shows a filled card. Use snapshots until it navigates.`);
   }
 
@@ -1695,6 +1700,7 @@ export class BrowserHost {
       tab.diagnostics.clearDiagnostics();
     }
     this.#takeoverTabIds.delete(tabId);
+    if (tab?.filledCard) this.#invalidateViews(tab);
     this.#syncAttachedView();
     this.#emitChanged();
   }
@@ -1946,9 +1952,10 @@ export class BrowserHost {
   ): Effect.fn.Return<() => Effect.Effect<void>, BrowserOperationError> {
     const { onCursor, viewport } = options;
     const tab = yield* this.#requireTab(tabId);
+    const ownerTakeover = () => options.owner === true && this.#takeoverTabIds.has(tabId);
     if (tab.secret?.submitted)
       return yield* browserFailure(new Error(sourceText("error.backend.browserViewProtected")));
-    yield* browserSync(() => this.#requireNoFilledCard(tab, "Browser view"));
+    yield* browserSync(() => this.#requireNoFilledCard(tab, "Browser view", ownerTakeover()));
     const generation = tab.captureGeneration;
     let invalidated = false;
     // Chromium reports the cursor of the input it dispatches, the live view's pointer included.
@@ -1982,7 +1989,7 @@ export class BrowserHost {
         (frame) => {
           if (
             !tab.secret?.submitted &&
-            !tab.filledCard &&
+            (!tab.filledCard || ownerTakeover()) &&
             !tab.sourceSecretDocument &&
             tab.captureGeneration === generation
           )

@@ -325,6 +325,58 @@ async function main(): Promise<void> {
       (error: unknown) => String(error),
     );
     assert(preview.includes("filled card"), "A preview was captured.");
+
+    phase("owner-card-takeover");
+    const viewFailure = (owner: boolean) =>
+      runCauseEffect(host.startView(main.tabId, () => {}, undefined, { owner })).then(
+        async (stop) => {
+          await runCauseEffect(stop());
+          return "view started";
+        },
+        (error: unknown) => String(error),
+      );
+    assert((await viewFailure(true)).includes("filled card"), "An owner view bypassed the active-takeover guard.");
+    await runCauseEffect(host.beginTakeover(main.tabId));
+    assert((await viewFailure(false)).includes("filled card"), "A non-owner view showed a filled card.");
+    let frameReady: (() => void) | undefined;
+    const frame = new Promise<void>((resolveFrame) => {
+      frameReady = resolveFrame;
+    });
+    let viewEnded = false;
+    const stopOwnerView = await runCauseEffect(
+      host.startView(
+        main.tabId,
+        (image) => {
+          assert(image.image.byteLength > 0, "The owner's takeover view returned an empty image.");
+          frameReady?.();
+        },
+        () => {
+          viewEnded = true;
+        },
+        { owner: true },
+      ),
+    );
+    let frameTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        frame,
+        new Promise<never>((_resolve, reject) => {
+          frameTimeout = setTimeout(() => reject(new Error("The owner takeover view sent no frame.")), 10_000);
+        }),
+      ]);
+      assert(
+        !(await call("screenshot", { tabId: main.tabId })).success,
+        "The agent captured the owner's takeover page.",
+      );
+      host.endTakeover(main.tabId);
+      assert(viewEnded, "The sensitive owner view stayed open after handback.");
+      assert((await viewFailure(true)).includes("filled card"), "An owner view stayed authorized after handback.");
+    } finally {
+      clearTimeout(frameTimeout);
+      host.endTakeover(main.tabId);
+      await runCauseEffect(stopOwnerView());
+    }
+    recordCases("owner-card-takeover-live-view", "non-owner-card-view-refused", "card-takeover-view-revoked");
     recordCases(
       "screenshot-refused",
       "snapshot-image-refused",
