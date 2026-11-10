@@ -147,6 +147,7 @@ import {
   WORKFLOWS_CHATS_CAPABILITY,
   WORKFLOWS_GITHUB_CAPABILITY,
 } from "@openbot/contracts/team-protocol/current";
+import { CURSOR_API_KEY_CAPABILITY } from "@openbot/contracts/team-protocol/cursor-api-key-v1";
 import { CUSTOM_AGENTS_CAPABILITY } from "@openbot/contracts/team-protocol/custom-agents-v1";
 import { CUSTOM_PROVIDER_HARNESS_CAPABILITY } from "@openbot/contracts/team-protocol/custom-provider-harness-v1";
 import { FOCUS_USE_INTERVAL_MS } from "@openbot/contracts/team-protocol/focus-use-v1";
@@ -2463,7 +2464,11 @@ export class TeamApiServer {
             capability === CUSTOM_PROVIDER_HARNESS_CAPABILITY
           )
             return this.#options.admin?.providers !== undefined;
-          if (capability === CLAUDE_API_KEY_CAPABILITY || capability === CODEX_API_KEY_CAPABILITY)
+          if (
+            capability === CLAUDE_API_KEY_CAPABILITY ||
+            capability === CODEX_API_KEY_CAPABILITY ||
+            capability === CURSOR_API_KEY_CAPABILITY
+          )
             return this.#options.admin?.providers !== undefined;
           if (capability === PROVIDERS_SIGN_IN_V3_CAPABILITY)
             return this.#options.admin?.providers?.pasteSignIn === true;

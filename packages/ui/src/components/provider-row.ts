@@ -222,14 +222,15 @@ export function createProviderRow(option: () => ProviderPickerOption, host: Prov
    * Gemini's Connect and Reconnect are the Google sign-in, and a saved key wins over it, so the key
    * stays reachable in every state, Connected included: a refused key must stay replaceable and
    * removable. A released host stores a Gemini key but never reads it, so only this computer offers it.
-   * Claude's key works the same way. Its row has a key status only where the host reads the key.
+   * Claude's and Cursor's keys work the same way. Each row has a key status only where the host reads
+   * the key.
    * Codex's key is a login on the host, so its row has a key status only where the host makes that
    * login: this computer, or a joined server with `codex-api-key-v1`.
    */
   const apiKeyOffered = () =>
     Boolean(host.onSignInProvider) &&
     ((option().id === "antigravity" && browserConnect() && runtimeStatus()?.phase === "ready") ||
-      ((option().id === "claude" || option().id === "codex") &&
+      ((option().id === "claude" || option().id === "codex" || option().id === "cursor") &&
         option().keyStatus !== undefined &&
         runtimeReady() &&
         state() !== "not-installed"));

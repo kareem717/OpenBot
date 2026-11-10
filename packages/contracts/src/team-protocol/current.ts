@@ -62,6 +62,7 @@ import { CONTEXT_RESET_CAPABILITY } from "./context-reset-v1";
 import { TEAM_CONTEXT_USAGE_CAPABILITY } from "./context-usage-v1";
 import { CONVERSATION_FILE_SEARCH_CAPABILITY } from "./conversation-file-search-v1";
 import { CONVERSATION_UNREAD_FROM_CAPABILITY } from "./conversation-unread-from-v1";
+import { CURSOR_API_KEY_CAPABILITY } from "./cursor-api-key-v1";
 import { CUSTOM_AGENTS_CAPABILITY } from "./custom-agents-v1";
 import { CUSTOM_PROVIDER_HARNESS_CAPABILITY } from "./custom-provider-harness-v1";
 import { DISCORD_ACCESS_CAPABILITY } from "./discord-access-v1";
@@ -491,6 +492,7 @@ export const TEAM_CURRENT_CAPABILITIES = [
   BROWSER_PROXIES_CAPABILITY,
   BROWSER_EGRESS_CAPABILITY,
   CODEX_API_KEY_CAPABILITY,
+  CURSOR_API_KEY_CAPABILITY,
   CHANNEL_ISOLATION_CAPABILITY,
   AGENT_THREAD_PAGES_CAPABILITY,
   TEAM_ANY_FILE_ATTACHMENTS_CAPABILITY,
@@ -672,6 +674,7 @@ export const TEAM_BOOTSTRAP_CAPABILITIES = TEAM_CURRENT_CAPABILITIES.filter(
     capability !== BROWSER_PROXIES_CAPABILITY &&
     capability !== BROWSER_EGRESS_CAPABILITY &&
     capability !== CODEX_API_KEY_CAPABILITY &&
+    capability !== CURSOR_API_KEY_CAPABILITY &&
     capability !== CHANNEL_ISOLATION_CAPABILITY &&
     capability !== AGENT_THREAD_PAGES_CAPABILITY &&
     capability !== TEAM_ANY_FILE_ATTACHMENTS_CAPABILITY &&
@@ -728,6 +731,7 @@ export const TEAM_PROTOCOL_V9_ONLY_CAPABILITIES: ReadonlySet<string> = new Set<T
   BROWSER_PROXIES_CAPABILITY,
   BROWSER_EGRESS_CAPABILITY,
   CODEX_API_KEY_CAPABILITY,
+  CURSOR_API_KEY_CAPABILITY,
   CHANNEL_ISOLATION_CAPABILITY,
   AGENT_THREAD_PAGES_CAPABILITY,
   TEAM_ANY_FILE_ATTACHMENTS_CAPABILITY,
@@ -868,6 +872,7 @@ export function legacyTeamCapabilities(capabilities: readonly string[]): string[
       capability !== BROWSER_PROXIES_CAPABILITY &&
       capability !== BROWSER_EGRESS_CAPABILITY &&
       capability !== CODEX_API_KEY_CAPABILITY &&
+      capability !== CURSOR_API_KEY_CAPABILITY &&
       capability !== CHANNEL_ISOLATION_CAPABILITY &&
       capability !== AGENT_THREAD_PAGES_CAPABILITY &&
       capability !== TEAM_ANY_FILE_ATTACHMENTS_CAPABILITY &&

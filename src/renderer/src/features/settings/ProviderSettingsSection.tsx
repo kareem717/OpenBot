@@ -399,6 +399,7 @@ function createProviderKeyState(props: {
   const [openCodeKeyStatus, setOpenCodeKeyStatus] = createSignal<ProviderApiKeyStatus | undefined>(undefined);
   const [claudeKeyStatus, setClaudeKeyStatus] = createSignal<ProviderApiKeyStatus | undefined>(undefined);
   const [codexKeyStatus, setCodexKeyStatus] = createSignal<ProviderApiKeyStatus | undefined>(undefined);
+  const [cursorKeyStatus, setCursorKeyStatus] = createSignal<ProviderApiKeyStatus | undefined>(undefined);
   async function readKeyStatus(keys: ProviderKeyApi, provider: AgentProviderId) {
     try {
       return (await keys.getProviderApiKeyState(provider)).status;
@@ -410,16 +411,18 @@ function createProviderKeyState(props: {
     const keys = props.providerKeys;
     if (!keys) return;
     // This computer's Codex key is in the agent status. A joined server's host answers for its Codex login.
-    const [openCode, claude, codex] = await Promise.all([
+    const [openCode, claude, codex, cursor] = await Promise.all([
       readKeyStatus(keys, "opencode"),
       keys.readsClaudeKey ? readKeyStatus(keys, "claude") : undefined,
       keys.readsCodexKey && keys.onHost ? readKeyStatus(keys, "codex") : undefined,
+      keys.readsCursorKey ? readKeyStatus(keys, "cursor") : undefined,
     ]);
     // An answer from a source the modal has since left belongs to the other computer.
     if (keys !== props.providerKeys) return;
     setOpenCodeKeyStatus(openCode);
     setClaudeKeyStatus(claude);
     setCodexKeyStatus(codex);
+    setCursorKeyStatus(cursor);
   }
   // The badge has to answer on first paint: the key state arrives after the rows, so an open
   // without a read would show no badge until something else re-renders the list. The keys can move
@@ -431,6 +434,7 @@ function createProviderKeyState(props: {
       setOpenCodeKeyStatus(undefined);
       setClaudeKeyStatus(undefined);
       setCodexKeyStatus(undefined);
+      setCursorKeyStatus(undefined);
       if (keys) void untrack(refreshOpenCodeKeyStatus);
     },
   );
@@ -455,16 +459,18 @@ function createProviderKeyState(props: {
     openCodeKeyStatus,
     claudeKeyStatus,
     codexKeyStatus,
+    cursorKeyStatus,
     /**
-     * Only the providers whose sign-in can be a pasted key are served: OpenCode, Muse, Gemini, Claude
-     * and Codex. Claude's and Codex's Sign in also land here on an older host, which would store the
+     * Only the providers whose sign-in can be a pasted key are served: OpenCode, Muse, Gemini, Claude,
+     * Codex and Cursor. Claude's and Codex's Sign in also land here on an older host, which would store the
      * key and never read it.
      */
     openKeyDialog(provider: AgentProviderId): void {
       if (
         isKeyDialogProvider(provider) &&
         (provider !== "claude" || props.providerKeys?.readsClaudeKey) &&
-        (provider !== "codex" || props.providerKeys?.readsCodexKey)
+        (provider !== "codex" || props.providerKeys?.readsCodexKey) &&
+        (provider !== "cursor" || props.providerKeys?.readsCursorKey)
       ) {
         setKeyProvider(provider);
         setKeyDialogOpen(true);
@@ -613,6 +619,7 @@ export function HostProviderSettingsPanel(
     openCodeKeyStatus: keys.openCodeKeyStatus,
     claudeKeyStatus: keys.claudeKeyStatus,
     codexKeyStatus: keys.codexKeyStatus,
+    cursorKeyStatus: keys.cursorKeyStatus,
     get providerHostName() {
       return props.hostName;
     },

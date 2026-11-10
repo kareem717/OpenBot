@@ -58,6 +58,7 @@ jobs:
           bun scripts/browser-native-task-permission-e2e.ts
           bun --conditions=browser scripts/webhook-card-reconnect-e2e.mjs
           bun scripts/codex-minimum-runtime-e2e.ts
+          bun scripts/cursor-api-key-e2e.ts
           bun scripts/codex-mcp-session-recovery-e2e.ts
           bun scripts/codex-open-session-compaction-e2e.ts
           bun scripts/browser-takeover-steer-e2e.ts

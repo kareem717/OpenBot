@@ -26,6 +26,8 @@ interface GeneralStoreProps {
   openCodeKeyStatus?: () => ProviderApiKeyStatus | undefined;
   /** Whether a Claude key is saved, read the same way. Absent where the host does not read the key. */
   claudeKeyStatus?: () => ProviderApiKeyStatus | undefined;
+  /** Whether a Cursor key is saved, read the same way. Absent where the host does not read the key. */
+  cursorKeyStatus?: () => ProviderApiKeyStatus | undefined;
   /**
    * Whether a joined server's host logs Codex in with a pasted OpenAI key, read the same way. Absent
    * where the host does not read the key (`codex-api-key-v1`). This computer's agent status says it.
@@ -94,15 +96,17 @@ export function createSettingsGeneralStore(props: GeneralStoreProps) {
           ? props.openCodeKeyStatus?.()
           : provider === "claude"
             ? props.claudeKeyStatus?.()
-            : provider === "antigravity" && agent?.apiKeyInUse
-              ? ("saved" as const)
-              : provider === "codex" && props.providerHostName
-                ? props.codexKeyStatus?.()
-                : (provider === "codex" || provider === "muse") && !props.providerHostName
-                  ? agent?.apiKeyInUse
-                    ? ("saved" as const)
-                    : ("missing" as const)
-                  : undefined;
+            : provider === "cursor"
+              ? props.cursorKeyStatus?.()
+              : provider === "antigravity" && agent?.apiKeyInUse
+                ? ("saved" as const)
+                : provider === "codex" && props.providerHostName
+                  ? props.codexKeyStatus?.()
+                  : (provider === "codex" || provider === "muse") && !props.providerHostName
+                    ? agent?.apiKeyInUse
+                      ? ("saved" as const)
+                      : ("missing" as const)
+                    : undefined;
       return {
         id: provider,
         name: agentProviderName(provider),

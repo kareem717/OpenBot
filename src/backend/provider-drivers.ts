@@ -174,6 +174,12 @@ const CLAUDE_COMMAND_ENV = (cli: AgentCliInfo): Record<string, string> =>
  * install -- a CLI that updates itself past the pin fails the exact-version compare in
  * `verifyInstalledRuntime`, and OpenBot would then keep re-downloading a runtime it already has.
  */
+/** A Cursor key saved in OpenBot, for the Cursor CLI. A key in the user's environment applies without it. */
+function cursorKeyEnv(context: ProviderClientContext): Record<string, string> {
+  const key = context.apiKey("cursor");
+  return key ? { CURSOR_API_KEY: key } : {};
+}
+
 function opencodeEnv(cli: AgentCliInfo, credentials: ProviderClientContext): Record<string, string> {
   const key = credentials.apiKey("opencode");
   return {
@@ -1076,8 +1082,8 @@ export const BUILT_IN_PROVIDER_DRIVERS: readonly BuiltInProviderDriver[] = [
   },
   {
     id: "cursor",
-    // `cursor_login` opens the Cursor sign-in page from the server. `CURSOR_API_KEY` in the user's
-    // environment signs the CLI in without it.
+    // `cursor_login` opens the Cursor sign-in page from the server. `CURSOR_API_KEY` signs the CLI in
+    // without it: a key saved in OpenBot (`cursor-api-key-v1`), else one in the user's environment.
     signIn: { kind: "acp-authenticate", methodId: "cursor_login", argv: ["acp"], timeoutMs: CLI_LOGIN_TIMEOUT_MS },
     // With `NO_OPEN_BROWSER`, `login` prints the sign-in link and waits until the page signs it in.
     // The ACP `cursor_login` method gives up instead when it cannot open a browser.
@@ -1095,7 +1101,11 @@ export const BUILT_IN_PROVIDER_DRIVERS: readonly BuiltInProviderDriver[] = [
         argv: ["acp"],
         env: {},
         ...(confinement ? { confine: (target) => confineSpawnTarget(target, confinement, cursorStatePaths()) } : {}),
-        extraEnv: () => ({ ...context.agentEnvironment?.(), ...(confinement ? cursorConfinedEnv() : {}) }),
+        extraEnv: () => ({
+          ...context.agentEnvironment?.(),
+          ...(confinement ? cursorConfinedEnv() : {}),
+          ...cursorKeyEnv(context),
+        }),
         signInMessage: sourceText("error.provider.cursorSignIn"),
         servesModel: context.servesModel,
         mcpServers: context.mcpServers,
@@ -1112,6 +1122,7 @@ export const BUILT_IN_PROVIDER_DRIVERS: readonly BuiltInProviderDriver[] = [
         argv: ["acp"],
         profileGeneration: true,
         env: {},
+        extraEnv: () => cursorKeyEnv(context),
         signInMessage: sourceText("error.provider.cursorSignIn"),
         servesModel: context.servesModel,
       }),

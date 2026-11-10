@@ -121,6 +121,7 @@
     "./team-protocol/channel-isolation-v1": "./src/team-protocol/channel-isolation-v1.ts",
     "./team-protocol/claude-api-key-v1": "./src/team-protocol/claude-api-key-v1.ts",
     "./team-protocol/codex-api-key-v1": "./src/team-protocol/codex-api-key-v1.ts",
+    "./team-protocol/cursor-api-key-v1": "./src/team-protocol/cursor-api-key-v1.ts",
     "./team-protocol/optional-events": "./src/team-protocol/optional-events.ts",
     "./team-protocol/quiet-turn-v1": "./src/team-protocol/quiet-turn-v1.ts",
     "./team-protocol/mcp-v1": "./src/team-protocol/mcp-v1.ts",

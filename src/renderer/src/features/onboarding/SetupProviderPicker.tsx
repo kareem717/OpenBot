@@ -486,7 +486,13 @@ export function createSetupProviders(
    * stays the guide.
    */
   function signInProvider(provider: AgentProviderId): void {
-    if (isKeyDialogProvider(provider) && provider !== "claude" && provider !== "codex" && props.providerKeys) {
+    if (
+      isKeyDialogProvider(provider) &&
+      provider !== "claude" &&
+      provider !== "codex" &&
+      provider !== "cursor" &&
+      props.providerKeys
+    ) {
       setKeyProvider(provider);
       return;
     }
