@@ -73,6 +73,7 @@ jobs:
           xvfb-run -a bun run test:browser-cdp
           xvfb-run -a bun scripts/browser-smoke.ts --scenario=secret-handoff
           xvfb-run -a bun scripts/browser-smoke.ts --scenario=saved-tabs
+          xvfb-run -a bun scripts/browser-card-smoke.ts
           xvfb-run -a bun scripts/browser-user-control-e2e.ts
       - name: Check connection refresh and cookie redaction
         run: |
@@ -112,6 +113,7 @@ jobs:
             .openbot-build/remote-turn-refresh-e2e/report.json
             .openbot-build/onepassword-secure-fill-e2e/report.json
             .openbot-build/browser-otp-fields-e2e/report.json
+            .openbot-build/browser-card-smoke/report.json
             .openbot-build/redaction-cookie-load-e2e/report.json
             .openbot-build/agent-api-keys-e2e/report.json
             .openbot-build/vault-credential-discovery-e2e/report.json
