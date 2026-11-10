@@ -37,6 +37,8 @@ const SCRIPTED = "https://scripted.openbot.test";
 // A refused evaluate still marks the checkout site as scripted, so later fills use another site.
 const SHOP = "https://shop.openbot.test";
 const PAYMENTS = "https://payments.cardfixture.test";
+/** A checkout frame of another site that holds the payment frame, as some processors do. */
+const WRAPPER = "https://checkout.cardwrapper.test";
 
 const snapshotSchema = z.object({
   tabId: z.string(),
@@ -139,12 +141,16 @@ async function main(): Promise<void> {
     protocol.handle("https", (request) => {
       const url = new URL(request.url);
       if (url.origin === PAYMENTS) return page(checkoutForm("expiry"));
+      if (url.origin === WRAPPER)
+        return page(`<iframe title="Card frame" src="${PAYMENTS}/fields" width="500" height="300"></iframe>`);
       if (url.origin !== CHECKOUT && url.origin !== SCRIPTED && url.origin !== SHOP)
         return new Response("Not found", { status: 404 });
       if (url.pathname === "/framed")
         return page(
           `<label>Name on card<input id="name" autocomplete="cc-name"></label><iframe title="Card frame" src="${PAYMENTS}/fields" width="500" height="300"></iframe>`,
         );
+      if (url.pathname === "/nested")
+        return page(`<iframe title="Checkout frame" src="${WRAPPER}/hold" width="560" height="360"></iframe>`);
       if (url.pathname === "/get") return page(checkoutForm("selects", "get"));
       if (url.pathname === "/next") return page("<h1>Order placed</h1>");
       return page(checkoutForm("selects"));
@@ -433,6 +439,31 @@ async function main(): Promise<void> {
     assert.equal(approvals.length, asked, "An approved site asked the owner again.");
     recordCases("payment-frame-fill", "expiry-placeholder-format", "approval-frames-named", "approved-site-no-ask");
     await runCauseEffect(host.close(framed.tabId));
+
+    phase("nested-payment-frame-fill");
+    const nested = await open(`${SHOP}/nested`, 3);
+    const nestedFrame = nested.contents.mainFrame.framesInSubtree.find((frame) => frame.origin === PAYMENTS);
+    const wrapperFrame = nested.contents.mainFrame.framesInSubtree.find((frame) => frame.origin === WRAPPER);
+    assert(nestedFrame && wrapperFrame, "The nested payment frames did not load.");
+    // The case is only real when each frame runs in its own process, as on a live checkout.
+    assert.notEqual(nestedFrame.processId, wrapperFrame.processId, "The nested payment frame shares a process.");
+    const nestedSnapshot = await snapshot(nested.tabId);
+    const nestedFill = await call("fill_card", {
+      tabId: nested.tabId,
+      cardId: CARD_ID,
+      targets: {
+        number: ref(nestedSnapshot, "Card number"),
+        securityCode: ref(nestedSnapshot, "Security code"),
+        expiry: ref(nestedSnapshot, "Expiry date"),
+      },
+    });
+    assert(nestedFill.success, `Nested payment-frame fill failed: ${redactText(text(nestedFill))}`);
+    assertHidden(text(nestedFill), "the nested frame fill result");
+    const nestedValues = await values(nestedFrame);
+    assert.equal(nestedValues.number?.value, CARD.number, "The number did not reach the nested payment frame.");
+    assert.equal(nestedValues.code?.value, CARD.securityCode, "The security code did not reach the nested frame.");
+    recordCases("nested-payment-frame-fill");
+    await runCauseEffect(host.close(nested.tabId));
 
     phase("refusals");
     const unknown = await call("fill_card", {

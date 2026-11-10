@@ -97,6 +97,8 @@ const WAIT_TIMEOUT_MS = 30_000;
 const MAX_RESULT_BYTES = 64 * 1024;
 const DOCUMENT_ID_PROPERTY = "__openbot_browser_document_id__";
 const MAX_SNAPSHOT_FRAMES = 12;
+/** Levels of frames in other processes that a lease attaches below the page's own frames. */
+const MAX_ATTACHED_FRAME_DEPTH = 3;
 const DOM_QUIET_MS = 250;
 const CHOOSER_WAIT_MS = 5_000;
 
@@ -3563,12 +3565,28 @@ export class BrowserCdpEngine {
       }
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
       if (attachFrames) {
-        yield* send("Target.setAutoAttach", {
+        const autoAttach = {
           autoAttach: true,
           waitForDebuggerOnStart: false,
           flatten: true,
           filter: [{ type: "iframe", exclude: false }],
-        }).pipe(Effect.ignore);
+        };
+        yield* send("Target.setAutoAttach", autoAttach).pipe(Effect.ignore);
+        // Auto-attach reaches only the frames of one session. A payment form often sits in a frame of
+        // another site inside the checkout's own frame, so each frame session attaches its frames too.
+        // A frame attaches before the command that attaches it answers, so a snapshot then sees it.
+        const asked = new Set<string>();
+        for (let depth = 0; depth < MAX_ATTACHED_FRAME_DEPTH; depth += 1) {
+          const sessions = [...this.#targetSessions.values()]
+            .map((target) => target.sessionId)
+            .filter((sessionId) => !asked.has(sessionId))
+            .slice(0, MAX_SNAPSHOT_FRAMES);
+          if (sessions.length === 0) break;
+          for (const sessionId of sessions) {
+            asked.add(sessionId);
+            yield* send("Target.setAutoAttach", autoAttach, sessionId).pipe(Effect.ignore);
+          }
+        }
       }
       const environment = this.#appliedEnvironment(this.#environment);
       if (environment) yield* this.#applyEnvironmentEffect(send, environment);
