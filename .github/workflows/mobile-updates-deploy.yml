@@ -20,7 +20,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy the update Worker
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.repository == 'nightly-labs/openbot'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: cloudflare-production

@@ -771,7 +771,13 @@ export class TurnLifecycle {
     const messages = this.#conversation.ensureSnapshot(agentId, threadId).messages;
     if (
       messages.some(
-        (message) => message.turnId === turnId && (message.id === `${turnId}:plan` || isAgentAnswer(message)),
+        (message) =>
+          message.turnId === turnId &&
+          (message.id === `${turnId}:plan` ||
+            isAgentAnswer(message) ||
+            // A turn that ends after a progress message is not empty: the continuation reads that
+            // message at the turn's end and continues the work that it names.
+            (message.author === "assistant" && message.itemType === "commentary" && message.text.trim().length > 0)),
       )
     )
       return false;

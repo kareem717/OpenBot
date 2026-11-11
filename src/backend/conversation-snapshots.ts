@@ -187,7 +187,7 @@ export function promptMessage(
  * copy, so its row carries this itself; without it the message shows as an ordinary bubble (#5812).
  * The recipient's own state stays on `delivery`, as in `teammateMessage`.
  */
-export function incomingAgentExchange(
+function incomingAgentExchange(
   delivery: QueueDelivery,
   senderAgentId: string,
   senderTaskId: string | undefined,
