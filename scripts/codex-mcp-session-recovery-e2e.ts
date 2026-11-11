@@ -383,8 +383,14 @@ try {
     "The development notice is informational.",
   );
   assert.equal(genuineErrors, turns, "A true error with the same text still reports a failure.");
-  for (const message of [mixedFeatureNotice, otherWarning])
-    assert.equal(diagnosticEvents.filter((text) => text === message).length, turns, "Other warnings stay visible.");
+  // The merged rule hides each "Under-development features enabled" notice, also one that names
+  // another feature: the turn continues and the text needs no action.
+  assert.equal(
+    diagnosticEvents.filter((text) => text === mixedFeatureNotice).length,
+    0,
+    "A notice that names another feature is informational too.",
+  );
+  assert.equal(diagnosticEvents.filter((text) => text === otherWarning).length, turns, "Other warnings stay visible.");
   report.warningBoundariesVerified = true;
   report.passed = true;
 } catch (error) {

@@ -5729,11 +5729,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ),
         );
     yield* this.#steerWhenBusy(agent, task, snapshot, delivery.delivery.id, true, false);
-    // A turn that waits on a question in this chat reads no message until that question is answered,
-    // so the person who wrote instead would wait for it. A stopped turn clears its own questions.
-    const waitingTurnId = snapshot.activeTurnId;
-    if (targetThreadId && waitingTurnId && waitingTurnId !== this.#stoppedTurn(agent.id, task?.taskId ?? null))
-      this.#attention.releaseForUserMessage(agent.id, targetThreadId, waitingTurnId);
+    // A turn that waits on a question in this chat reads no message until that question is answered.
+    // On this branch the question stays open: the person steers the queued message into the waiting
+    // turn, and the answer form keeps its private values. `releaseForUserMessage` closes the
+    // question as skipped instead (#5753); it has no caller until the two rules are reconciled.
     if (!task) {
       this.#emit({ type: "agents-changed", agents: this.listAgents() });
       this.#conversation.emitConversation(snapshot);

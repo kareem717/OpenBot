@@ -1024,11 +1024,12 @@ export class OpenBotToolRouter {
     const parsed = requestApiKeyToolSchema.safeParse(params.arguments);
     if (!parsed.success)
       return openBotToolFailure(`${z.prettifyError(parsed.error)}\nCorrect the arguments and retry.`);
+    // This branch uses a key that the Vault has as it is, in each chat: an agent that finds a saved
+    // key must not open a form for it. The user replaces a wrong key in Server settings > Vault.
+    const keys = yield* apiKeys.list(agentId).pipe(Effect.catch(() => Effect.succeed<SavedApiKey[]>([])));
+    const vaultKey = keys.find((key) => key.name === parsed.data.name && key.source === "vault");
+    if (vaultKey) return openBotToolResult({ status: "saved", ...vaultKey });
     if (this.#messaging.store.linkForThread(this.#conversation.publicThreadId(agentId, params.threadId))) {
-      // An external chat cannot show the form, so a key that the Vault has is used as it is.
-      const keys = yield* apiKeys.list(agentId).pipe(Effect.catch(() => Effect.succeed<SavedApiKey[]>([])));
-      const vaultKey = keys.find((key) => key.name === parsed.data.name && key.source === "vault");
-      if (vaultKey) return openBotToolResult({ status: "saved", ...vaultKey });
       return openBotToolFailure(
         "request_api_key does not work in an external chat. Ask the user to give you the key in OpenBot.",
       );

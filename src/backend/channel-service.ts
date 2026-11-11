@@ -1834,16 +1834,12 @@ export class ChannelService {
             this.publish(channelId);
             continue;
           }
+          // This branch keeps the coordinator question: the catch below pauses the task and posts the
+          // text, and the person's reply continues the same task. The prompt gives an unclear request
+          // to the lead, so the model returns a question only when it cannot select a member.
+          if ("question" in decision) throw new ChannelRoutingError(decision.question);
           const picked = [
-            ...new Set(
-              "idle" in decision
-                ? named
-                : "question" in decision
-                  ? [lead.id]
-                  : "agentId" in decision
-                    ? [decision.agentId]
-                    : decision.agentIds,
-            ),
+            ...new Set("idle" in decision ? named : "agentId" in decision ? [decision.agentId] : decision.agentIds),
           ];
           // A member the model named that cannot take work is left out; with none left, the first
           // one gives the reason.

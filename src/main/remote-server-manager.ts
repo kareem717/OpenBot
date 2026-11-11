@@ -1493,7 +1493,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           // because `scheduleReconnect` still sees the host paused -- the HTTPS arm below gets the
           // same reset from `restart(serverId, true)`.
           this.#events.resumeReconnect(serverId);
-          if (!online || !transport.isConnected(serverId)) {
+          // An online server with an open session keeps its state during the check.
+          const kept = online && transport.isConnected(serverId);
+          if (!kept) {
             this.#connections.setState(serverId, "connecting");
             this.#emitChanged();
           }
@@ -1502,7 +1504,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           // that was already connected raises no such event -- the session it would announce is the
           // one still running. Retrying a host whose channel had never actually dropped therefore
           // left it reading as reconnecting until it next went offline for real.
-          if (this.#connections.stateFor(serverId) === "connecting" && transport.isConnected(serverId)) {
+          // A server that stayed online gets the same read: a Retry also shows the features that the
+          // host advertises now, and moves the key that reloads the interface.
+          if ((kept || this.#connections.stateFor(serverId) === "connecting") && transport.isConnected(serverId)) {
             // The same session continues, so the host does not send its restart state again.
             const hostRestart = this.#connections.hostRestartFor(serverId);
             this.#connections.markConnected(serverId);
