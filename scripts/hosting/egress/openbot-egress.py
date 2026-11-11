@@ -95,6 +95,26 @@ def write(path, contents, mode=0o644):
     os.chmod(path, mode)
 
 
+def resolver_bind(source):
+    # systemd mounts on the target of the /etc/resolv.conf link. The host replaces that target by
+    # rename, and a rename removes a file mount in all other mount namespaces: the service then
+    # reads the host stub resolver, which the namespace cannot reach. A mount on the directory
+    # of the target stays.
+    link = Path('/etc/resolv.conf')
+    target = link.resolve()
+    if not link.is_symlink() or target.parent == link.parent:
+        return f'{source}:{link}'
+    return f'{source}.d:{target.parent}'
+
+
+def write_resolver(source, contents):
+    write(source, contents)
+    directory = Path(str(source) + '.d')
+    write(directory / Path('/etc/resolv.conf').resolve().name, contents)
+    # The service account must read the directory after the mount.
+    os.chmod(directory, 0o755)
+
+
 def guard(cfg):
     dns = ', '.join(cfg['bootstrap_dns'])
     return f'''table inet {TABLE} {{
@@ -308,7 +328,7 @@ def probe(cfg, down):
 def probe_service(down=False):
     return run('systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--unit=openbot-egress-probe',
                '--property=NetworkNamespacePath=/run/netns/' + NS,
-               '--property=BindReadOnlyPaths=' + str(BASE / 'resolv.conf') + ':/etc/resolv.conf ' + str(BASE / 'nsswitch.conf') + ':/etc/nsswitch.conf',
+               '--property=BindReadOnlyPaths=' + resolver_bind(BASE / 'resolv.conf') + ' ' + str(BASE / 'nsswitch.conf') + ':/etc/nsswitch.conf',
                str(LIBEXEC / 'openbot-egress.py'), 'probe-down' if down else 'probe-up')
 
 
@@ -352,8 +372,14 @@ def install(cfg):
             if name != 'openbot-egress.py' and OWNER not in target.read_text():
                 raise RuntimeError('Refusing to overwrite a unit with another owner')
         write(target, (source / name).read_text(), 0o755 if name.endswith('.py') else 0o644)
-    write(BASE / 'bootstrap-resolv.conf', ''.join('nameserver ' + address + '\n' for address in cfg['bootstrap_dns']))
-    write(BASE / 'resolv.conf', ''.join('nameserver ' + address + '\n' for address in application_dns(cfg)) + 'options timeout:2 attempts:2\n')
+    write_resolver(BASE / 'bootstrap-resolv.conf', ''.join('nameserver ' + address + '\n' for address in cfg['bootstrap_dns']))
+    write_resolver(BASE / 'resolv.conf', ''.join('nameserver ' + address + '\n' for address in application_dns(cfg)) + 'options timeout:2 attempts:2\n')
+    # The unit file is static, so the daemon gets its resolver mount from a drop-in.
+    write(Path('/etc/systemd/system/' + TAIL + '.d/resolver.conf'), f'''# {OWNER}
+[Service]
+BindReadOnlyPaths=
+BindReadOnlyPaths={resolver_bind(BASE / 'bootstrap-resolv.conf')} {BASE}/nsswitch.conf:/etc/nsswitch.conf
+''')
     original = Path('/etc/nsswitch.conf').read_text().splitlines()
     write(BASE / 'nsswitch.conf', '\n'.join('hosts: files dns' if line.lstrip().startswith('hosts:') else line for line in original) + '\n')
     run('systemctl', 'daemon-reload')
@@ -381,7 +407,7 @@ After={READY}
 BindsTo=openbot-egress-network.service {TAIL}
 [Service]
 NetworkNamespacePath=/run/netns/{NS}
-BindReadOnlyPaths={BASE}/resolv.conf:/etc/resolv.conf {BASE}/nsswitch.conf:/etc/nsswitch.conf
+BindReadOnlyPaths={resolver_bind(BASE / 'resolv.conf')} {BASE}/nsswitch.conf:/etc/nsswitch.conf
 '''
         if unit == 'openbot.service':
             contents += 'ExecStartPre=\nExecStartPre=-!/opt/OpenBot/hosted/openbot-hosted-update trigger\n'

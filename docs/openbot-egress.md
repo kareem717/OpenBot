@@ -20,6 +20,13 @@ can use a public fallback when Quad100 has no upstream with `--accept-dns=false`
 All application DNS sockets still use the tunnel and its output guard. An NSS override prevents libc
 from asking the host `systemd-resolved` over its Unix socket.
 
+When `/etc/resolv.conf` is a link into another directory, such as `/run/systemd/resolve`, each
+service gets a read-only mount over that directory, not over the one file. The host replaces the
+file by rename, for example when the host Tailscale updates, and a rename removes a file mount
+from the service. The service then reads the host stub resolver, which the namespace cannot
+reach, and all name lookups fail until a restart. After an update of the helper, run `install`
+and `attach` again and restart the dedicated daemon and the attached units.
+
 Only `tailscaled` enters `openbottunnel.slice`. Its documented `0x80000/0xff0000`
 transport mark and its bootstrap DNS sockets can use the physical underlay. All
 other output must use loopback or `tailscale0`. This rule applies to IPv4, IPv6,
