@@ -447,8 +447,8 @@ export class BrowserCdpEngine {
         // The form method does not count: many sign-in forms have no method and send with their own
         // script. The host blocks a navigation that would carry a vault value in its URL.
         // Some authenticator forms omit autocomplete. Accept an explicit code identifier only with
-        // a numeric input, or the upstream rule (#6092): a text, tel, or number input whose id, name,
-        // or aria-label names a code and no backup, recovery, email, phone, or SMS word. The
+        // a numeric input. The upstream rule (#6092) also accepts a plain text input whose name has a
+        // code word; this branch refuses that field, so that rule is not active here. The
         // fingerprint includes each attribute used to make this decision.
         const fields = { password: inputs.length > 0, oneTimeCode: inputs.length > 0 };
         let servedByWorker = false;
@@ -465,9 +465,7 @@ export class BrowserCdpEngine {
                 && /\\b(?:verification|authentication|mfa|2fa|two factor) (?:code|token|passcode)\\b/.test(identity);
               const code = /\\b(?:otp|totp|authenticator|one time (?:code|password|passcode))\\b/.test(identity) || verification;
               const unspecified = autocomplete.every(value => value === 'off' || value === 'on');
-              const named = [this.id, this.name, this.getAttribute('aria-label') ?? ''].join(' ').replace(/([a-z])([A-Z0-9])/g, '$1 $2').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
-              const namedCode = ['text', 'tel', 'number'].includes(this.type) && /totp|\\b(?:otp|2fa|mfa)+(?:code|token|pin)?\\b|\\bauthenticator\\b|\\bone ?time ?(?:code|password|passcode|pin)\\b|\\bverification ?code\\b|\\btwo ?factor\\b/.test(named) && !/backup|recovery|mail|phone|sms|name|label/.test(named);
-              return { password: this.type === 'password' || (this.type === 'text' && !['', 'none'].includes(getComputedStyle(this).getPropertyValue('-webkit-text-security'))), oneTimeCode: autocomplete.includes('one-time-code') || (unspecified && this.type !== 'password' && numeric && code) || namedCode, network: ${LOADED_FROM_NETWORK} };
+              return { password: this.type === 'password' || (this.type === 'text' && !['', 'none'].includes(getComputedStyle(this).getPropertyValue('-webkit-text-security'))), oneTimeCode: autocomplete.includes('one-time-code') || (unspecified && this.type !== 'password' && numeric && code), network: ${LOADED_FROM_NETWORK} };
             }`,
             [],
           );

@@ -613,8 +613,9 @@ export async function runSecretHandoffScenario(browser: BrowserHost, localOrigin
     // A vault code goes only to a code field. An older Keycloak page names it otp with no
     // autocomplete="one-time-code"; a recovery, SMS, or phone field or a plain numeric field does not take it.
     for (const [selector, fillable] of [
-      ["#otp", true],
-      ["#totpmfa", true],
+      // This branch gives a vault code to a numeric code field only, so these text fields refuse it.
+      ["#otp", false],
+      ["#totpmfa", false],
       ["#recovery-otp", false],
       ["#sms-otp", false],
       ["#two-factor-phone", false],
