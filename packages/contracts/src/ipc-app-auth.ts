@@ -1,4 +1,5 @@
 import type { InstallerProviderId, ManagedProviderId, ManagedToolRuntimeId } from "./agent-providers";
+import type { AboveAppsSupport } from "./ipc-agent-dock";
 import type { AgentModelId, AvatarColor } from "./ipc-agent-identity";
 import type { AgentProviderId } from "./ipc-agent-status";
 import { integerInRange, isFiniteNumber, isIdentifier } from "./ipc-bounded-values";
@@ -7,6 +8,8 @@ import { isDynamicRecord, isString } from "./runtime-values";
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
 export type AppVariant = "production" | "dev" | "preview";
+/** A 12-hour clock with AM and PM, or a 24-hour clock. */
+export type HourCycle = "h12" | "h23";
 
 export interface AppInfo {
   name: string;
@@ -22,6 +25,13 @@ export interface AppInfo {
    * blocked or missing, as on a server, a remote desktop or a computer whose GPU failed.
    */
   softwareRendering?: boolean;
+  /**
+   * The clock that the macOS "24-hour time" setting selects. Chromium does not read it, so times
+   * follow it only through this value. Not set when the language's own clock applies.
+   */
+  hourCycle?: HourCycle;
+  /** Set when the agent dock and the Dynamic Island cannot show above other apps now: on Linux with Wayland windows. */
+  aboveAppsSupport?: AboveAppsSupport;
 }
 
 /** The phase list is the source of truth: `UpdatePhase` is derived from it. */
@@ -83,6 +93,11 @@ export interface UpdateStatus {
   scheduledRestart?: ScheduledUpdateRestart;
   /** A restart that the user of this computer asked for. Absent when none waits. */
   idleRestart?: IdleRestart;
+  /**
+   * A newer release that is in its staged rollout and that this install does not get yet. Only with
+   * phase `up-to-date`. A check that a person asks for gets this release. Absent when none waits.
+   */
+  stagedVersion?: string;
 }
 
 /** `relaunch` starts OpenBot again; `update` installs the downloaded update. */
@@ -573,6 +588,8 @@ export type ExternalDestination =
   | "claude-install"
   | "hermes-install"
   | "feedback"
+  // The GitHub bug report form, from the Help menu, with the version and the system filled in.
+  | "report-problem"
   | "message"
   // The release notes, the guides and the Discord community of OpenBot, from the Help menu of the window rail.
   // The community card of the sidebar also opens Discord.

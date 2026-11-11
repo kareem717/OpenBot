@@ -16,6 +16,12 @@ export const messages = {
     "Pencerenin arkasında bulanık masaüstünü gösterir. Siteler ve menüler bu durumda uygulama temasını kullanır.",
   "settings.interfaceSize.title": "Arayüz boyutu",
   "settings.interfaceSize.description": "OpenBot'taki metin ve denetimlerin boyutu.",
+  "settings.interfaceFont.title": "Arayüz yazı tipi",
+  "settings.interfaceFont.description": "Menülerin, sohbetlerin ve ayarların yazı tipi.",
+  "settings.interfaceFont.default": "Varsayılan (Inter)",
+  "settings.codeFont.title": "Kod yazı tipi",
+  "settings.codeFont.description": "Kodun, terminallerin ve dosya yollarının yazı tipi.",
+  "settings.codeFont.default": "Varsayılan",
   "settings.logoColor.title": "Logo rengi",
   "settings.logoColor.description": "Dock'ta, görev çubuğunda ve Dynamic Island'da gösterilir.",
   "settings.logoColor.buildNote": "Bu derleme kendi logo rengini korur. Seçim, yayımlanan uygulamaya uygulanır.",
@@ -90,6 +96,8 @@ export const messages = {
   "settings.externalLinks.fallback.description": "Bağlantı varsayılan tarayıcıda açıldı.",
   "settings.sendShortcut.title": "Gönderme kısayolu",
   "settings.sendShortcut.description": "Bu cihazda ve tarayıcıda mesaj gönderen tuşları seçin.",
+  "settings.chatOrder.description":
+    "Kenar çubuğunun okunmamış sohbetleri bu cihazda nerede göstereceğini seçin. Elle, Okunmamış grubunu kapatır.",
   "settings.sendShortcut.enter": "Göndermek için Enter",
   "settings.sendShortcut.modEnterMac": "Göndermek için ⌘Enter",
   "settings.sendShortcut.modEnterWin": "Göndermek için Ctrl+Enter",
@@ -118,6 +126,10 @@ export const messages = {
   "settings.agentDefaults.setAllLabel": "{setting}: tüm ajanlar için ayarla",
   "settings.agentDefaults.agentLabel": "{setting}: {agent}",
   "settings.agentDefaults.loadFailed": "Ajanlar okunamadı.",
+  "settings.commitCoAuthor.sectionTitle": "Git commit'leri",
+  "settings.commitCoAuthor.title": "Commit'lerde OpenBot'u belirt",
+  "settings.commitCoAuthor.description":
+    "Ajanlar yaptıkları commit'lere OpenBot'u ortak yazar olarak ekler. Yazar siz kalırsınız.",
   "settings.planStart.title": "İşi başlat",
   "settings.planStart.wait": "Başlat'a bastığımda",
   "settings.planStart.after": "{time} sonra",
@@ -196,7 +208,14 @@ export const messages = {
   "settings.soundTheme.play": "{name} sesini çal",
   "settings.notch.title": "Davranış",
   "settings.notch.show.title": "Durumu MacBook çentiğinde göster",
+  "settings.notch.show.titleTopOfScreen": "Durumu ekranın üst kısmında göster",
   "settings.notch.show.description": "Ajan etkinliğini ve dikkat gerektiren öğeleri her ekranın üst kısmında gösterin.",
+  "settings.notch.xwayland.title": "Yeniden başlatma gerekli",
+  "settings.notch.xwayland.description":
+    "Wayland'de OpenBot, Dynamic Island'ı diğer uygulamaların üstünde göstermek için XWayland kullanmalıdır. O zamana kadar ada görünmez.",
+  "settings.notch.xwayland.unsupported":
+    "XWayland olmayan Wayland'de Dynamic Island diğer uygulamaların üstünde görünemez.",
+  "settings.notch.xwayland.restart": "Yeniden başlat",
   "settings.notch.idle.title": "Boştaki adayı göster",
   "settings.notch.idle.description": "Hiçbir durum etkin olmadığında OpenBot logosunu ve selamlamasını gösterin.",
   "settings.notch.displays.title": "Ek ekranlarda göster",
@@ -222,6 +241,12 @@ export const messages = {
     "“Diğer uygulamaların üstünde” seçeneği, OpenBot arka plandayken yuvayı ekranda tutar.",
   "settings.agentDock.placement.screen": "Diğer uygulamaların üstünde",
   "settings.agentDock.placement.window": "OpenBot penceresinde",
+  "settings.agentDock.xwayland.title": "Yeniden başlatma gerekli",
+  "settings.agentDock.xwayland.description":
+    "Wayland'de OpenBot, dock'u diğer uygulamaların üstünde göstermek için XWayland kullanmalıdır. O zamana kadar dock OpenBot penceresinde görünür.",
+  "settings.agentDock.xwayland.unsupported":
+    "XWayland olmayan Wayland'de dock diğer uygulamaların üstünde görünemez. OpenBot penceresinde görünür.",
+  "settings.agentDock.xwayland.restart": "Yeniden başlat",
   "settings.agentDock.display.title": "Ekran",
   "settings.agentDock.display.description": "O ekran bağlı değilse yuva, OpenBot penceresinin ekranına geçer.",
   "settings.agentDock.display.window": "OpenBot penceresiyle",
@@ -233,8 +258,14 @@ export const messages = {
   "settings.agentDock.edge.description": "Yuvayı kenar boyunca taşımak için yukarı veya aşağı sürükleyin.",
   "settings.agentDock.edge.right": "Sağ",
   "settings.agentDock.edge.left": "Sol",
+  "settings.agentDock.size.title": "Yuva boyutu",
+  "settings.agentDock.size.description":
+    "Diğer uygulamaların üstündeki yuvanın boyutunu değiştirmek için sürükleyin. Ana pencerede yuva arayüz boyutunu izler.",
   "settings.agentDock.autoHide.title": "Kullanılmadığında gizle",
   "settings.agentDock.autoHide.description": "Yuva kenarın içine kayar. Göstermek için işaretçiyi kenara getirin.",
+  "settings.agentDock.edgeStrip.title": "Kenarda bir şerit göster",
+  "settings.agentDock.edgeStrip.description":
+    "Yuvanın gizlendiği yerde ince bir şerit kalır. Yuvayı göstermek için işaretçiyi yaklaştırın. Bir ajan size bir şey sorduğunda şeritten bir renk dalgası geçer.",
   "settings.agentDock.results.title": "Biten işleri göster",
   "settings.agentDock.results.description": "Ajanların bitirdiği sonuçlar kısa bir süre yuvanın yanında görünür.",
   "settings.agentDock.agents.title": "Yuvadaki ajanlar",
@@ -485,6 +516,7 @@ export const messages = {
   "settings.updates.status.ready": "{target} hazır. Uygulamak için yeniden başlatın.",
   "settings.updates.status.installing": "{target} uygulamak için yeniden başlatılıyor…",
   "settings.updates.status.upToDate": "OpenBot Kararlı kanalında güncel.",
+  "settings.updates.status.staged": "{target} aşamalı olarak dağıtılıyor. Hemen almak için güncellemeleri denetleyin.",
   "settings.updates.status.checkFailed": "OpenBot güncellemeleri denetleyemedi. Tekrar deneyin.",
   "settings.updates.status.unsupported": "Bu derlemede güncellemeler kullanılamıyor.",
   "settings.updates.actionFailed": "OpenBot güncellenemedi.",
@@ -641,6 +673,8 @@ export const messages = {
   "settings.voice.speech.codexLive.title": "Codex canlı ses",
   "settings.voice.speech.codexLive.description":
     "Herhangi bir ajanla sesli konuşmalar, Codex oturumunla OpenAI canlı sesini kullanır. Sesin, isteklerin ve ajanın yanıtları OpenAI'ye gider.",
+  "settings.voice.speech.codexLive.serverDescription":
+    "Herhangi bir ajanla sesli konuşmalar, sunucunun Codex oturumuyla OpenAI canlı sesini kullanır. Sesin, isteklerin ve ajanın yanıtları OpenAI'ye gider.",
   "settings.voice.speech.speed.title": "Hız",
   "settings.voice.speech.voice.title": "Ses",
   "settings.voice.speech.voice.female": "Kadın sesi {number}",
@@ -661,8 +695,6 @@ export const messages = {
   "settings.transfer.old.text": "Ajanlarını ve sunucu ayarlarını bir dosyaya kaydedin.",
   "settings.transfer.new.title": "Bu sunucuya içe aktar",
   "settings.transfer.new.text": "Bir dosyadaki ajanları ve sunucu ayarlarını ekleyin.",
-  "settings.transfer.notMoved":
-    "API anahtarları, açık oturumlar, bağlayıcılar, uygulama tercihleri ve sohbet geçmişi taşınmaz. Bunları yeni sunucuda yeniden ayarlayın.",
   "settings.transfer.back": "Geri",
   "settings.transfer.loading": "Ajanlarınız okunuyor…",
   "settings.transfer.summary.label": "Dosyanın içeriği",

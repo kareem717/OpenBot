@@ -3,6 +3,7 @@ import {
   type ApprovalAutomationPreference,
   agentAutoApprovalEnabled,
   type DynamicIslandGeometry,
+  type DynamicIslandPreference,
   type ExternalLinkTarget,
 } from "@openbot/contracts/ipc";
 import type { MarketplaceListingLink } from "@openbot/contracts/marketplace-links";
@@ -30,8 +31,35 @@ import type { SettingsTab } from "./settings-tabs";
 
 const ANALYTICS_APP_VERSION_STORAGE_KEY = "openbot:analytics-app-version";
 
+/** The general settings that show the island preference of main. */
+function islandSettings(preference: DynamicIslandPreference) {
+  return {
+    macBookNotch: preference.enabled,
+    macBookNotchHaptics: preference.hapticsEnabled,
+    macBookNotchIdle: preference.idleVisible,
+    macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
+    macBookNotchWidthPercent: preference.widthPercent,
+    macBookNotchHeightPercent: preference.heightPercent,
+    macBookNotchServers: preference.serverVisibility,
+    macBookNotchNewServers: preference.newServersVisible,
+  } satisfies Partial<GeneralSettingsValue>;
+}
+
 function sameExternalLinkTarget(left: ExternalLinkTarget, right: ExternalLinkTarget): boolean {
   return left.kind === right.kind && (left.kind !== "app" || right.kind !== "app" || left.path === right.path);
+}
+
+/** Compares two settings values field by field. The values hold only JSON data. */
+function samePlainValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  const leftEntries = Object.entries(left);
+  const rightEntries = new Map(Object.entries(right));
+  return (
+    leftEntries.length === rightEntries.size &&
+    leftEntries.every(([key, value]) => rightEntries.has(key) && samePlainValue(value, rightEntries.get(key)))
+  );
 }
 
 /** Tells the user why a switch went back to its previous value. */
@@ -119,15 +147,21 @@ const Settings = createSimpleContext({
       nonce: number;
     } | null>(null);
     let hostedServerDeleteNonce = 0;
-    const [generalSettings, setGeneralSettings] = createSignal<GeneralSettingsValue>({
-      ...DEFAULT_GENERAL_SETTINGS,
-      taskSound: readTaskSound(),
-      sendShortcut: readSendShortcutMode(),
-      showAgentSteps: readShowAgentSteps(),
-      compactMessageActions: readCompactMessageActions(),
-      soundFeedback: isActionSoundEnabled(),
-      soundTheme: readActionSoundTheme(),
-    });
+    // A write of equal values keeps the current object. A new object rebuilds the options of each
+    // Select on the page, and a Select reports its value again for new options. Without this, a
+    // Select that saves the value it reports freezes the window (#5708).
+    const [generalSettings, setGeneralSettings] = createSignal<GeneralSettingsValue>(
+      {
+        ...DEFAULT_GENERAL_SETTINGS,
+        taskSound: readTaskSound(),
+        sendShortcut: readSendShortcutMode(),
+        showAgentSteps: readShowAgentSteps(),
+        compactMessageActions: readCompactMessageActions(),
+        soundFeedback: isActionSoundEnabled(),
+        soundTheme: readActionSoundTheme(),
+      },
+      { equals: samePlainValue },
+    );
     // The mode also changes outside this dialog: another window, or the web Preferences tab on
     // the same page. The shared signal carries those changes into the displayed settings value.
     // Two-arg form: compute tracks the signal, apply writes the store outside tracking.
@@ -324,7 +358,8 @@ const Settings = createSimpleContext({
       if (
         AGENT_DEFAULT_KEYS.some((key) => previous.agentDefaults[key] !== value.agentDefaults[key]) ||
         previous.agentDefaults.planStartAfterMs !== value.agentDefaults.planStartAfterMs ||
-        previous.agentDefaults.automationRunsPerHour !== value.agentDefaults.automationRunsPerHour
+        previous.agentDefaults.automationRunsPerHour !== value.agentDefaults.automationRunsPerHour ||
+        previous.agentDefaults.commitCoAuthor !== value.agentDefaults.commitCoAuthor
       ) {
         agentDefaultsChanged = true;
         persistField("agentDefaults", settingsPort().setAgentDefaults({ ...value.agentDefaults }), (saved) => saved);
@@ -417,14 +452,7 @@ const Settings = createSimpleContext({
             if (save !== dynamicIslandSaveCount) return;
             setGeneralSettings((current) => ({
               ...current,
-              macBookNotch: preference.enabled,
-              macBookNotchHaptics: preference.hapticsEnabled,
-              macBookNotchIdle: preference.idleVisible,
-              macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
-              macBookNotchWidthPercent: preference.widthPercent,
-              macBookNotchHeightPercent: preference.heightPercent,
-              macBookNotchServers: preference.serverVisibility,
-              macBookNotchNewServers: preference.newServersVisible,
+              ...islandSettings(preference),
             }));
           })
           .catch((error: unknown) => {
@@ -512,6 +540,15 @@ const Settings = createSimpleContext({
           autoInstallUpdates: preference.autoInstall,
         }));
       });
+      // The right-click menu of the island turns it off in main. A save reply that is still on its way
+      // must not show the island as on again.
+      const unsubscribeIsland = settingsPort().dynamicIsland.onPreference((preference) => {
+        ++dynamicIslandSaveCount;
+        setGeneralSettings((current) => ({
+          ...current,
+          ...islandSettings(preference),
+        }));
+      });
       // A page can open from main with no click here, such as a sign-in page, so main sends the notice.
       const unsubscribeLinkFallback = settingsPort().onExternalLinkFallback(({ name }) => {
         const { t } = currentText();
@@ -529,6 +566,7 @@ const Settings = createSimpleContext({
         unsubscribeAnalytics();
         unsubscribeMemoryLimit();
         unsubscribeUpdates();
+        unsubscribeIsland();
       };
     });
 
@@ -634,14 +672,7 @@ const Settings = createSimpleContext({
               .then((preference) =>
                 setGeneralSettings((current) => ({
                   ...current,
-                  macBookNotch: preference.enabled,
-                  macBookNotchHaptics: preference.hapticsEnabled,
-                  macBookNotchIdle: preference.idleVisible,
-                  macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
-                  macBookNotchWidthPercent: preference.widthPercent,
-                  macBookNotchHeightPercent: preference.heightPercent,
-                  macBookNotchServers: preference.serverVisibility,
-                  macBookNotchNewServers: preference.newServersVisible,
+                  ...islandSettings(preference),
                 })),
               ),
       ]).then((results) => {

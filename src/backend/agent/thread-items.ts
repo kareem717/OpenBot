@@ -28,6 +28,7 @@ import {
   reasoningText,
   type ThreadItem,
 } from "../protocol";
+import { isImageCountDiagnostic, isImageTooLargeDiagnostic, isImageTooSmallDiagnostic } from "./provider-diagnostics";
 import { stepLabel } from "./step-labels";
 import { BUILTIN_TOOL_CATALOG } from "./tool-catalog";
 
@@ -39,7 +40,15 @@ export function isNonActionableCodexWarning(message: string): boolean {
     /^Under-development features enabled: code_mode_tool_search\.(?:\s|$)/u.test(message) ||
     // Codex sends this when it changes transport, and the same turn continues over HTTPS
     // (`codex-rs/core/src/responses_retry.rs`). A final failure comes as an `error` (#2559).
-    message.startsWith("Falling back from WebSockets to HTTPS transport.")
+    message.startsWith("Falling back from WebSockets to HTTPS transport.") ||
+    // Codex sends this on each thread start when the user turned on a feature such as
+    // `async_compaction` in `config.toml` (`codex-rs/features/src/lib.rs`). The turn continues, and
+    // the text has the config path, so the banner replaced it with "could not continue".
+    message.startsWith("Under-development features enabled:") ||
+    // Codex sends this on each session start when its config asks for a tier, such as `priority`,
+    // that the model does not list (`codex-rs/core/src/session/mod.rs`). Codex leaves the tier out
+    // and the turn continues at the standard speed, so the banner showed a false error (#6827).
+    message.startsWith("Configured service tier ")
   );
 }
 
@@ -96,6 +105,18 @@ export function isCodexCompactionRefusal(error: unknown): boolean {
 }
 
 /**
+ * Another Codex app that uses the same Codex folder, such as the Codex desktop app, has this thread
+ * open and holds its writer lock. Codex refuses `thread/resume` with this error then, and the lock
+ * stays until that app closes the thread (#6666). A new session would split the chat from the one
+ * that app shows, so the session stays.
+ */
+export function isCodexThreadInUse(error: unknown): boolean {
+  return (
+    error instanceof AppServerError && error.code === -32600 && error.message.includes("already has an active writer")
+  );
+}
+
+/**
  * The provider refused the session's own history. Grok keeps the `encrypted_content` of each
  * reasoning item in its session and sends it back on every request, and xAI accepts it only from
  * the caller it was issued to. After a sign-in to another account or a new API key, each turn of
@@ -109,10 +130,15 @@ function isForeignReasoningError(message: string): boolean {
  * OpenCode's model gateway answers a request that it does not accept with one generic 400 that
  * names no field. A session that grew too long for its model, often after the agent moved to
  * another model on the same session, fails each turn this way, and OpenCode does not compact it
- * (#2351). Only a new session, given the OpenBot transcript, recovers.
+ * (#2351). Venice answers "Invalid request parameters", and OpenCode keeps only that text of its
+ * reply, also when the session holds more images than Venice accepts (#6702). Only a new session,
+ * given the OpenBot transcript, recovers.
  */
 function isRejectedOpenCodeRequest(provider: AgentProvider, message: string): boolean {
-  return provider === "opencode" && /\bthe request contains invalid parameters\b/i.test(message);
+  return (
+    provider === "opencode" &&
+    /\bthe request contains invalid parameters\b|\bInternal error: Invalid request parameters\b/i.test(message)
+  );
 }
 
 /**
@@ -134,15 +160,30 @@ function isMissingClaudeSession(provider: AgentProvider, message: string): boole
 }
 
 /**
+ * Claude Code compacts a session that is too long for the model before it gives up, and then ends
+ * each later turn of that session with this text, also after a restart (#6596).
+ */
+function isClaudeContextOverflow(provider: AgentProvider, message: string): boolean {
+  return provider === "claude" && /^Prompt is too long\b/.test(message);
+}
+
+/**
  * The failure to show when the provider refused the session's own history, or null when it did
  * not. Each turn of a refused session fails the same way, so the caller closes the session.
  */
 export function refusedSessionFailure(provider: AgentProvider, message: string): string | null {
   if (isForeignReasoningError(message))
     return sourceText("error.provider.foreignReasoning", { provider: providerLabel(provider) });
+  if (isImageTooSmallDiagnostic(message))
+    return sourceText("error.provider.imageTooSmall", { provider: providerLabel(provider) });
+  if (isImageTooLargeDiagnostic(message))
+    return sourceText("error.provider.imageTooLarge", { provider: providerLabel(provider) });
+  if (isImageCountDiagnostic(message))
+    return sourceText("error.provider.imageCountLimit", { provider: providerLabel(provider) });
   if (isRejectedOpenCodeRequest(provider, message)) return sourceText("error.provider.opencodeSessionRejected");
   if (isMuseMcpStartupFault(provider, message)) return sourceText("error.provider.museMcpStartupFault");
   if (isMissingClaudeSession(provider, message)) return sourceText("error.provider.claudeSessionMissing");
+  if (isClaudeContextOverflow(provider, message)) return sourceText("error.provider.claudeContextFull");
   return null;
 }
 
@@ -506,6 +547,8 @@ export function toolProgressText(item: ThreadItem, completed: boolean): string |
     return completed ? TOOL_RESULT_PROGRESS : sourceText("status.agent.memoriesUpdating");
   }
   if (openBot === "read_local_skill") return completed ? TOOL_RESULT_PROGRESS : sourceText("status.agent.skillReading");
+  // Its name has `send`, a word of the agent words below.
+  if (openBot === "send_feedback") return completed ? TOOL_RESULT_PROGRESS : sourceText("status.agent.feedbackSending");
   const skill = getString(item, "name") === "Skill" ? getString(item, "skill") : null;
   if (skill) return completed ? TOOL_RESULT_PROGRESS : sourceText("status.agent.skillUsing", { name: skill });
   if (descriptor.includes("capture_screen")) {

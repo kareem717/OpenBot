@@ -67,6 +67,7 @@ export const messages = {
   "error.backend.channelUnconfirmedStart": "该频道有一项未确认的派活启动，请在删除前确认其结果。",
   "error.backend.channelNotFound": "未找到该频道。",
   "error.backend.channelMemberUnavailable": "有频道成员不可用。",
+  "error.backend.channelInstructionsTooLong": "请将说明缩短到 2,000 个字符以内。更长的说明不会被保存。",
   "error.backend.channelWaitBeforeNewConversation": "请等此频道中的工作停止后再开始新对话。",
   "error.backend.channelWaitBeforeCompact": "请等此频道中的工作停止后再压缩。",
   "error.backend.channelWaitBeforeDeleteHistory": "请等此频道中的工作停止后再删除其历史记录。",
@@ -139,6 +140,9 @@ export const messages = {
   "error.backend.mailboxStateCorrupt": "信箱状态已损坏或来自更新版本的 OpenBot，拒绝覆盖它。",
   "error.backend.recipientDeleting": "该收件人正在删除中，请等删除完成后再试。",
   "error.backend.recipientHidden": "该助手已隐藏，请恢复它后再发送消息。",
+  "error.backend.agentIdUnknown": "没有 ID 为 {id} 的助手。请用 openbot.list_agents 获取 ID，然后重试。",
+  "error.backend.agentIdNear":
+    "没有 ID 为 {id} 的助手。助手 {name} 的 ID {nearId} 几乎相同。如果你指的是该助手，请用它的 ID 重试。",
   "error.backend.attachBetween": "请附加 1 到 {limit} 个文件。",
   "error.backend.attachmentNotFile": "附件不是文件：{path}",
   "error.backend.generatedImageTooLarge": "生成的图片超过 100 MB 上限。",
@@ -188,7 +192,6 @@ export const messages = {
   "error.backend.agentWaitRoutineGone": "该助手没有这个 id 的自动化任务。",
   "error.backend.agentWaitNoRoutine":
     "只有你自己的自动化任务运行才能唤醒等待，而你还没有自动化任务。请先用 openbot.create_routine 创建一个，再开启等待。",
-  "error.backend.agentWaitRemoteUnsupported": "未关闭的等待仅适用于本电脑上的助手。",
   "error.backend.markUnreadRemoteUnsupported": "仅本电脑上的助手可以将消息标为未读。",
   "error.backend.messageDeleteUnsupported": "此服务器不支持删除消息。",
   "error.backend.messageDeleteNotFound": "这条消息不在聊天中。",
@@ -217,6 +220,8 @@ export const messages = {
   "error.backend.mcpSignInTimedOut": "未在浏览器中完成登录。",
   "error.backend.mcpSignInResponseTimedOut": "登录响应未及时返回。",
   "error.backend.mcpSignInMetadataUnreadable": "OpenBot 无法读取该服务器的登录信息。请检查服务器地址后重试。",
+  "error.backend.mcpSignInAnswerUnreadable":
+    "登录服务器发送了 OpenBot 无法读取的响应。如果该服务为你提供了 API 密钥或令牌，请将其添加到该服务器的设置中，然后重新测试连接。",
   "error.backend.mcpServerExited": "服务器在响应之前就停止了。请在终端中运行该命令以查看错误。",
   "error.backend.mcpServerFailedToStart": "服务器没有启动：{reason}",
   "error.backend.mcpServerSignInForProvider":

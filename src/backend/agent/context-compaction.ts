@@ -148,6 +148,11 @@ export class ContextCompaction {
   readonly #graceMs: number;
   readonly #display = new Map<string, Omit<AgentContextState, "agentId" | "threadId">>();
   readonly #awaitingPostCompaction = new Set<string>();
+  /**
+   * Sessions in a compaction whose usage OpenBot compares: until it ends, Codex 0.167.0 reports an
+   * estimate of its result, which can be much smaller than the next request (#6845).
+   */
+  readonly #estimating = new Set<string>();
   readonly #durations = new Map<string, number>();
   readonly #changed: () => void;
   readonly #compacted: (threadId: string) => void;
@@ -167,6 +172,11 @@ export class ContextCompaction {
     this.#rotateSession = options.rotateSession;
     this.#rotatesSession = options.rotatesSession;
     this.#isStopping = options.isStopping;
+  }
+
+  /** How long a started compaction runs before OpenBot stops it. */
+  get runTimeoutMs(): number {
+    return this.#runTimeoutMs;
   }
 
   /** Only personal sessions appear in the desktop snapshot; execution threads remain separate. */
@@ -271,6 +281,8 @@ export class ContextCompaction {
       delete compaction.afterTokens;
     } else if (before !== undefined) compaction.beforeTokens = before;
     this.#awaitingPostCompaction.delete(threadId);
+    if (tokenComparison === "context" && status === "running") this.#estimating.add(threadId);
+    else this.#estimating.delete(threadId);
     if (tokenComparison === "context" && status === "completed" && compaction.afterTokens === undefined)
       this.#awaitingPostCompaction.add(threadId);
     if (status === "completed" && previous?.status === "running")
@@ -308,6 +320,11 @@ export class ContextCompaction {
     const usedTokens = finiteNumberOrNull(last?.totalTokens);
     const contextWindow = finiteNumberOrNull(usage?.modelContextWindow);
     if (usedTokens === null || usedTokens < 0 || contextWindow === null || contextWindow <= 0) return;
+
+    // Only the next request tells whether the compaction helped. The estimate reset the count of
+    // compactions that left the session almost full, so each turn compacted again. The display still
+    // shows it.
+    if (this.#estimating.has(threadId)) return;
 
     const budget = this.#budgets.get(threadId) ?? {
       usedTokens,
@@ -592,6 +609,7 @@ export class ContextCompaction {
     const displayed = this.#display.delete(threadId);
     this.#durations.delete(threadId);
     this.#awaitingPostCompaction.delete(threadId);
+    this.#estimating.delete(threadId);
     if (displayed) this.#emitChanged();
     this.#clearTimer(threadId);
   }
@@ -654,6 +672,7 @@ export class ContextCompaction {
     this.#display.clear();
     this.#durations.clear();
     this.#awaitingPostCompaction.clear();
+    this.#estimating.clear();
   }
 
   /**

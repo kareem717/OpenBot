@@ -17,7 +17,10 @@ export interface MemoriesPort {
   ownerLabel: string;
   /** The word the page reads in its sentences: "This agent has no saved memories yet." */
   ownerNoun: "agent" | "channel";
-  /** Null for unlimited storage, or when only the remote host knows its legacy quota. */
+  /**
+   * Null for unlimited storage, or when this window does not know the legacy quota of a joined
+   * server, such as for a member. That host refuses a memory past its quota.
+   */
   limit: number | null;
   list: () => Promise<MemoryEntry[]>;
   selection?: {

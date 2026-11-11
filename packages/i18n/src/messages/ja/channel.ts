@@ -9,6 +9,9 @@ export const messages = {
   "channel.stoppedTask.reassignLabel": "{name} の停止したタスクを再割り当てします",
   "channel.stoppedTask.reassign": "再割り当て",
   "channel.stoppedTask.cancel": "タスクを中止",
+  "channel.stoppedTask.assignmentLoop": "{names} がこのタスクを何度も受け渡しました。ループを防ぐために停止しました。",
+  "channel.stoppedTask.assignmentLoopMembers":
+    "メンバーがこのタスクを何度も受け渡しました。ループを防ぐために停止しました。",
   "channel.conversation.noMembers": "作業を始めるには、チャンネル設定でエージェントを追加してください。",
   "channel.conversation.archivedNotice": "削除済みのチャンネルです。プレビューのみです。",
   "channel.composer.label": "チャンネルへのメッセージ",
@@ -20,6 +23,9 @@ export const messages = {
   "channel.settings.isolated": "メモリーをこのチャンネルに保持",
   "channel.settings.isolatedDescription":
     "エージェントがここで学んだことはチャンネルのメモリーとして保存され、ほかのチャットには表示されません。",
+  "channel.settings.browser": "ブラウザー",
+  "channel.settings.browserEveryone": "すべてのメンバー",
+  "channel.settings.browserNone": "なし",
   "channel.settings.memoryCount": { other: "{count} 件保存済み" },
   "channel.settings.newConversation.title": "新しい会話",
   "channel.settings.newConversation.description": "メンバーは以前のメッセージを忘れます。チャンネルの設定は残ります。",

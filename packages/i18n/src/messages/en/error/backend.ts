@@ -73,6 +73,8 @@ export const messages = defineMessages("error.backend", {
     "The channel has an unconfirmed assignment start. Check its outcome before deleting it.",
   "error.backend.channelNotFound": "Channel not found.",
   "error.backend.channelMemberUnavailable": "A channel member is unavailable.",
+  "error.backend.channelInstructionsTooLong":
+    "Shorten the instructions to 2,000 characters. Longer instructions are not saved.",
   "error.backend.channelWaitBeforeNewConversation":
     "Wait until the work in this channel stops, then start a new conversation.",
   "error.backend.channelWaitBeforeCompact": "Wait until the work in this channel stops, then compact it.",
@@ -151,6 +153,9 @@ export const messages = defineMessages("error.backend", {
     "Mailbox state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
   "error.backend.recipientDeleting": "The recipient is being deleted. Retry after deletion finishes.",
   "error.backend.recipientHidden": "This agent is hidden. Restore it to send messages.",
+  "error.backend.agentIdUnknown": "No agent has the id {id}. Get the ids from openbot.list_agents, then try again.",
+  "error.backend.agentIdNear":
+    "No agent has the id {id}. Agent {name} has the id {nearId}, which is almost the same. If you mean that agent, try again with its id.",
   "error.backend.replyReferenceUnknown":
     "replyToMessageId {id} names no message. Use the Message ID of the message that you answer, or leave replyToMessageId out.",
   "error.backend.replyReferenceRequests": "Messages from these recipients in this turn: {ids}.",
@@ -207,7 +212,6 @@ export const messages = defineMessages("error.backend", {
   "error.backend.agentWaitRoutineGone": "This agent has no routine with this id.",
   "error.backend.agentWaitNoRoutine":
     "Only a run of one of your routines wakes a wait, and you have no routine. Create one with openbot.create_routine, then open the wait.",
-  "error.backend.agentWaitRemoteUnsupported": "Open waits are only available for agents on this computer.",
   "error.backend.markUnreadRemoteUnsupported":
     "Marking a message unread is only available for agents on this computer.",
   "error.backend.messageDeleteUnsupported": "Deleting messages is not supported by this server.",
@@ -239,6 +243,8 @@ export const messages = defineMessages("error.backend", {
   "error.backend.mcpSignInResponseTimedOut": "The sign-in response did not arrive in time.",
   "error.backend.mcpSignInMetadataUnreadable":
     "OpenBot could not read the sign-in information of this server. Check the server address and try again.",
+  "error.backend.mcpSignInAnswerUnreadable":
+    "The sign-in server sent an answer that OpenBot cannot read. If the service gives you an API key or a token, add it to the settings of this server, then test the connection again.",
   "error.backend.mcpServerExited":
     "The server stopped before it answered. Run the command in a terminal to see its error.",
   "error.backend.mcpServerFailedToStart": "The server did not start: {reason}",
@@ -250,6 +256,8 @@ export const messages = defineMessages("error.backend", {
     "OpenBot could not start its local sign-in connection for this server. Restart OpenBot, then try again.",
   "error.backend.mcpOAuthSignInNeeded":
     "The sign-in to this MCP server has ended. The user must sign in to it again in OpenBot.",
+  "error.backend.mcpOAuthRequestRefused":
+    "The MCP server refused this request, but the sign-in to it is still active. Possibly the account cannot use this tool, or the sign-in did not give all the necessary access. The user can examine the plan and the access of the account at the service, or sign in to the server again in OpenBot and allow all the access that it asks for.",
   "error.backend.mcpServerUnreachable": "OpenBot could not reach the server. Check the URL and your network.",
   "error.backend.mcpLocalServerOff":
     "No server answers at {address} on this computer. Start the server, or turn it on in the app that runs it, then try again.",

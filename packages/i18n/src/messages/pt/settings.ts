@@ -16,6 +16,12 @@ export const messages = {
     "Mostra a área de trabalho desfocada atrás da janela. Sites e menus passam a usar o tema do app.",
   "settings.interfaceSize.title": "Tamanho da interface",
   "settings.interfaceSize.description": "O tamanho do texto e dos controles no OpenBot.",
+  "settings.interfaceFont.title": "Fonte da interface",
+  "settings.interfaceFont.description": "A fonte dos menus, das conversas e das configurações.",
+  "settings.interfaceFont.default": "Padrão (Inter)",
+  "settings.codeFont.title": "Fonte do código",
+  "settings.codeFont.description": "A fonte do código, dos terminais e dos caminhos de arquivo.",
+  "settings.codeFont.default": "Padrão",
   "settings.logoColor.title": "Cor do logotipo",
   "settings.logoColor.description": "Aparece no Dock, na barra de tarefas e na Dynamic Island.",
   "settings.logoColor.buildNote":
@@ -92,6 +98,8 @@ export const messages = {
   "settings.externalLinks.fallback.description": "O link abriu no navegador padrão.",
   "settings.sendShortcut.title": "Atalho de envio",
   "settings.sendShortcut.description": "Escolha as teclas que enviam uma mensagem neste dispositivo e navegador.",
+  "settings.chatOrder.description":
+    "Escolha onde a barra lateral mostra as conversas não lidas neste dispositivo. Manual desativa o grupo Não lidas.",
   "settings.sendShortcut.enter": "Enter para enviar",
   "settings.sendShortcut.modEnterMac": "⌘Enter para enviar",
   "settings.sendShortcut.modEnterWin": "Ctrl+Enter para enviar",
@@ -120,6 +128,10 @@ export const messages = {
   "settings.agentDefaults.setAllLabel": "Definir {setting} para todos os agentes",
   "settings.agentDefaults.agentLabel": "{setting} para {agent}",
   "settings.agentDefaults.loadFailed": "Não foi possível ler os agentes.",
+  "settings.commitCoAuthor.sectionTitle": "Commits do Git",
+  "settings.commitCoAuthor.title": "Creditar o OpenBot nos commits",
+  "settings.commitCoAuthor.description":
+    "Os agentes adicionam o OpenBot como coautor dos commits que fazem. Você continua sendo o autor.",
   "settings.planStart.title": "Iniciar o trabalho",
   "settings.planStart.wait": "Quando eu tocar em Iniciar",
   "settings.planStart.after": "Após {time}",
@@ -198,8 +210,15 @@ export const messages = {
   "settings.soundTheme.play": "Tocar {name}",
   "settings.notch.title": "Comportamento",
   "settings.notch.show.title": "Mostrar status no recorte da tela do MacBook",
+  "settings.notch.show.titleTopOfScreen": "Mostrar o status no topo da tela",
   "settings.notch.show.description":
     "Mostre a atividade dos agentes e os itens que precisam de atenção na parte superior de cada tela.",
+  "settings.notch.xwayland.title": "Reinício necessário",
+  "settings.notch.xwayland.description":
+    "No Wayland, o OpenBot precisa usar o XWayland para mostrar a Dynamic Island acima de outros apps. Até lá, a ilha não aparece.",
+  "settings.notch.xwayland.unsupported":
+    "No Wayland sem XWayland, a Dynamic Island não pode aparecer acima de outros apps.",
+  "settings.notch.xwayland.restart": "Reiniciar",
   "settings.notch.idle.title": "Mostrar ilha ociosa",
   "settings.notch.idle.description": "Mostre o logotipo do OpenBot e a saudação quando não houver status ativo.",
   "settings.notch.displays.title": "Mostrar em telas adicionais",
@@ -224,6 +243,12 @@ export const messages = {
     "“Sobre outros apps” mantém o dock na tela quando o OpenBot está em segundo plano.",
   "settings.agentDock.placement.screen": "Sobre outros apps",
   "settings.agentDock.placement.window": "Na janela do OpenBot",
+  "settings.agentDock.xwayland.title": "Reinício necessário",
+  "settings.agentDock.xwayland.description":
+    "No Wayland, o OpenBot precisa usar o XWayland para mostrar o dock acima de outros apps. Até lá, o dock aparece na janela do OpenBot.",
+  "settings.agentDock.xwayland.unsupported":
+    "No Wayland sem XWayland, o dock não pode aparecer acima de outros apps. Ele aparece na janela do OpenBot.",
+  "settings.agentDock.xwayland.restart": "Reiniciar",
   "settings.agentDock.display.title": "Tela",
   "settings.agentDock.display.description":
     "Se essa tela não estiver conectada, o dock vai para a tela da janela do OpenBot.",
@@ -236,9 +261,15 @@ export const messages = {
   "settings.agentDock.edge.description": "Arraste o dock para cima ou para baixo para movê-lo pela borda.",
   "settings.agentDock.edge.right": "Direita",
   "settings.agentDock.edge.left": "Esquerda",
+  "settings.agentDock.size.title": "Tamanho do dock",
+  "settings.agentDock.size.description":
+    "Arraste para mudar o tamanho do dock sobre os outros apps. Na janela principal, o dock segue o tamanho da interface.",
   "settings.agentDock.autoHide.title": "Ocultar quando não estiver em uso",
   "settings.agentDock.autoHide.description":
     "O dock desliza para dentro da borda. Leve o ponteiro até a borda para mostrá-lo.",
+  "settings.agentDock.edgeStrip.title": "Mostrar uma faixa na borda",
+  "settings.agentDock.edgeStrip.description":
+    "Uma faixa fina fica onde o dock se esconde. Aproxime o ponteiro para mostrar o dock. Uma onda de cor sobe pela faixa quando um agente pergunta algo.",
   "settings.agentDock.results.title": "Mostrar trabalho concluído",
   "settings.agentDock.results.description": "Os resultados dos agentes aparecem por pouco tempo ao lado do dock.",
   "settings.agentDock.agents.title": "Agentes no dock",
@@ -492,6 +523,7 @@ export const messages = {
   "settings.updates.status.ready": "{target} está pronta. Reinicie para aplicar.",
   "settings.updates.status.installing": "Reiniciando para aplicar {target}…",
   "settings.updates.status.upToDate": "O OpenBot está atualizado no canal Estável.",
+  "settings.updates.status.staged": "{target} está sendo liberado em etapas. Busque atualizações para obtê-lo agora.",
   "settings.updates.status.checkFailed": "O OpenBot não conseguiu buscar atualizações. Tente novamente.",
   "settings.updates.status.unsupported": "As atualizações estão indisponíveis nesta compilação.",
   "settings.updates.actionFailed": "Não foi possível atualizar o OpenBot.",
@@ -640,6 +672,8 @@ export const messages = {
   "settings.voice.speech.codexLive.title": "Voz ao vivo do Codex",
   "settings.voice.speech.codexLive.description":
     "As conversas por voz com qualquer agente usam a voz ao vivo da OpenAI com a sua sessão do Codex. A sua voz, os seus pedidos e as respostas do agente vão para a OpenAI.",
+  "settings.voice.speech.codexLive.serverDescription":
+    "As conversas por voz com qualquer agente usam a voz ao vivo da OpenAI com a sessão do Codex do servidor. A sua voz, os seus pedidos e as respostas do agente vão para a OpenAI.",
   "settings.voice.speech.speed.title": "Velocidade",
   "settings.voice.speech.voice.title": "Voz",
   "settings.voice.speech.voice.female": "Voz feminina {number}",
@@ -661,8 +695,6 @@ export const messages = {
   "settings.transfer.old.text": "Salve os agentes e as configurações do servidor em um arquivo.",
   "settings.transfer.new.title": "Importar neste servidor",
   "settings.transfer.new.text": "Adicione os agentes e as configurações do servidor de um arquivo.",
-  "settings.transfer.notMoved":
-    "Chaves de API, logins, conectores, preferências do app e o histórico de chat não são movidos. Configure-os de novo no novo servidor.",
   "settings.transfer.back": "Voltar",
   "settings.transfer.loading": "Lendo seus agentes…",
   "settings.transfer.summary.label": "O que o arquivo contém",

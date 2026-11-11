@@ -285,6 +285,7 @@ function openService() {
       refresh: () => {},
       registerRoute: (id) => Effect.succeed(`https://signal.example.test/v1/webhooks/${id}`),
       revokeRoute: () => Effect.void,
+      ensureHost: () => Effect.void,
     },
     accountPrincipal: () => "plan-check",
   });

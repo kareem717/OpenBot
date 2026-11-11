@@ -94,6 +94,7 @@ export const messages = {
   "browser.secret.failed":
     "Die Anfrage konnte nicht abgeschlossen werden. Prüfe die Verbindung und versuche es erneut.",
   "browser.error.openAddress": "Die Adresse konnte in diesem Tab nicht geöffnet werden.",
+  "browser.error.channelNoBrowserMember": "Kein Mitglied kann in diesem Kanal einen neuen Tab öffnen.",
   "browser.error.closeTab": "Der Browser-Tab konnte nicht geschlossen werden.",
   "browser.error.reloadTab": "Der Browser-Tab konnte nicht neu geladen werden.",
   "browser.error.stopLoading": "Das Laden der Seite konnte nicht gestoppt werden.",
@@ -103,6 +104,9 @@ export const messages = {
   "browser.error.navigateForward": "Vorwärtsnavigieren war nicht möglich.",
   "browser.userControl.status": "Du steuerst diese Seite",
   "browser.dock.messageTo": "Nachricht an {name}",
+  "browser.dock.hide": "Nachrichtenfeld ausblenden",
+  "browser.dock.show": "Nachrichtenfeld einblenden",
+  "browser.dock.replied": "{name} hat geantwortet",
   "browser.dock.needsYou": "{name} braucht dich auf dieser Seite",
   "browser.dock.needsAnswer": "{name} braucht deine Antwort",
   "browser.dock.needsApproval": "{name} braucht deine Freigabe",

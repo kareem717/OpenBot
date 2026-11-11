@@ -1,9 +1,10 @@
 import type { AgentProviderId } from "@openbot/contracts/agent-providers";
+import type { DynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import { z } from "zod";
-import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "../browser-tools";
+import { BROWSER_DYNAMIC_TOOLS, BROWSER_TOOL_DEFINITIONS, OPENBOT_BROWSER_NAMESPACE } from "../browser-tools";
 import { OPENBOT_DYNAMIC_TOOLS, OPENBOT_TOOL_DEFINITIONS } from "../openbot-tools";
-import type { DynamicToolCallParams } from "../protocol";
+import { type DynamicToolCallParams, isRecord } from "../protocol";
 import { advertisedJsonSchema } from "./advertised-json-schema";
 import { toolGuidance } from "./tool-guidance";
 
@@ -35,6 +36,25 @@ const DIRECT_NAMES = new Set([
 ]);
 
 const BROWSER_SCRIPT_TOOL = requireTool(`${OPENBOT_BROWSER_NAMESPACE}.run_script`);
+
+/**
+ * The browser tools that each agent has directly. Haiku searched the catalog before 29 of 30 browser
+ * tasks, also when its instructions named the tool, and each search cost a model turn of the full
+ * context (`bun run bench:browser-tools`, 2026-11-10). The first result of a browser tool brings the
+ * schemas of the others (`browserToolsPrimer`).
+ */
+const DIRECT_BROWSER_NAMES: ReadonlySet<string> = new Set(["open", "list_tabs", "run_script"]);
+
+/** The direct browser tools, as Claude's in-process MCP server declares them. */
+export const DIRECT_BROWSER_TOOL_DEFINITIONS = BROWSER_TOOL_DEFINITIONS.filter((definition) =>
+  DIRECT_BROWSER_NAMES.has(definition.name),
+);
+
+const DIRECT_BROWSER_DYNAMIC_TOOLS = BROWSER_DYNAMIC_TOOLS.map((namespace) => ({
+  ...namespace,
+  description: "OpenBot's private, persistent browser. Run the other openbot_browser tools with openbot.tool_call.",
+  tools: namespace.tools.filter((tool) => DIRECT_BROWSER_NAMES.has(tool.name)),
+}));
 
 /**
  * Providers whose CLI gives the model a web search tool of its own. Their agents keep it, and do not
@@ -107,6 +127,20 @@ const describeSchema = z
   .refine((input) => input.names !== undefined || input.name !== undefined);
 const callSchema = z.strictObject(callShape).refine((input) => input.name !== undefined || input.tool !== undefined);
 
+/**
+ * Kimi Code CLI gives each schema without a `type` the type `string` before its model reads it, so its
+ * model sent numbers and arrays in `arguments` as strings, and the target tool refused them (#5742). It
+ * leaves an `anyOf` as it is. Moonshot refuses a `type` next to `anyOf` and, as Hermes found, a `null`
+ * branch; the call still decodes with `callSchema`, which accepts any value.
+ */
+const KIMI_ARGUMENT_VALUE = { anyOf: ["string", "number", "boolean", "object", "array"].map((type) => ({ type })) };
+// On the value schema, Zod writes this `anyOf` as a `type` array. Moonshot takes only one type, or one
+// type and `null`, in a `type` array.
+const kimiCallShape = {
+  ...callShape,
+  arguments: callShape.arguments.meta({ additionalProperties: KIMI_ARGUMENT_VALUE }),
+};
+
 function toolDefinitions(catalog: typeof BUILTIN_TOOL_CATALOG) {
   const names = catalogNames(catalog);
   return [
@@ -143,6 +177,7 @@ function dynamicTools(definitions: ReturnType<typeof toolDefinitions>) {
         inputSchema: advertisedJsonSchema(z.strictObject(definition.shape)),
       })),
     },
+    ...DIRECT_BROWSER_DYNAMIC_TOOLS,
   ];
 }
 
@@ -150,6 +185,11 @@ const ALL_TOOL_DEFINITIONS = toolDefinitions(BUILTIN_TOOL_CATALOG);
 const OWN_WEB_SEARCH_TOOL_DEFINITIONS = toolDefinitions(OWN_WEB_SEARCH_CATALOG);
 const ALL_DYNAMIC_TOOLS = dynamicTools(ALL_TOOL_DEFINITIONS);
 const OWN_WEB_SEARCH_DYNAMIC_TOOLS = dynamicTools(OWN_WEB_SEARCH_TOOL_DEFINITIONS);
+const KIMI_DYNAMIC_TOOLS = dynamicTools(
+  visibleToolDefinitions("kimi").map((definition) =>
+    definition.name === "tool_call" ? { ...definition, shape: kimiCallShape } : definition,
+  ),
+);
 
 /** The direct OpenBot tools of an agent on `provider`, as an MCP server declares them. */
 export function visibleToolDefinitions(provider: AgentProviderId) {
@@ -158,6 +198,7 @@ export function visibleToolDefinitions(provider: AgentProviderId) {
 
 /** The direct OpenBot tools of an agent on `provider`, as the dynamic tools of a thread. */
 export function visibleDynamicTools(provider: AgentProviderId) {
+  if (provider === "kimi") return KIMI_DYNAMIC_TOOLS;
   return OWN_WEB_SEARCH_PROVIDERS.has(provider) ? OWN_WEB_SEARCH_DYNAMIC_TOOLS : ALL_DYNAMIC_TOOLS;
 }
 
@@ -183,7 +224,8 @@ function bridgedName(input: unknown): string | null {
  * Claude loads its own deferred tools with a search and then calls them directly. After a search here,
  * it called openbot.list_workflows as mcp__openbot__list_workflows, and each refused name cost a model step.
  */
-const CALL_NOTE = "These are not direct tools: run each with tool_call {name, arguments}.";
+const CALL_NOTE =
+  "Run each with openbot.tool_call {name, arguments}, or directly when you also have it as a direct tool.";
 
 /**
  * Search matches whole words, so a query that names a web service, such as "gmail" or "read mail",
@@ -228,11 +270,14 @@ const WORKFLOW_TOOLS = BUILTIN_TOOL_CATALOG.filter(
 );
 
 /**
- * The browser tools that most tasks use. An agent calls a browser tool without a search, because the
- * names are in its instructions, so the first browser result in a chat brings these schemas. A search
- * first cost one model turn on each browser task.
+ * The browser tools that most tasks use. The first browser result in a chat brings these schemas, and
+ * the guidance of the browser and of the direct browser tools. A search first cost one model turn on
+ * each browser task.
  */
-const BROWSER_PRIMER_TOOLS = ["open", "snapshot", "navigate", "click", "type", "wait_for", "run_script"].map((tool) =>
+const BROWSER_PRIMER_TOOLS = ["snapshot", "navigate", "click", "type", "wait_for"].map((tool) =>
+  requireTool(`${OPENBOT_BROWSER_NAMESPACE}.${tool}`),
+);
+const DIRECT_BROWSER_CATALOG = [...DIRECT_BROWSER_NAMES].map((tool) =>
   requireTool(`${OPENBOT_BROWSER_NAMESPACE}.${tool}`),
 );
 
@@ -240,7 +285,7 @@ export function browserToolsPrimer() {
   return {
     call: CALL_NOTE,
     tools: BROWSER_PRIMER_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
-    guidance: toolGuidanceFor(BROWSER_PRIMER_TOOLS),
+    guidance: toolGuidanceFor([...BROWSER_PRIMER_TOOLS, ...DIRECT_BROWSER_CATALOG]),
   };
 }
 
@@ -255,6 +300,119 @@ function requireTool(name: string, catalog = BUILTIN_TOOL_CATALOG) {
   return tool;
 }
 
+const JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
+const PATH_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
+
+function startsUnicodeEscape(text: string, index: number): boolean {
+  return text.charAt(index + 1) === "u" && /^[0-9a-fA-F]{4}$/.test(text.slice(index + 2, index + 6));
+}
+
+/**
+ * The end of the word at `start`, up to a space or a quote, and whether it holds an escaped backslash
+ * or a backslash that starts no valid escape, as a path such as `C:\Users` does. In such a word, `\n` or
+ * `\t` is part of the path, such as `C:\new`.
+ */
+function pathWord(text: string, start: number): { end: number; path: boolean } {
+  let index = start;
+  let path = false;
+  while (index < text.length && !/[\s"]/.test(text.charAt(index))) {
+    if (text.charAt(index) === "\\") {
+      const next = text.charAt(index + 1);
+      if (next === "\\" || (!JSON_ESCAPES.has(next) && !startsUnicodeEscape(text, index))) path = true;
+      index++;
+    }
+    index++;
+  }
+  return { end: index, path };
+}
+
+/**
+ * Inside the strings of JSON text, escapes each control character and each backslash that does not
+ * start a valid escape. In a word with such a backslash, it also escapes the backslash of `\b`, `\f`,
+ * `\n`, `\r` and `\t`. Models write a Windows path such as `C:\Users` or a line break in `arguments`
+ * text without the escape that JSON needs, so the text did not parse (#6243).
+ */
+function repairJsonText(text: string): string {
+  let repaired = "";
+  let inString = false;
+  let word = { end: 0, path: false };
+  for (let index = 0; index < text.length; index++) {
+    const char = text.charAt(index);
+    if (char === '"') inString = !inString;
+    if (inString && index >= word.end) word = pathWord(text, index);
+    if (!inString || char === '"') {
+      repaired += char;
+    } else if (char === "\\") {
+      const next = text.charAt(index + 1);
+      const path = word.path && PATH_ESCAPES.has(next);
+      if (!path && (JSON_ESCAPES.has(next) || startsUnicodeEscape(text, index))) {
+        repaired += char + next;
+        index++;
+      } else {
+        repaired += "\\\\";
+      }
+    } else {
+      const code = char.charCodeAt(0);
+      repaired += code < 0x20 ? `\\u${code.toString(16).padStart(4, "0")}` : char;
+    }
+  }
+  return repaired;
+}
+
+/**
+ * The text without up to three closing braces and quotes after its end. Models close the envelope in
+ * the `arguments` text, as in `{"tabId":"t1"}}` or `{"tabId":"t1"}"}`, so the text did not parse.
+ */
+function withoutTrailingClosers(text: string): string[] {
+  const trimmed = text.trimEnd();
+  const closers = /[}"\s]{1,3}$/u.exec(trimmed)?.[0].length ?? 0;
+  return Array.from({ length: closers }, (_, index) => trimmed.slice(0, trimmed.length - index - 1));
+}
+
+/** The object in `arguments` text, also after a repair, or null when the text holds no object. */
+function decodeArgumentsText(text: string): DynamicRecord | null {
+  const trimmed = withoutTrailingClosers(text);
+  for (const candidate of [text, repairJsonText(text), ...trimmed, ...trimmed.map(repairJsonText)]) {
+    try {
+      const value = JSON.parse(candidate);
+      return isRecord(value) ? value : null;
+    } catch {
+      // The repaired text is tried next.
+    }
+  }
+  return null;
+}
+
+/** Decodes a `tool_call` envelope. Models send `arguments` as JSON text, so the text is decoded first. */
+function parseCall(params: DynamicToolCallParams) {
+  const envelope = params.arguments;
+  if (!isRecord(envelope) || typeof envelope.arguments !== "string") return callSchema.safeParse(envelope);
+  return callSchema.safeParse({ ...envelope, arguments: decodeArgumentsText(envelope.arguments) });
+}
+
+/**
+ * True when a `tool_call` names OpenBot's discovery tool, such as `openbot.tool_describe`. Only a qualified
+ * name counts: a bare `tool_search` can mean the provider's own search for MCP tools.
+ */
+function callsDiscoveryTool(envelope: unknown): boolean {
+  const named = bridgedName(envelope)?.trim();
+  return named !== undefined && /^(?:openbot\.|openbot__|mcp__openbot__)tool_(?:search|describe)$/.test(named);
+}
+
+/**
+ * The error for a `tool_call` that `resolveDeferredTool` refused because it names a discovery tool or
+ * its `arguments` is not an object, or null for another reason. A general error made the agent send
+ * the same text again: an agent that loaded a schema through tool_call never got it (#6754).
+ */
+export function deferredCallArgumentsError(params: DynamicToolCallParams): string | null {
+  if (callsDiscoveryTool(params.arguments)) return sourceText("error.agent.toolCallDiscoveryTool");
+  const parsed = parseCall(params);
+  const sent = isRecord(params.arguments) && params.arguments.arguments !== undefined;
+  return sent && !parsed.success && parsed.error.issues.some(({ path }) => path[0] === "arguments")
+    ? sourceText("error.agent.toolCallArgumentsNotObject")
+    : null;
+}
+
 /**
  * Returns null for an invalid envelope or a tool outside the catalog of `provider`. No supplied
  * values are echoed into errors or logs.
@@ -263,7 +421,7 @@ export function resolveDeferredTool(
   params: DynamicToolCallParams,
   provider: AgentProviderId,
 ): DynamicToolCallParams | null {
-  const parsed = callSchema.safeParse(params.arguments);
+  const parsed = parseCall(params);
   if (!parsed.success) return null;
   const name = parsed.data.name ?? parsed.data.tool;
   const entry = catalogFor(provider).find((tool) => tool.name === name);

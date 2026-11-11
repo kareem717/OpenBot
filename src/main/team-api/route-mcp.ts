@@ -1,4 +1,10 @@
 import { MCP_SERVERS_CAPABILITY } from "@openbot/contracts/ipc";
+import {
+  MCP_FROZEN_SERVERS_LIST_LIMIT,
+  MCP_MANY_SERVERS_CAPABILITY,
+  MCP_MANY_SERVERS_LIST_LIMIT,
+} from "@openbot/contracts/team-protocol/mcp-many-servers-v1";
+import { MCP_SERVER_PAGES_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-pages-v1";
 import { MCP_ROUTES, mcpRequest } from "@openbot/contracts/team-protocol/mcp-v1";
 import { sourceText } from "@openbot/i18n/source";
 import { runCauseEffect } from "../../backend/effect-boundary";
@@ -14,6 +20,43 @@ import { HttpError } from "./http-error";
 import { requireMcpAccess, requireOwnMcpServer } from "./mcp-member-access";
 import type { RouteOutcome, TeamApiRequestContext } from "./request-context";
 import { readJson } from "./request-helpers";
+
+/**
+ * A peer with `mcp-server-pages-v1` and without `mcp-many-servers-v1` reads the rows after the first
+ * 32 through the page routes. For it, the `mcp-v1` and `mcp-sign-in-v1` routes keep their 32-row
+ * answer and their bound of 32 on a new server.
+ */
+function readsMcpPagesOnly(capabilities: ReadonlySet<string>): boolean {
+  return capabilities.has(MCP_SERVER_PAGES_CAPABILITY) && !capabilities.has(MCP_MANY_SERVERS_CAPABILITY);
+}
+
+/**
+ * Refuses a peer without `mcp-many-servers-v1` a list longer than its frozen codec reads. The check
+ * runs before the route changes anything, so the peer does not get a protocol error after a change
+ * that the host already made. A peer that reads pages is not refused: `peerMcpRows` cuts its list.
+ */
+export function requireMcpListFits(capabilities: ReadonlySet<string>, rows: number): void {
+  if (
+    rows > MCP_FROZEN_SERVERS_LIST_LIMIT &&
+    !capabilities.has(MCP_MANY_SERVERS_CAPABILITY) &&
+    !capabilities.has(MCP_SERVER_PAGES_CAPABILITY)
+  )
+    throw new HttpError(
+      409,
+      sourceText("error.team.mcpServerListNeedsUpdate", { limit: MCP_FROZEN_SERVERS_LIST_LIMIT }),
+    );
+}
+
+/**
+ * The rows of a list answer that the codec of this peer reads: 100 with `mcp-many-servers-v1`, and
+ * 32 without it. This host can hold more rows than either; the page routes carry all of them.
+ */
+export function peerMcpRows<T>(capabilities: ReadonlySet<string>, rows: readonly T[]): T[] {
+  return rows.slice(
+    0,
+    capabilities.has(MCP_MANY_SERVERS_CAPABILITY) ? MCP_MANY_SERVERS_LIST_LIMIT : MCP_FROZEN_SERVERS_LIST_LIMIT,
+  );
+}
 
 /**
  * The MCP servers of the machine that runs this host, managed from a joined server.
@@ -43,16 +86,25 @@ export async function routeMcpServers(
   if (!mcpServers || !capabilities.has(MCP_SERVERS_CAPABILITY))
     throw new HttpError(400, sourceText("error.team.mcpUnsupported"));
   const access = requireMcpAccess(member, capabilities, owners);
-  if (list) return json(200, mcpServers.listMcpServers().slice(0, 32));
+  if (list) {
+    const servers = mcpServers.listMcpServers();
+    requireMcpListFits(capabilities, servers.length);
+    return json(200, peerMcpRows(capabilities, servers));
+  }
   // `readJson` has already run the body through the MCP wire codec, so every field below is decoded
   // and bounded before the IPC parsers see it.
   const body = mcpRequest(url.pathname, await readJson(request));
   if (save) {
     const input = parseSaveMcpServer(body);
-    if (!input.config.id && mcpServers.listMcpServers().length >= 32)
-      throw new HttpError(400, sourceText("error.backend.mcpServerLimit", { limit: 32 }));
+    if (
+      readsMcpPagesOnly(capabilities) &&
+      !input.config.id &&
+      mcpServers.listMcpServers().length >= MCP_FROZEN_SERVERS_LIST_LIMIT
+    )
+      throw new HttpError(400, sourceText("error.backend.mcpServerLimit", { limit: MCP_FROZEN_SERVERS_LIST_LIMIT }));
     const before = new Set(mcpServers.listMcpServers().map((server) => server.id));
     if (before.has(input.config.id)) requireOwnMcpServer(access, input.config.id);
+    requireMcpListFits(capabilities, before.size + (before.has(input.config.id) ? 0 : 1));
     // The local save starts the runtime download; the host route shares it, or a first server
     // added remotely never gets the runtime its test and its spawn need.
     toolRuntimes?.startToolRuntimes();
@@ -62,14 +114,17 @@ export async function routeMcpServers(
     const name = input.config.name.trim();
     const added = saved.find((server) => !before.has(server.id) && server.name === name);
     if (added && owners) await runCauseEffect(owners.add(added.id, member.id));
-    return json(200, saved.slice(0, 32));
+    return json(200, peerMcpRows(capabilities, saved));
   }
   if (remove) {
     const input = parseRemoveMcpServer(body);
     requireOwnMcpServer(access, input.mcpServerId);
+    // The reply is the list after the removal: a released client can bring a host back to 32.
+    const rows = mcpServers.listMcpServers();
+    requireMcpListFits(capabilities, rows.length - (rows.some((server) => server.id === input.mcpServerId) ? 1 : 0));
     const servers = await runCauseEffect(mcpServers.removeMcpServer(input));
     if (owners) await runCauseEffect(owners.remove(input.mcpServerId));
-    return json(200, servers.slice(0, 32));
+    return json(200, peerMcpRows(capabilities, servers));
   }
   if (test) {
     const parsed = parseTestMcpServer(body);
@@ -84,6 +139,7 @@ export async function routeMcpServers(
   }
   const toggled = parseSetMcpServerEnabled(body);
   requireOwnMcpServer(access, toggled.mcpServerId);
+  requireMcpListFits(capabilities, mcpServers.listMcpServers().length);
   if (toggled.enabled) toolRuntimes?.startToolRuntimes();
-  return json(200, (await runCauseEffect(mcpServers.setMcpServerEnabled(toggled))).slice(0, 32));
+  return json(200, peerMcpRows(capabilities, await runCauseEffect(mcpServers.setMcpServerEnabled(toggled))));
 }

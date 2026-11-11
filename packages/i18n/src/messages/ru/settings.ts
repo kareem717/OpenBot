@@ -16,6 +16,12 @@ export const messages = {
     "Показывать размытый рабочий стол за окном. Сайты и меню тогда используют тему приложения.",
   "settings.interfaceSize.title": "Размер интерфейса",
   "settings.interfaceSize.description": "Размер текста и элементов управления в OpenBot.",
+  "settings.interfaceFont.title": "Шрифт интерфейса",
+  "settings.interfaceFont.description": "Шрифт меню, чатов и настроек.",
+  "settings.interfaceFont.default": "По умолчанию (Inter)",
+  "settings.codeFont.title": "Шрифт кода",
+  "settings.codeFont.description": "Шрифт кода, терминалов и путей к файлам.",
+  "settings.codeFont.default": "По умолчанию",
   "settings.logoColor.title": "Цвет логотипа",
   "settings.logoColor.description": "Отображается в Dock, на панели задач и в Dynamic Island.",
   "settings.logoColor.buildNote":
@@ -91,6 +97,8 @@ export const messages = {
   "settings.externalLinks.fallback.description": "Ссылка открылась в основном браузере.",
   "settings.sendShortcut.title": "Сочетание для отправки",
   "settings.sendShortcut.description": "Выберите клавиши для отправки сообщения на этом устройстве и в этом браузере.",
+  "settings.chatOrder.description":
+    "Выберите, где боковая панель показывает непрочитанные чаты на этом устройстве. «Вручную» отключает группу «Непрочитанные».",
   "settings.sendShortcut.enter": "Отправка по Enter",
   "settings.sendShortcut.modEnterMac": "Отправка по ⌘Enter",
   "settings.sendShortcut.modEnterWin": "Отправка по Ctrl+Enter",
@@ -120,6 +128,9 @@ export const messages = {
   "settings.agentDefaults.setAllLabel": "{setting}: задать всем агентам",
   "settings.agentDefaults.agentLabel": "{setting}: {agent}",
   "settings.agentDefaults.loadFailed": "Не удалось загрузить агентов.",
+  "settings.commitCoAuthor.sectionTitle": "Коммиты Git",
+  "settings.commitCoAuthor.title": "Указывать OpenBot в коммитах",
+  "settings.commitCoAuthor.description": "Агенты добавляют OpenBot соавтором своих коммитов. Автором остаётесь вы.",
   "settings.planStart.title": "Начало работы",
   "settings.planStart.wait": "Когда я нажму «Начать»",
   "settings.planStart.after": "Через {time}",
@@ -203,8 +214,15 @@ export const messages = {
   "settings.soundTheme.play": "Воспроизвести: {name}",
   "settings.notch.title": "Поведение",
   "settings.notch.show.title": "Показывать статус в вырезе MacBook",
+  "settings.notch.show.titleTopOfScreen": "Показывать статус вверху экрана",
   "settings.notch.show.description":
     "Показывать активность агентов и всё, что требует внимания, в верхней части каждого дисплея.",
+  "settings.notch.xwayland.title": "Нужен перезапуск",
+  "settings.notch.xwayland.description":
+    "В Wayland OpenBot должен использовать XWayland, чтобы показать Dynamic Island поверх других приложений. До этого остров не показан.",
+  "settings.notch.xwayland.unsupported":
+    "В Wayland без XWayland Dynamic Island не может быть поверх других приложений.",
+  "settings.notch.xwayland.restart": "Перезапустить",
   "settings.notch.idle.title": "Показывать панель в режиме ожидания",
   "settings.notch.idle.description": "Показывать логотип OpenBot и приветствие, когда нет активного статуса.",
   "settings.notch.displays.title": "Показывать на дополнительных дисплеях",
@@ -229,6 +247,12 @@ export const messages = {
     "«Поверх других приложений» оставляет док на экране, когда OpenBot в фоне.",
   "settings.agentDock.placement.screen": "Поверх других приложений",
   "settings.agentDock.placement.window": "В окне OpenBot",
+  "settings.agentDock.xwayland.title": "Нужен перезапуск",
+  "settings.agentDock.xwayland.description":
+    "В Wayland OpenBot должен использовать XWayland, чтобы показать док поверх других приложений. До этого док показан в окне OpenBot.",
+  "settings.agentDock.xwayland.unsupported":
+    "В Wayland без XWayland док не может быть поверх других приложений. Он показан в окне OpenBot.",
+  "settings.agentDock.xwayland.restart": "Перезапустить",
   "settings.agentDock.display.title": "Дисплей",
   "settings.agentDock.display.description": "Если этот дисплей не подключён, док переходит на дисплей окна OpenBot.",
   "settings.agentDock.display.window": "Вместе с окном OpenBot",
@@ -240,8 +264,14 @@ export const messages = {
   "settings.agentDock.edge.description": "Перетащите док вверх или вниз, чтобы сдвинуть его вдоль края.",
   "settings.agentDock.edge.right": "Справа",
   "settings.agentDock.edge.left": "Слева",
+  "settings.agentDock.size.title": "Размер дока",
+  "settings.agentDock.size.description":
+    "Перетащите, чтобы изменить размер дока поверх других приложений. В главном окне док следует размеру интерфейса.",
   "settings.agentDock.autoHide.title": "Скрывать, когда не используется",
   "settings.agentDock.autoHide.description": "Док уходит за край. Подведите указатель к краю, чтобы показать его.",
+  "settings.agentDock.edgeStrip.title": "Показывать полоску у края",
+  "settings.agentDock.edgeStrip.description":
+    "Там, где прячется док, остаётся тонкая полоска. Подведите к ней указатель, чтобы показать док. Когда агент о чём-то спрашивает, по полоске проходит цветная волна.",
   "settings.agentDock.results.title": "Показывать готовую работу",
   "settings.agentDock.results.description": "Результаты агентов ненадолго появляются рядом с доком.",
   "settings.agentDock.agents.title": "Агенты в доке",
@@ -504,6 +534,7 @@ export const messages = {
   "settings.updates.status.ready": "{target} готово. Перезапустите, чтобы применить.",
   "settings.updates.status.installing": "Перезапуск для применения {target}…",
   "settings.updates.status.upToDate": "OpenBot обновлён до последней версии канала Stable.",
+  "settings.updates.status.staged": "{target} выпускается поэтапно. Проверьте обновления, чтобы получить его сейчас.",
   "settings.updates.status.checkFailed": "OpenBot не удалось проверить обновления. Повторите попытку.",
   "settings.updates.status.unsupported": "В этой сборке обновления недоступны.",
   "settings.updates.actionFailed": "Не удалось обновить OpenBot.",
@@ -668,6 +699,8 @@ export const messages = {
   "settings.voice.speech.codexLive.title": "Живой голос Codex",
   "settings.voice.speech.codexLive.description":
     "Голосовые разговоры с любым агентом используют живой голос OpenAI с вашим входом в Codex. Ваш голос, ваши запросы и ответы агента передаются в OpenAI.",
+  "settings.voice.speech.codexLive.serverDescription":
+    "Голосовые разговоры с любым агентом используют живой голос OpenAI со входом в Codex на сервере. Ваш голос, ваши запросы и ответы агента передаются в OpenAI.",
   "settings.voice.speech.speed.title": "Скорость",
   "settings.voice.speech.voice.title": "Голос",
   "settings.voice.speech.voice.female": "Женский голос {number}",
@@ -688,8 +721,6 @@ export const messages = {
   "settings.transfer.old.text": "Сохраните его агентов и настройки сервера в файл.",
   "settings.transfer.new.title": "Импорт на этот сервер",
   "settings.transfer.new.text": "Добавьте агентов и настройки сервера из файла.",
-  "settings.transfer.notMoved":
-    "API-ключи, входы в аккаунты, коннекторы, настройки приложения и история чатов не переносятся. Настройте их заново на новом сервере.",
   "settings.transfer.back": "Назад",
   "settings.transfer.loading": "Чтение агентов…",
   "settings.transfer.summary.label": "Что содержит файл",

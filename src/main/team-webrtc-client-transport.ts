@@ -11,6 +11,7 @@ import {
   rpcJsonFileName,
 } from "@openbot/contracts/team-protocol/rpc-json-files-v1";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
+import { addSkillSuggestionNames } from "@openbot/contracts/team-protocol/skill-learning-v1";
 import {
   type TeamProtocolV1CurrentEventControl,
   toWireTeamProtocolV1ClientEvent,
@@ -29,7 +30,7 @@ import {
   decodeTeamProtocolV8CurrentEvent,
   encodeTeamProtocolV8WebRtcHttpRequest,
 } from "@openbot/contracts/team-protocol/v8-webrtc-adapter";
-import { decodeTeamProtocolSupportV9 } from "@openbot/contracts/team-protocol/v9";
+import { decodeTeamProtocolSupportV9, TEAM_PROTOCOL_V9 } from "@openbot/contracts/team-protocol/v9";
 import { decodeTeamProtocolV9WebRtcHttpResponse } from "@openbot/contracts/team-protocol/v9-webrtc-adapter";
 import { sourceText } from "@openbot/i18n/source";
 import { remoteWorkspaceReadTimeout } from "@openbot/team-client/remote-recovery";
@@ -80,8 +81,8 @@ interface TeamWebRtcClientTransportEvents {
   event: [hostId: string, event: AgentEvent | TeamRealtimeEvent];
   path: [hostId: string, path: "p2p" | "relay"];
   error: [hostId: string, code: string, message: string];
-  /** An attempt to connect failed. A cancelled or replaced attempt does not count. */
-  connectFailed: [hostId: string];
+  /** An attempt to connect failed, with its failure. A cancelled or replaced attempt does not count. */
+  connectFailed: [hostId: string, failure: unknown];
   desktopData: [hostId: string, data: string | ArrayBuffer];
 }
 
@@ -545,7 +546,11 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
               body: binary
                 ? null
                 : sideRoute
-                  ? sideRoute.request(path, init.body, { channelIsolation: true })
+                  ? sideRoute.request(path, init.body, {
+                      channelIsolation: true,
+                      channelPicture: true,
+                      channelBrowser: true,
+                    })
                   : encodeTeamProtocolV8WebRtcHttpRequest(method, path, init.body, {
                       ...(init.preserveSemanticTags === undefined
                         ? {}
@@ -662,6 +667,9 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
                     channelAttention: true,
                     agentTaskUiBlocks: true,
                     channelIsolation: true,
+                    channelPicture: true,
+                    channelBrowser: true,
+                    mcpManyServers: true,
                   })
                 : decodeTeamProtocolV9WebRtcHttpResponse(method, path, status, responseBody),
             ).pipe(
@@ -676,6 +684,8 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
                   }),
               ),
             );
+        // The frozen response codec leaves the skill name of a skill question out; the wire body has it.
+        if (this.#sendsSkillSuggestionNames(hostId)) addSkillSuggestionNames(body, envelope.body);
         if (method === "GET" && path === "/v1/compatibility" && status === 200) {
           const support = yield* remoteDecode(() => decodeTeamProtocolSupportV9(body));
           this.#hostProtocols.set(hostId, support.protocol.maximum);
@@ -952,7 +962,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
             CONNECT_RETRY_START_MILLISECONDS * 2 ** (failures - 1),
           );
           this.#connectRetries.set(hostId, { failure, failures, retryAt: Date.now() + delay });
-          this.emit("connectFailed", hostId);
+          this.emit("connectFailed", hostId, failure.cause);
         }),
       ),
       Effect.onExit((exit) => Deferred.done(done, exit)),
@@ -1106,9 +1116,19 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         cleanup();
         reject(cause);
       };
+      // Signal said ready: both ends are on Signal, and the direct path comes next.
+      let signalReady = false;
       const timeOut = () => {
         cleanup();
-        reject(new Error(sourceText("error.remote.hostDidNotConnect")));
+        // The code names the step that did not finish (#6873). Only after Signal said ready and before
+        // a data channel opened is it the direct path, which a firewall, VPN or proxy can block.
+        const stage = active.authentication?.started ? "auth" : signalReady ? "ice" : "signal";
+        reject(
+          new TeamWebRtcConnectError(
+            `connect_timeout_${stage}`,
+            sourceText(stage === "ice" ? "error.remote.iceFailed" : "error.remote.hostDidNotConnect"),
+          ),
+        );
       };
       let timer = setTimeout(timeOut, CONNECT_LIMIT_MILLISECONDS);
       let hostWaited = false;
@@ -1125,7 +1145,9 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       };
       // The host connected to Signal. The connection has the usual time from now.
       const onSignalReady = (readyHostId: string) => {
-        if (readyHostId !== hostId || !hostWaited) return;
+        if (readyHostId !== hostId) return;
+        signalReady = true;
+        if (!hostWaited) return;
         hostWaited = false;
         clearTimeout(timer);
         timer = setTimeout(timeOut, CONNECT_LIMIT_MILLISECONDS);
@@ -1142,10 +1164,8 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       };
       this.on("connected", onConnected);
       this.on("error", onError);
-      if (waitForHost) {
-        bridge.on("hostWaiting", onHostWaiting);
-        bridge.on("signalReady", onSignalReady);
-      }
+      bridge.on("signalReady", onSignalReady);
+      if (waitForHost) bridge.on("hostWaiting", onHostWaiting);
     }
     active.authentication = {
       ticket: bootstrap.ticket,
@@ -1543,7 +1563,11 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         this.#failProtocol(hostId, sourceText("error.remote.malformedKnownEvent"));
         return;
       }
-      if (decoded.status === "known") this.emit("event", hostId, decoded.event);
+      if (decoded.status === "known") {
+        // The frozen event codec leaves the skill name of a skill question out; the wire frame has it.
+        if (this.#sendsSkillSuggestionNames(hostId)) addSkillSuggestionNames(decoded.event, frame.payload);
+        this.emit("event", hostId, decoded.event);
+      }
       this.#lastEventSequence.set(hostId, frame.sequence);
       this.#sendRecoverable(
         hostId,
@@ -1553,6 +1577,11 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     } catch {
       this.#failProtocol(hostId, "The host returned an invalid event frame.");
     }
+  }
+
+  /** A protocol 9 host adds `skillSuggestion` for this client, which advertises skill-learning-v1. */
+  #sendsSkillSuggestionNames(hostId: string): boolean {
+    return (this.#hostProtocols.get(hostId) ?? 0) >= TEAM_PROTOCOL_V9;
   }
 
   #failProtocol(hostId: string, message: string): void {
@@ -1596,7 +1625,10 @@ export class TeamWebRtcRequestError extends Schema.TaggedError<TeamWebRtcRequest
   }
 }
 
-/** The connection failed before the host answered. The code is the Signal or the bridge code. */
+/**
+ * The connection failed before the host answered. The code is the Signal or the bridge code, or
+ * `connect_timeout_<step>` for the step that did not finish in time: `signal`, `ice` or `auth`.
+ */
 class TeamWebRtcConnectError extends Schema.TaggedError<TeamWebRtcConnectError>()("TeamWebRtcConnectError", {
   code: Schema.String,
   message: Schema.String,

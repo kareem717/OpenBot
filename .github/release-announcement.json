@@ -1,10 +1,10 @@
 {
-  "version": "0.65.0",
+  "version": "0.68.0",
   "highlights": [
-    "A new Library page shows every picture and file from your chats, with search and filters.",
-    "Agents now use logins that you save in a password manager or the Vault, also after their chat started.",
-    "Read replies aloud with ElevenLabs or xAI, dictate with Groq, and add Mistral as a provider.",
-    "Agents use fewer tokens on most providers, and OpenBot uses less memory for tabs and idle agents.",
-    "Delete the history of a chat or a channel, and open an agent's page as a side panel tab."
+    "Set which members can use the browser in a channel, and see their tabs and the channel's files in the side panel.",
+    "Right-click the Dynamic Island or the agent dock to hide it, drag agents on the dock to move them, and change the dock size.",
+    "A chat that you read no longer stays in the Unread group, and you can turn the group off.",
+    "A Claude chat that got too long now starts a new session with its history, and an agent moves to its backup model at the 5-hour limit.",
+    "New versions now go to about 1 in 10 computers first, and to all computers about one day later."
   ]
 }

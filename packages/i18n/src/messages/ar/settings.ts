@@ -16,6 +16,12 @@ export const messages = {
     "عرض سطح المكتب الضبابي خلف النافذة. تستخدم المواقع والقوائم حينها سمة التطبيق.",
   "settings.interfaceSize.title": "حجم الواجهة",
   "settings.interfaceSize.description": "حجم النص وعناصر التحكم في OpenBot.",
+  "settings.interfaceFont.title": "خط الواجهة",
+  "settings.interfaceFont.description": "خط القوائم والمحادثات والإعدادات.",
+  "settings.interfaceFont.default": "الافتراضي (Inter)",
+  "settings.codeFont.title": "خط الشيفرة",
+  "settings.codeFont.description": "خط الشيفرة والطرفيات ومسارات الملفات.",
+  "settings.codeFont.default": "الافتراضي",
   "settings.logoColor.title": "لون الشعار",
   "settings.logoColor.description": "يظهر في Dock وشريط المهام وDynamic Island.",
   "settings.logoColor.buildNote": "يحتفظ هذا الإصدار بلون شعاره الخاص. ينطبق الاختيار على التطبيق الرسمي.",
@@ -88,6 +94,8 @@ export const messages = {
   "settings.externalLinks.fallback.description": "فُتح الرابط في المتصفح الافتراضي.",
   "settings.sendShortcut.title": "اختصار الإرسال",
   "settings.sendShortcut.description": "اختر المفاتيح التي ترسل رسالة على هذا الجهاز والمتصفح.",
+  "settings.chatOrder.description":
+    "اختر مكان عرض الدردشات غير المقروءة في الشريط الجانبي على هذا الجهاز. الخيار يدوي يوقف مجموعة غير المقروءة.",
   "settings.sendShortcut.enter": "Enter للإرسال",
   "settings.sendShortcut.modEnterMac": "⌘Enter للإرسال",
   "settings.sendShortcut.modEnterWin": "Ctrl+Enter للإرسال",
@@ -116,6 +124,10 @@ export const messages = {
   "settings.agentDefaults.setAllLabel": "تعيين {setting} لكل الوكلاء",
   "settings.agentDefaults.agentLabel": "{setting} لـ {agent}",
   "settings.agentDefaults.loadFailed": "تعذّرت قراءة الوكلاء.",
+  "settings.commitCoAuthor.sectionTitle": "إيداعات Git",
+  "settings.commitCoAuthor.title": "ذكر OpenBot في الإيداعات",
+  "settings.commitCoAuthor.description":
+    "يضيف الوكلاء OpenBot كمؤلف مشارك في الإيداعات التي يُنشئونها. وتبقى أنت المؤلف.",
   "settings.planStart.title": "بدء العمل",
   "settings.planStart.wait": "عند الضغط على «بدء»",
   "settings.planStart.after": "بعد {time}",
@@ -200,7 +212,14 @@ export const messages = {
   "settings.soundTheme.play": "تشغيل {name}",
   "settings.notch.title": "السلوك",
   "settings.notch.show.title": "عرض الحالة في نتوء MacBook",
+  "settings.notch.show.titleTopOfScreen": "عرض الحالة في أعلى الشاشة",
   "settings.notch.show.description": "عرض نشاط الوكلاء والعناصر التي تحتاج إلى انتباهك أعلى كل شاشة.",
+  "settings.notch.xwayland.title": "يلزم إعادة التشغيل",
+  "settings.notch.xwayland.description":
+    "على Wayland، يجب أن يستخدم OpenBot ‏XWayland ليعرض Dynamic Island فوق التطبيقات الأخرى. حتى ذلك الحين، لا تظهر الجزيرة.",
+  "settings.notch.xwayland.unsupported":
+    "على Wayland بدون XWayland، لا يمكن أن تظهر Dynamic Island فوق التطبيقات الأخرى.",
+  "settings.notch.xwayland.restart": "إعادة التشغيل",
   "settings.notch.idle.title": "عرض الجزيرة في وضع الخمول",
   "settings.notch.idle.description": "عرض شعار OpenBot والتحية عند عدم وجود حالة نشطة.",
   "settings.notch.displays.title": "العرض على شاشات إضافية",
@@ -225,6 +244,12 @@ export const messages = {
     "يُبقي خيار «فوق التطبيقات الأخرى» الشريط على الشاشة عندما يعمل OpenBot في الخلفية.",
   "settings.agentDock.placement.screen": "فوق التطبيقات الأخرى",
   "settings.agentDock.placement.window": "في نافذة OpenBot",
+  "settings.agentDock.xwayland.title": "يلزم إعادة التشغيل",
+  "settings.agentDock.xwayland.description":
+    "على Wayland، يجب أن يستخدم OpenBot ‏XWayland ليعرض الشريط فوق التطبيقات الأخرى. حتى ذلك الحين، يظهر الشريط في نافذة OpenBot.",
+  "settings.agentDock.xwayland.unsupported":
+    "على Wayland بدون XWayland، لا يمكن أن يظهر الشريط فوق التطبيقات الأخرى. يظهر في نافذة OpenBot.",
+  "settings.agentDock.xwayland.restart": "إعادة التشغيل",
   "settings.agentDock.display.title": "الشاشة",
   "settings.agentDock.display.description": "إذا لم تكن تلك الشاشة متصلة، فسينتقل الشريط إلى شاشة نافذة OpenBot.",
   "settings.agentDock.display.window": "مع نافذة OpenBot",
@@ -236,8 +261,14 @@ export const messages = {
   "settings.agentDock.edge.description": "اسحب الشريط لأعلى أو لأسفل لتحريكه على طول الحافة.",
   "settings.agentDock.edge.right": "اليمين",
   "settings.agentDock.edge.left": "اليسار",
+  "settings.agentDock.size.title": "حجم الشريط",
+  "settings.agentDock.size.description":
+    "اسحب لتغيير حجم الشريط فوق التطبيقات الأخرى. في النافذة الرئيسية، يتبع الشريط حجم الواجهة.",
   "settings.agentDock.autoHide.title": "إخفاء عند عدم الاستخدام",
   "settings.agentDock.autoHide.description": "ينزلق الشريط داخل الحافة. حرّك المؤشر إلى الحافة لإظهاره.",
+  "settings.agentDock.edgeStrip.title": "إظهار شريط رفيع عند الحافة",
+  "settings.agentDock.edgeStrip.description":
+    "يبقى شريط رفيع حيث يختفي الشريط. قرّب المؤشر منه لإظهار الشريط. تمر موجة ألوان على الشريط عندما يسألك وكيل عن شيء.",
   "settings.agentDock.results.title": "عرض العمل المنجز",
   "settings.agentDock.results.description": "تظهر نتائج الوكلاء لوقت قصير بجانب الشريط.",
   "settings.agentDock.agents.title": "الوكلاء على الشريط",
@@ -500,6 +531,7 @@ export const messages = {
   "settings.updates.status.ready": "{target} جاهز. أعد التشغيل للتطبيق.",
   "settings.updates.status.installing": "جارٍ إعادة التشغيل لتطبيق {target}…",
   "settings.updates.status.upToDate": "OpenBot محدّث على المسار المستقر.",
+  "settings.updates.status.staged": "يُطرح {target} لبعض الأجهزة أولًا. تحقق من وجود تحديثات للحصول عليه الآن.",
   "settings.updates.status.checkFailed": "تعذّر على OpenBot التحقق من وجود تحديثات. حاول مرة أخرى.",
   "settings.updates.status.unsupported": "التحديثات غير متاحة في هذا الإصدار.",
   "settings.updates.actionFailed": "تعذّر تحديث OpenBot.",
@@ -664,6 +696,8 @@ export const messages = {
   "settings.voice.speech.codexLive.title": "صوت Codex المباشر",
   "settings.voice.speech.codexLive.description":
     "تستخدم المحادثات الصوتية مع أي وكيل الصوت المباشر من OpenAI بتسجيل دخولك إلى Codex. يُرسَل صوتك وطلباتك وردود الوكيل إلى OpenAI.",
+  "settings.voice.speech.codexLive.serverDescription":
+    "تستخدم المحادثات الصوتية مع أي وكيل الصوت المباشر من OpenAI بتسجيل دخول الخادم إلى Codex. يُرسَل صوتك وطلباتك وردود الوكيل إلى OpenAI.",
   "settings.voice.speech.speed.title": "السرعة",
   "settings.voice.speech.voice.title": "الصوت",
   "settings.voice.speech.voice.female": "صوت أنثوي {number}",
@@ -709,8 +743,6 @@ export const messages = {
   "settings.transfer.old.text": "احفظ وكلاءه وإعدادات الخادم في ملف.",
   "settings.transfer.new.title": "الاستيراد إلى هذا الخادم",
   "settings.transfer.new.text": "أضف الوكلاء وإعدادات الخادم من ملف.",
-  "settings.transfer.notMoved":
-    "لا تُنقل مفاتيح API وبيانات تسجيل الدخول والموصّلات وتفضيلات التطبيق وسجل الدردشة. أعد إعدادها على الخادم الجديد.",
   "settings.transfer.back": "رجوع",
   "settings.transfer.loading": "جارٍ قراءة وكلائك…",
   "settings.transfer.summary.label": "ما يحتويه الملف",

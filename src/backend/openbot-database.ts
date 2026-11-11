@@ -225,6 +225,10 @@ export class OpenBotDatabase {
     return this.#agentHistory.listReviewSources(agentId, "", through, 1, sourceKey).length > 0;
   }
 
+  readTurnTrace(threadId: string, turnId: string) {
+    return this.#agentHistory.turnTrace(threadId, turnId);
+  }
+
   readConversationMessages(
     agentId: string,
     threadId: string | null,
@@ -492,6 +496,18 @@ export class OpenBotDatabase {
 
   activeProviderSession(threadId: string, provider: AgentProviderId): ProviderSession | null {
     return this.#sessions.activeProviderSession(threadId, provider);
+  }
+
+  /** Whether the thread has an event of this type. The `orchestration_events_thread_type` index answers it. */
+  threadHasEvent(threadId: string, eventType: string): boolean {
+    return (
+      this.connection
+        .prepare(
+          `SELECT 1 FROM orchestration_events
+           WHERE aggregate_type = 'thread' AND aggregate_id = ? AND event_type = ? LIMIT 1`,
+        )
+        .get(threadId, eventType) !== undefined
+    );
   }
 
   listProviderSessions(threadId: string): ProviderSession[] {

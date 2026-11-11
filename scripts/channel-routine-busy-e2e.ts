@@ -139,14 +139,19 @@ try {
   await until(() => starts === 1);
   const priorityAssignment = service.store.assignments(priority.channel.id)[0];
   assert.ok(priorityAssignment?.deliveryId);
-  assert.equal(mailbox.nextQueued(owner.id)?.delivery.id, priorityAssignment.deliveryId);
+  assert.equal(
+    mailbox.nextQueued(owner.id, mailbox.laneIdForDelivery(priorityAssignment.deliveryId))?.delivery.id,
+    priorityAssignment.deliveryId,
+  );
   assert.equal(mailbox.getDelivery(queuedBackground.id)?.delivery.status, "queued");
+  // The channel delivery has its own lane. The agent's own chat, with the background routine, waits
+  // for the assignment on a provider that runs one turn of the agent at a time.
   assert.equal(
     service.mayDrain(owner.id),
-    true,
-    "The reserved channel delivery can drain ahead of the background routine.",
+    false,
+    "The background routine of the own chat waits for the channel assignment.",
   );
-  checks.push("Channel work is reserved and placed before a queued background routine without raising the turn limit.");
+  checks.push("Channel work is reserved in its own lane and starts before a queued background routine.");
 
   const runningBackground = await background(activeOwner);
   await runCauseEffect(mailbox.markStarting(runningBackground.id));
@@ -207,17 +212,16 @@ try {
   checks.push("A prior queued person request keeps its place; its queue change wakes the channel after it ends.");
 
   await runCauseEffect(mailbox.reorderQueue(owner.id, [queuedBackground.id, priorityAssignment.deliveryId]));
-  assert.equal(
-    service.mayDrain(owner.id),
-    false,
-    "The misplaced background head waits behind the existing channel reservation.",
-  );
+  assert.equal(service.mayDrain(owner.id), false, "The background head waits behind the existing channel reservation.");
   await runCauseEffect(service.recover());
-  assert.equal(mailbox.nextQueued(owner.id)?.delivery.id, priorityAssignment.deliveryId);
-  assert.equal(service.mayDrain(owner.id), true);
+  assert.equal(
+    mailbox.nextQueued(owner.id, mailbox.laneIdForDelivery(priorityAssignment.deliveryId))?.delivery.id,
+    priorityAssignment.deliveryId,
+  );
+  assert.equal(service.mayDrain(owner.id), false);
   assert.equal(service.store.assignments(priority.channel.id)[0]?.id, priorityAssignment.id);
   checks.push(
-    "Recovery restores a reserved channel delivery ahead of a misplaced background head without creating another assignment.",
+    "Recovery keeps a reserved channel delivery next in its lane, ahead of a background head, without creating another assignment.",
   );
 
   await runCauseEffect(service.wake(channel.id));
